@@ -44,23 +44,34 @@ impl Gnome {
         }
     }
 
-    pub fn with_diameter(
-        swarm_diameter: u8,
-        sender: Sender<Response>,
-        receiver: Receiver<Request>,
-    ) -> Self {
-        Gnome {
-            id: gnome_id_dispenser(),
-            awareness: Awareness::Unaware,
-            turn_number: 0,
-            receiver,
-            sender,
-            neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
-            refreshed_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
-            swarm_diameter,
-            proposal: None,
-            next_state: NextState::from_awareness(Awareness::Unaware),
+    // pub fn with_diameter(
+    //     swarm_diameter: u8,
+    //     sender: Sender<Response>,
+    //     receiver: Receiver<Request>,
+    // ) -> Self {
+    //     Gnome {
+    //         id: gnome_id_dispenser(),
+    //         awareness: Awareness::Unaware,
+    //         turn_number: 0,
+    //         receiver,
+    //         sender,
+    //         neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
+    //         refreshed_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
+    //         swarm_diameter,
+    //         proposal: None,
+    //         next_state: NextState::from_awareness(Awareness::Unaware),
+    //     }
+    // }
+
+    fn serve_user_requests(&mut self) -> bool {
+        if let Ok(request) = self.receiver.try_recv() {
+            match request {
+                Request::Disconnect => return true,
+                Request::MakeProposal(_proposal) => {}
+                Request::AddNeighbor(_neighbor) => {}
+            }
         }
+        false
     }
 
     pub fn do_your_job(mut self) {
@@ -75,13 +86,11 @@ impl Gnome {
 
         // let mut loop_breaker = 10;
         loop {
-            if let Ok(request) = self.receiver.try_recv() {
-                match request {
-                    Request::Disconnect => break,
-                    Request::MakeProposal(_proposal) => {}
-                    Request::AddNeighbor(_neighbor) => {}
-                }
-            }
+            // println!("In loop");
+            if self.serve_user_requests() {
+                // println!("EXIT on user request.");
+                break;
+            };
             // println!("In loop {loop_breaker}");
             // loop_breaker -= 1;
             // if loop_breaker == 0 {
@@ -90,9 +99,10 @@ impl Gnome {
             let advance_to_next_turn = self.try_recv();
             let timeout = timeout_receiver.try_recv().is_ok();
             if advance_to_next_turn | timeout {
-                println!("Advancing to next turn!");
+                // println!("Advancing to next turn!");
                 self.swap_neighbors();
                 self.update_state();
+                println!("New self: {:?}", self.awareness);
                 let message_to_send = self.prepare_message();
                 self.send_all(message_to_send);
                 drop(_guard);
@@ -100,11 +110,11 @@ impl Gnome {
                 _guard = timer.schedule_with_delay(chrono::Duration::seconds(1), move || {
                     let _ignored = txc.send(()); // Avoid unwrapping here.
                 });
-                // TODO: remove below break when time comes
-                println!("[{:?},{:?}", &self.id, &self.awareness);
-                break;
+            } else {
+                // println!("Not advancing to next turn.");
             }
         }
+        // println!("out of loop.");
     }
 
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
@@ -112,14 +122,17 @@ impl Gnome {
     }
 
     pub fn send_all(&mut self, value: Message) {
-        println!("[{:?},{:?}] >> {:?} ", self.id, self.awareness, value);
-        // TODO: Construct new Message before sending
+        // println!(
+        //     "GT{:?}:\t\t[{:?},{:?}] >> {:?} ",
+        //     self.turn_number, self.id, self.awareness, value
+        // );
         for neighbor in &mut self.neighbors {
             let _ = neighbor.sender.send(value);
         }
         self.turn_number += 1;
     }
 
+    #[inline]
     pub fn set_awareness(&mut self, awareness: Awareness) {
         self.awareness = awareness;
     }
@@ -143,7 +156,7 @@ impl Gnome {
         // let mut proposal_option = Option<M
         // let mut neighbor_awareness = Vec::new();
         if self.next_state.become_confused {
-            self.awareness = Awareness::Confused(2 * self.swarm_diameter + 1);
+            self.set_awareness(Awareness::Confused(2 * self.swarm_diameter + 1));
             self.proposal = None;
             return;
         }
@@ -159,34 +172,43 @@ impl Gnome {
         if self.next_state.all_unaware {
             if self.awareness == Awareness::Unaware {
                 if let Some(proposal) = self.proposal {
-                    self.awareness = Awareness::Aware(0, proposal);
+                    self.set_awareness(Awareness::Aware(0, proposal));
                 }
             } else {
                 // Can not update awareness state when all neighbors are unaware
                 // return;
             }
         } else if self.next_state.all_aware {
-            // self.proposal = self.next_state.proposal;
-            if self.next_state.awareness_diameter >= 2 * self.swarm_diameter {
-                self.awareness = Awareness::Unaware;
-                self.sender.send(Response::ApprovedProposal(Box::new(
+            // println!(
+            //     "All aware, ałarnes: {:?}",
+            //     self.next_state.awareness_diameter
+            // );
+            if self.proposal.is_none() {
+                self.proposal = self.next_state.proposal;
+            }
+            if self.next_state.awareness_diameter >= 2 * self.swarm_diameter - 1 {
+                // println!("dajamiter wiekszy");
+                self.set_awareness(Awareness::Unaware);
+                let _ = self.sender.send(Response::ApprovedProposal(Box::new(
                     [self.proposal.unwrap(); 1024],
                 )));
+            } else {
+                self.set_awareness(Awareness::Aware(
+                    self.next_state.awareness_diameter + 1,
+                    self.proposal.unwrap(),
+                ));
             }
-            self.awareness = Awareness::Aware(
-                self.next_state.awareness_diameter + 1,
-                self.proposal.unwrap(),
-            );
         } else if self.next_state.all_confused {
             if self.next_state.confusion_diameter == 1 {
-                self.awareness = Awareness::Unaware;
+                self.set_awareness(Awareness::Unaware);
             } else {
-                self.awareness = Awareness::Confused(self.next_state.confusion_diameter - 1);
+                self.set_awareness(Awareness::Confused(self.next_state.confusion_diameter - 1));
             }
         } else if self.next_state.any_confused {
         } else if self.next_state.any_aware && self.awareness == Awareness::Unaware {
-            self.awareness = Awareness::Aware(0, self.next_state.proposal.unwrap())
+            self.set_awareness(Awareness::Aware(0, self.next_state.proposal.unwrap()))
         }
+        self.next_state = NextState::from_awareness(self.awareness);
     }
 
     fn try_recv(&mut self) -> bool {

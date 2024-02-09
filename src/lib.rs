@@ -3,15 +3,20 @@ use crate::awareness::Awareness;
 mod gnome;
 use crate::gnome::{Gnome, GnomeId};
 mod message;
+mod swarm;
 use crate::message::Message;
+mod manager;
+use manager::Manager;
 
 mod neighbor;
 use crate::neighbor::Neighbor;
 
 mod next_state;
 use crate::next_state::NextState;
+use std::fmt;
 
-use std::sync::mpsc::{channel, Receiver, Sender};
+// use std::sync::mpsc::{channel, Receiver, Sender};
+// use std::thread;
 #[cfg(test)]
 mod tests;
 // TODO: Also update turn_number after committing proposal to
@@ -35,8 +40,20 @@ pub enum Request {
     AddNeighbor(Neighbor),
     Disconnect,
 }
+
+#[derive(PartialEq)]
 pub enum Response {
     ApprovedProposal(Box<[u8; 1024]>),
+}
+
+impl fmt::Debug for Response {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Response::ApprovedProposal(boxed_data) => {
+                write!(f, "ApprovedProposal {:?}", &boxed_data[..16])
+            }
+        }
+    }
 }
 
 static mut GNOME_ID: GnomeId = GnomeId(0);
@@ -49,14 +66,6 @@ fn gnome_id_dispenser() -> GnomeId {
     }
 }
 
-pub fn join_a_swarm(
-    _swarm_name: &str,
-    _neighbors: Option<Vec<Neighbor>>,
-) -> (Sender<Request>, Receiver<Response>) {
-    let (request_sender, request_receiver) = channel::<Request>();
-    let (response_sender, response_receiver) = channel::<Response>();
-
-    let gnome = Gnome::new(response_sender, request_receiver);
-    gnome.do_your_job();
-    (request_sender, response_receiver)
+pub fn start() -> Manager {
+    Manager::new()
 }
