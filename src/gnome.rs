@@ -67,8 +67,16 @@ impl Gnome {
         if let Ok(request) = self.receiver.try_recv() {
             match request {
                 Request::Disconnect => return true,
+                Request::Status => {
+                    println!(
+                        "== {}: {:?}, proposal: {:?}",
+                        self.turn_number, self.awareness, self.proposal
+                    );
+                }
                 Request::MakeProposal(_proposal) => {}
-                Request::AddNeighbor(_neighbor) => {}
+                Request::AddNeighbor(neighbor) => {
+                    self.neighbors.push(neighbor);
+                }
             }
         }
         false
@@ -99,10 +107,10 @@ impl Gnome {
             let advance_to_next_turn = self.try_recv();
             let timeout = timeout_receiver.try_recv().is_ok();
             if advance_to_next_turn | timeout {
-                // println!("Advancing to next turn!");
+                println!("Advancing to next turn!");
                 self.swap_neighbors();
                 self.update_state();
-                println!("New self: {:?}", self.awareness);
+                // println!("New self: {:?}", self.awareness);
                 let message_to_send = self.prepare_message();
                 self.send_all(message_to_send);
                 drop(_guard);
@@ -122,14 +130,9 @@ impl Gnome {
     }
 
     pub fn send_all(&mut self, value: Message) {
-        // println!(
-        //     "GT{:?}:\t\t[{:?},{:?}] >> {:?} ",
-        //     self.turn_number, self.id, self.awareness, value
-        // );
         for neighbor in &mut self.neighbors {
             let _ = neighbor.sender.send(value);
         }
-        self.turn_number += 1;
     }
 
     #[inline]
@@ -146,6 +149,10 @@ impl Gnome {
     }
 
     fn swap_neighbors(&mut self) {
+        // Drop neighbors that are late
+        while let Some(neighbor) = self.neighbors.pop() {
+            drop(neighbor);
+        }
         self.neighbors = std::mem::replace(
             &mut self.refreshed_neighbors,
             Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
@@ -153,8 +160,7 @@ impl Gnome {
     }
 
     fn update_state(&mut self) {
-        // let mut proposal_option = Option<M
-        // let mut neighbor_awareness = Vec::new();
+        self.turn_number += 1;
         if self.next_state.become_confused {
             self.set_awareness(Awareness::Confused(2 * self.swarm_diameter + 1));
             self.proposal = None;
@@ -179,19 +185,15 @@ impl Gnome {
                 // return;
             }
         } else if self.next_state.all_aware {
-            // println!(
-            //     "All aware, ałarnes: {:?}",
-            //     self.next_state.awareness_diameter
-            // );
             if self.proposal.is_none() {
                 self.proposal = self.next_state.proposal;
             }
             if self.next_state.awareness_diameter >= 2 * self.swarm_diameter - 1 {
-                // println!("dajamiter wiekszy");
                 self.set_awareness(Awareness::Unaware);
-                let _ = self.sender.send(Response::ApprovedProposal(Box::new(
-                    [self.proposal.unwrap(); 1024],
-                )));
+                let _ = self
+                    .sender
+                    .send(Response::Data(Box::new([self.proposal.unwrap(); 1024])));
+                self.proposal = None;
             } else {
                 self.set_awareness(Awareness::Aware(
                     self.next_state.awareness_diameter + 1,
