@@ -1,6 +1,7 @@
 use crate::Awareness;
-use crate::Proposal;
 use crate::Neighbor;
+use crate::Proposal;
+use crate::SwarmTime;
 use crate::DEFAULT_SWARM_DIAMETER;
 
 pub struct NextState {
@@ -14,11 +15,17 @@ pub struct NextState {
     pub any_aware: bool,        //= false;
     pub awareness_diameter: u8, // = 255;
     pub confusion_diameter: u8, // = 0;
+    pub swarm_time: SwarmTime,
     pub proposal: Option<Proposal>,
 }
 
 impl NextState {
     pub fn from_awareness(awareness: Awareness) -> Self {
+        let swarm_time = match awareness {
+            Awareness::Unaware(st) => st,
+            Awareness::Aware(st, _pd, _p) => st,
+            Awareness::Confused(st, _p) => st,
+        };
         NextState {
             awareness,
             become_confused: false,
@@ -30,32 +37,43 @@ impl NextState {
             any_aware: false,
             awareness_diameter: 255,
             confusion_diameter: 0,
+            swarm_time,
             proposal: None,
         }
     }
 
     pub fn update(&mut self, neighbor: &Neighbor) {
         match neighbor.awareness {
-            Awareness::Unaware => {
+            Awareness::Unaware(swarm_time) => {
                 self.any_unaware = true;
+                if swarm_time < self.swarm_time {
+                    self.swarm_time = swarm_time;
+                }
             }
-            Awareness::Aware(aware_neighborhood, proposal) => {
+            Awareness::Aware(swarm_time, aware_neighborhood, proposal) => {
+                if swarm_time < self.swarm_time {
+                    self.swarm_time = swarm_time;
+                }
                 self.any_aware = true;
                 if let Some(p) = self.proposal {
                     if p != proposal {
                         self.become_confused = true;
                         self.confusion_diameter = DEFAULT_SWARM_DIAMETER * 2;
-                        self.awareness = Awareness::Confused(self.confusion_diameter);
+                        self.awareness =
+                            Awareness::Confused(self.swarm_time, self.confusion_diameter);
                     }
                 } else {
                     self.proposal = Some(proposal);
-                    self.awareness = Awareness::Aware(0, proposal);
+                    self.awareness = Awareness::Aware(self.swarm_time, 0, proposal);
                     if aware_neighborhood < self.awareness_diameter {
                         self.awareness_diameter = aware_neighborhood;
                     }
                 }
             }
-            Awareness::Confused(_confusion_neighborhood) => {
+            Awareness::Confused(swarm_time, _confusion_neighborhood) => {
+                if swarm_time < self.swarm_time {
+                    self.swarm_time = swarm_time;
+                }
                 self.any_confused = true;
             }
         }

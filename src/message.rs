@@ -1,9 +1,9 @@
-use crate::Proposal;
-use crate::GnomeId;
 use crate::Awareness;
+// use crate::GnomeId;
+use crate::Proposal;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Message {
-    KeepAlive(GnomeId, Awareness),
-    Proposal(GnomeId, Awareness, Proposal),
+    KeepAlive(Awareness),
+    Proposal(Awareness, Proposal),
 }

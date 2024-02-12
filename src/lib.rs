@@ -5,6 +5,7 @@ use crate::gnome::{Gnome, GnomeId};
 mod message;
 mod swarm;
 use crate::message::Message;
+use crate::swarm::SwarmTime;
 mod manager;
 use manager::Manager;
 mod neighbor;
@@ -23,7 +24,7 @@ const DEFAULT_NEIGHBORS_PER_GNOME: usize = 3;
 const DEFAULT_SWARM_DIAMETER: u8 = 7;
 // const MAX_PAYLOAD_SIZE: u32 = 1024;
 
-type Proposal = u8;
+type Proposal = (SwarmTime, u8);
 
 pub enum Request {
     MakeProposal(Box<[u8; 1024]>),

@@ -1,8 +1,9 @@
 use crate::Proposal;
+use crate::SwarmTime;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Awareness {
-    Unaware,
-    Aware(u8, Proposal),
-    Confused(u8),
+    Unaware(SwarmTime),
+    Aware(SwarmTime, u8, Proposal),
+    Confused(SwarmTime, u8),
 }

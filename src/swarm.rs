@@ -5,6 +5,15 @@ use crate::Response;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{spawn, JoinHandle};
 
+#[derive(PartialEq, PartialOrd, Eq, Clone, Copy, Debug)]
+pub struct SwarmTime(pub u32);
+
+impl SwarmTime {
+    pub fn inc(&self) -> Self {
+        SwarmTime(self.0 + 1)
+    }
+}
+
 pub struct Swarm {
     pub name: String,
     pub sender: Sender<Request>,
@@ -17,12 +26,11 @@ impl Swarm {
         let (sender, request_receiver) = channel::<Request>();
         let (response_sender, receiver) = channel::<Response>();
 
-        let mut gnome = Gnome::new(response_sender, request_receiver);
-        if let Some(neighbors) = neighbors {
-            for neighbor in neighbors {
-                gnome.add_neighbor(neighbor);
-            }
-        }
+        let gnome = if let Some(neighbors) = neighbors {
+            Gnome::new_with_neighbors(response_sender, request_receiver, neighbors)
+        } else {
+            Gnome::new(response_sender, request_receiver)
+        };
         let join_handle = spawn(move || {
             gnome.do_your_job();
         });
