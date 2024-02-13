@@ -15,7 +15,14 @@ impl Awareness {
         None
     }
 
+    pub fn is_aware(&self) -> bool {
+        matches!(self, Awareness::Aware(_, _, _))
+    }
+
     pub fn is_unaware(&self) -> bool {
         matches!(self, Awareness::Unaware(_st))
+    }
+    pub fn is_confused(&self) -> bool {
+        matches!(self, Awareness::Confused(_st, _cd))
     }
 }

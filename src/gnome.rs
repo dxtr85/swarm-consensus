@@ -277,7 +277,7 @@ impl Gnome {
         );
         for mut neighbor in loop_neighbors {
             looped = true;
-            let (served, sanity_passed) = neighbor.try_recv();
+            let (served, sanity_passed) = neighbor.try_recv(self.awareness);
             if served {
                 if sanity_passed {
                     if let Some(proposal) = neighbor.proposal {

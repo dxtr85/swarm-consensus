@@ -44,24 +44,44 @@ impl Neighbor {
         self.awareness = Awareness::Unaware(swarm_time);
     }
 
-    pub fn try_recv(&mut self) -> (bool, bool) {
+    pub fn try_recv(&mut self, gnome_awareness: Awareness) -> (bool, bool) {
         let mut message_recvd = false;
         let mut sanity_passed = true;
         if let Ok(data) = self.receiver.try_recv() {
             message_recvd = true;
             let swarm_time = self.swarm_time();
             match data {
-                ka @ Message::KeepAlive(awareness) => {
-                    self.awareness = awareness;
+                ka @ Message::KeepAlive(new_awareness) => {
+                    // A gnome can not keep progressing after being told 
+                    // that there is a conflicting proposal (must become confused)
+                    if gnome_awareness.is_confused() && new_awareness.is_aware(){
+                        sanity_passed = false;
+                    }
+                    let gnome_neighborhood = if gnome_awareness.is_aware(){
+                        gnome_awareness.neighborhood().unwrap()
+                    }else{0};
+                    // TODO: fix how to reset prev_awareness
+                    if self.awareness.is_aware() && new_awareness.is_aware() {
+                        sanity_passed = sanity_passed && self.sanity_check(&new_awareness, gnome_neighborhood);
+                    }
+                    self.prev_awareness = Some(self.awareness);
+                    self.awareness = new_awareness;
                     println!("{:?} << {:?}", self.id, ka);
                 }
-                p @ Message::Proposal(awareness, value) => {
-                    self.awareness = awareness;
+                p @ Message::Proposal(new_awareness, value) => {
+                    // A gnome can not announce a different action unless the previous
+                    // action was completed or the confusion timeout has passed
+                    if !gnome_awareness.is_unaware(){
+                        sanity_passed = false;
+                    }
+                    self.awareness = new_awareness;
                     self.proposal = Some(value as Proposal);
                     println!("{:?} << {:?}", self.id, p);
                 }
             }
             let new_swarm_time = self.swarm_time();
+            // TODO: with below if we receive messages in reversed order,
+            // we drop a neighbor
             if new_swarm_time < swarm_time {
                 println!(
                     "Received a message with ST{:?}  when previous was {:?}",
@@ -71,5 +91,18 @@ impl Neighbor {
             }
         }
         (message_recvd, sanity_passed)
+    }
+
+    fn sanity_check(&self, awareness: &Awareness, gnome_neighborhood: u8) -> bool {
+        let current_neighborhood = awareness.neighborhood().unwrap();
+        let new_neighborhood = self.awareness.neighborhood().unwrap();
+        let newer_than_two_turns_before = if let Some(prev_awareness) = self.prev_awareness{
+            let prev_neighborhood = prev_awareness.neighborhood().unwrap();
+            new_neighborhood > prev_neighborhood
+        }else{true};
+       let backtrack_sanity = current_neighborhood > new_neighborhood;
+       let neighborhood_increase_sanity = new_neighborhood > current_neighborhood || newer_than_two_turns_before;
+       let not_too_aware = new_neighborhood <= gnome_neighborhood +1;
+       backtrack_sanity && neighborhood_increase_sanity&& not_too_aware
     }
 }
