@@ -52,6 +52,9 @@ impl Neighbor {
             let swarm_time = self.swarm_time();
             match data {
                 ka @ Message::KeepAlive(new_awareness) => {
+                    if !new_awareness.is_aware(){
+                        self.prev_awareness = None;
+                    }
                     // A gnome can not keep progressing after being told 
                     // that there is a conflicting proposal (must become confused)
                     if gnome_awareness.is_confused() && new_awareness.is_aware(){
@@ -60,7 +63,6 @@ impl Neighbor {
                     let gnome_neighborhood = if gnome_awareness.is_aware(){
                         gnome_awareness.neighborhood().unwrap()
                     }else{0};
-                    // TODO: fix how to reset prev_awareness
                     if self.awareness.is_aware() && new_awareness.is_aware() {
                         sanity_passed = sanity_passed && self.sanity_check(&new_awareness, gnome_neighborhood);
                     }
@@ -74,6 +76,7 @@ impl Neighbor {
                     if !gnome_awareness.is_unaware(){
                         sanity_passed = false;
                     }
+                    self.prev_awareness = None;
                     self.awareness = new_awareness;
                     self.proposal = Some(value as Proposal);
                     println!("{:?} << {:?}", self.id, p);
@@ -81,10 +84,10 @@ impl Neighbor {
             }
             let new_swarm_time = self.swarm_time();
             // TODO: with below if we receive messages in reversed order,
-            // we drop a neighbor
+            // we drop a neighbor, but sanity will fail anyway so...
             if new_swarm_time < swarm_time {
                 println!(
-                    "Received a message with ST{:?}  when previous was {:?}",
+                    "Received a message with {:?}  when previous was {:?}",
                     new_swarm_time, swarm_time
                 );
                 sanity_passed = false;
