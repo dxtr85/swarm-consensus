@@ -4,6 +4,7 @@ use crate::Proposal;
 use crate::SwarmTime;
 use crate::DEFAULT_SWARM_DIAMETER;
 
+#[derive(Debug)]
 pub struct NextState {
     pub awareness: Awareness,
     pub become_confused: bool,
@@ -16,12 +17,13 @@ pub struct NextState {
     pub awareness_diameter: u8, // = 255;
     pub confusion_diameter: u8, // = 0;
     pub swarm_time: SwarmTime,
+    pub swarm_time_min: SwarmTime,
     pub proposal: Option<Proposal>,
 }
 
 impl NextState {
     pub fn from_awareness(awareness: Awareness) -> Self {
-        let swarm_time = match awareness {
+        let swarm_time_min = match awareness {
             Awareness::Unaware(st) => st,
             Awareness::Aware(st, _pd, _p) => st,
             Awareness::Confused(st, _p) => st,
@@ -37,7 +39,8 @@ impl NextState {
             any_aware: false,
             awareness_diameter: 255,
             confusion_diameter: 0,
-            swarm_time,
+            swarm_time: SwarmTime(std::u32::MAX),
+            swarm_time_min,
             proposal: None,
         }
     }
@@ -70,12 +73,23 @@ impl NextState {
                     }
                 }
             }
-            Awareness::Confused(swarm_time, _confusion_neighborhood) => {
+            Awareness::Confused(swarm_time, confusion_neighborhood) => {
                 if swarm_time < self.swarm_time {
                     self.swarm_time = swarm_time;
                 }
+                if confusion_neighborhood > self.confusion_diameter {
+                    self.confusion_diameter = confusion_neighborhood;
+                }
                 self.any_confused = true;
             }
+        }
+    }
+
+    pub fn next_swarm_time(&self)-> SwarmTime{
+        if self.swarm_time.0 == std::u32::MAX{
+            self.swarm_time_min.inc()
+        }else{
+            self.swarm_time.inc()
         }
     }
 }

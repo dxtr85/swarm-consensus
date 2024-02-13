@@ -2,6 +2,7 @@ use crate::Gnome;
 use crate::Neighbor;
 use crate::Request;
 use crate::Response;
+use std::ops::Sub;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{spawn, JoinHandle};
 
@@ -11,6 +12,13 @@ pub struct SwarmTime(pub u32);
 impl SwarmTime {
     pub fn inc(&self) -> Self {
         SwarmTime(self.0 + 1)
+    }
+}
+
+impl Sub for SwarmTime {
+    type Output = u32;
+    fn sub(self, rhs: SwarmTime) -> Self::Output {
+        self.0 - rhs.0
     }
 }
 

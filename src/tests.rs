@@ -24,8 +24,10 @@ fn gnome_message_exchange() {
     manager.get_status("message exchange");
     let p1: Proposal = (SwarmTime(0), 1);
     let bp1 = Box::new([p1.1; 1024]);
-    let left_awareness = Awareness::Aware(SwarmTime(0), 12, p1);
-    let right_awareness = Awareness::Aware(SwarmTime(0), 12, p1);
+    // let p2: Proposal = (SwarmTime(0), 2);
+    // let bp2 = Box::new([p2.1; 1024]);
+    let left_awareness = Awareness::Aware(SwarmTime(12), 5, p1);
+    let right_awareness = Awareness::Aware(SwarmTime(12), 5, p1);
     println!("Neighbors sent Proposal!");
 
     let _ = left_s.send(Message::Proposal(left_awareness, p1));
@@ -34,8 +36,8 @@ fn gnome_message_exchange() {
 
     let msg_res = resp_receiver.try_recv();
     assert!(msg_res.is_err(), "User received unexpected message!");
-    let left_awareness = Awareness::Aware(SwarmTime(1), 13, p1);
-    let right_awareness = Awareness::Aware(SwarmTime(3), 13, p1);
+    let left_awareness = Awareness::Aware(SwarmTime(13), 6, p1);
+    let right_awareness = Awareness::Aware(SwarmTime(13), 6, p1);
 
     let _ = left_s.send(Message::KeepAlive(left_awareness));
     let _ = right_s.send(Message::KeepAlive(right_awareness));
@@ -56,10 +58,11 @@ fn gnome_message_exchange() {
     manager.finish();
 }
 
-// #[test]
-// fn exit_on_request() {
-//     let mut manager = Manager::new();
-//     let _ = manager.join_a_swarm("exit on request".to_string(), None);
-//     manager.get_status("exit on request");
-//     manager.finish();
-// }
+#[test]
+fn exit_on_request() {
+    let mut manager = Manager::new();
+    let _ = manager.join_a_swarm("exit on request".to_string(), None);
+    manager.get_status("exit on request");
+    // TODO: below is not required
+    // manager.finish();
+}

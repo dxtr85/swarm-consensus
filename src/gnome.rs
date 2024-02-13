@@ -80,7 +80,7 @@ impl Gnome {
             match request {
                 Request::Disconnect => return true,
                 Request::Status => {
-                    println!("{:?}, proposal: {:?}", self.awareness, self.proposal);
+                    println!("{:?}, neighbors: {}", self.awareness, self.neighbors.len());
                 }
                 Request::MakeProposal(_proposal) => {}
                 Request::AddNeighbor(neighbor) => {
@@ -116,8 +116,11 @@ impl Gnome {
             let advance_to_next_turn = self.try_recv();
             let timeout = timeout_receiver.try_recv().is_ok();
             if advance_to_next_turn | timeout {
-                println!("Advancing to next turn!");
                 self.swap_neighbors();
+                println!(
+                    "Advancing to next turn! (Neighbors count: {})",
+                    self.neighbors.len()
+                );
                 let sync_neighbors_st = self.update_state();
                 // println!("New self: {:?}", self.awareness);
                 let message_to_send = self.prepare_message();
@@ -168,8 +171,8 @@ impl Gnome {
     }
 
     fn swap_neighbors(&mut self) {
-        // Drop neighbors that are late
         while let Some(neighbor) = self.neighbors.pop() {
+            println!("Drop neighbor that was late");
             drop(neighbor);
         }
         self.neighbors = std::mem::replace(
@@ -180,12 +183,9 @@ impl Gnome {
 
     fn update_state(&mut self) -> bool {
         let mut sync_neighbors_swarm_time = false;
-        self.swarm_time = self.next_state.swarm_time.inc();
+        self.swarm_time = self.next_state.next_swarm_time();
         if self.next_state.become_confused {
-            self.set_awareness(Awareness::Confused(
-                self.swarm_time,
-                2 * self.swarm_diameter + 1,
-            ));
+            self.set_awareness(Awareness::Confused(self.swarm_time, self.swarm_diameter));
             self.proposal = None;
             return sync_neighbors_swarm_time;
         }
@@ -200,27 +200,44 @@ impl Gnome {
         }
         if self.next_state.all_unaware {
             if let Awareness::Unaware(_swarm_time) = self.awareness {
+                // TODO add check if there was confusion just before
                 if let Some(proposal) = self.proposal {
                     self.set_awareness(Awareness::Aware(self.swarm_time, 0, proposal));
                 }
             } else {
+                println!("All neighbors unaware, but me: {:?}", self.awareness);
                 // Can not update awareness state when all neighbors are unaware
                 // return;
             }
         } else if self.next_state.all_aware {
-            if self.proposal.is_none() {
+            if self.awareness.is_unaware() {
                 self.proposal = self.next_state.proposal;
             }
-            if self.next_state.awareness_diameter >= 2 * self.swarm_diameter - 1 {
-                let (proposal_time, proposal_data) = self.proposal.unwrap();
-                self.swarm_time =
-                    SwarmTime(proposal_time.0 + self.next_state.awareness_diameter as u32 + 1);
-                self.set_awareness(Awareness::Unaware(self.swarm_time));
-                let _ = self
-                    .sender
-                    .send(Response::Data(Box::new([proposal_data; 1024])));
-                self.proposal = None;
-                sync_neighbors_swarm_time = true;
+            self.set_awareness(Awareness::Aware(
+                self.swarm_time,
+                self.next_state.awareness_diameter + 1,
+                self.next_state.proposal.unwrap(),
+            ));
+            let proposal_time = self.proposal.unwrap().0;
+            if self.swarm_time - proposal_time >= (2 * self.swarm_diameter) as u32 {
+                let neighborhood = self.awareness.neighborhood().unwrap();
+                if neighborhood >= self.swarm_diameter {
+                    let (proposal_time, proposal_data) = self.proposal.unwrap();
+                    // SYNC swarm_time
+                    self.swarm_time = SwarmTime(
+                        proposal_time.0 + 2 * (self.next_state.awareness_diameter as u32 + 1),
+                    );
+                    self.set_awareness(Awareness::Unaware(self.swarm_time));
+                    let _ = self
+                        .sender
+                        .send(Response::Data(Box::new([proposal_data; 1024])));
+                    self.proposal = None;
+                    sync_neighbors_swarm_time = true;
+                } else {
+                    println!("ERROR: Swarm diameter too small or Proposal was backdated!");
+                    self.proposal = None;
+                    self.set_awareness(Awareness::Unaware(self.swarm_time));
+                }
             } else {
                 self.set_awareness(Awareness::Aware(
                     self.swarm_time,
@@ -229,7 +246,7 @@ impl Gnome {
                 ));
             }
         } else if self.next_state.all_confused {
-            if self.next_state.confusion_diameter == 1 {
+            if self.next_state.confusion_diameter == 0 {
                 self.set_awareness(Awareness::Unaware(self.swarm_time));
             } else {
                 self.set_awareness(Awareness::Confused(
@@ -238,6 +255,7 @@ impl Gnome {
                 ));
             }
         } else if self.next_state.any_confused {
+            self.set_awareness(Awareness::Confused(self.swarm_time, self.swarm_diameter));
         } else if self.next_state.any_aware {
             if let Awareness::Unaware(_swarm_time) = self.awareness {
                 self.set_awareness(Awareness::Aware(

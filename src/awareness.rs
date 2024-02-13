@@ -7,3 +7,15 @@ pub enum Awareness {
     Aware(SwarmTime, u8, Proposal),
     Confused(SwarmTime, u8),
 }
+impl Awareness {
+    pub fn neighborhood(&self) -> Option<u8> {
+        if let Awareness::Aware(_st, hood, _p) = self {
+            return Some(*hood);
+        }
+        None
+    }
+
+    pub fn is_unaware(&self) -> bool {
+        matches!(self, Awareness::Unaware(_st))
+    }
+}

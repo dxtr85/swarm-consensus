@@ -12,6 +12,7 @@ pub struct Neighbor {
     receiver: Receiver<Message>,
     pub sender: Sender<Message>,
     pub awareness: Awareness,
+    pub prev_awareness: Option<Awareness>,
     pub proposal: Option<Proposal>,
 }
 
@@ -27,6 +28,7 @@ impl Neighbor {
             receiver,
             sender,
             awareness: Awareness::Unaware(swarm_time),
+            prev_awareness: None,
             proposal: None,
         }
     }
