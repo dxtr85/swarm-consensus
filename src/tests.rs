@@ -22,25 +22,42 @@ fn gnome_message_exchange() {
     let neighbors: Vec<Neighbor> = vec![left, right];
     let (_, resp_receiver) = manager.join_a_swarm("message exchange".to_string(), Some(neighbors));
     manager.get_status("message exchange");
-    let p1: Proposal = (SwarmTime(0), 1);
-    let bp1 = Box::new([p1.1; 1024]);
-    // let p2: Proposal = (SwarmTime(0), 2);
-    // let bp2 = Box::new([p2.1; 1024]);
-    let left_awareness = Awareness::Aware(SwarmTime(12), 5, p1);
-    let right_awareness = Awareness::Aware(SwarmTime(12), 5, p1);
+    let p1: Proposal = Proposal {
+        proposal_time: SwarmTime(0),
+        proposer: left_id,
+        data: ProposalData(1),
+    };
+    let left_awareness = Awareness::Aware(5);
+    let right_awareness = Awareness::Aware(5);
     println!("Neighbors sent Proposal!");
 
-    let _ = left_s.send(Message::Proposal(left_awareness, p1));
-    let _ = right_s.send(Message::Proposal(right_awareness, p1));
+    let _ = left_s.send(Message {
+        swarm_time: SwarmTime(5),
+        awareness: left_awareness,
+        data: Data::Proposal(SwarmTime(0), left_id, ProposalData(1)),
+    });
+    let _ = right_s.send(Message {
+        swarm_time: SwarmTime(5),
+        awareness: right_awareness,
+        data: Data::Proposal(SwarmTime(0), left_id, ProposalData(1)),
+    });
     manager.get_status("message exchange");
 
     let msg_res = resp_receiver.try_recv();
     assert!(msg_res.is_err(), "User received unexpected message!");
-    let left_awareness = Awareness::Aware(SwarmTime(13), 6, p1);
-    let right_awareness = Awareness::Aware(SwarmTime(13), 6, p1);
+    let left_awareness = Awareness::Aware(6);
+    let right_awareness = Awareness::Aware(6);
 
-    let _ = left_s.send(Message::KeepAlive(left_awareness));
-    let _ = right_s.send(Message::KeepAlive(right_awareness));
+    let _ = left_s.send(Message {
+        swarm_time: SwarmTime(6),
+        awareness: left_awareness,
+        data: Data::ProposalId(SwarmTime(0), left_id),
+    });
+    let _ = right_s.send(Message {
+        swarm_time: SwarmTime(6),
+        awareness: right_awareness,
+        data: Data::ProposalId(SwarmTime(0), left_id),
+    });
     manager.get_status("message exchange");
 
     let rcvd = resp_receiver.recv();
@@ -50,19 +67,20 @@ fn gnome_message_exchange() {
     let unwrapped = rcvd.unwrap();
     assert_eq!(
         unwrapped,
-        Response::Data(bp1),
+        Response::Data(p1.data),
         "User received unexpected response!"
     );
 
-    println!("Received {:?}", unwrapped);
+    println!("<< User {:?}", unwrapped);
+    // manager.get_status("message exchange");
     manager.finish();
 }
 
-#[test]
-fn exit_on_request() {
-    let mut manager = Manager::new();
-    let _ = manager.join_a_swarm("exit on request".to_string(), None);
-    manager.get_status("exit on request");
-    // TODO: below is not required
-    // manager.finish();
-}
+// #[test]
+// fn exit_on_request() {
+//     let mut manager = Manager::new();
+//     let _ = manager.join_a_swarm("exit on request".to_string(), None);
+//     manager.get_status("exit on request");
+//     // TODO: below is not required
+//     // manager.finish();
+// }

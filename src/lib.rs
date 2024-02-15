@@ -4,6 +4,7 @@ mod gnome;
 use crate::gnome::{Gnome, GnomeId};
 mod message;
 mod swarm;
+use crate::message::Data;
 use crate::message::Message;
 use crate::swarm::SwarmTime;
 mod manager;
@@ -24,7 +25,15 @@ const DEFAULT_NEIGHBORS_PER_GNOME: usize = 3;
 const DEFAULT_SWARM_DIAMETER: u8 = 7;
 // const MAX_PAYLOAD_SIZE: u32 = 1024;
 
-type Proposal = (SwarmTime, u8);
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ProposalData(u8);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Proposal {
+    proposal_time: SwarmTime,
+    proposer: GnomeId,
+    data: ProposalData,
+}
 
 pub enum Request {
     MakeProposal(Box<[u8; 1024]>),
@@ -35,14 +44,14 @@ pub enum Request {
 
 #[derive(PartialEq)]
 pub enum Response {
-    Data(Box<[u8; 1024]>),
+    Data(ProposalData),
 }
 
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Response::Data(boxed_data) => {
-                write!(f, "Data: {:?}", &boxed_data[..16])
+                write!(f, "Data: {:?}", &boxed_data)
             }
         }
     }

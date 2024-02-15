@@ -1,19 +1,20 @@
-extern crate chrono;
-extern crate timer;
 use crate::gnome_id_dispenser;
 use crate::Awareness;
+use crate::Data;
 use crate::Message;
 use crate::Neighbor;
 use crate::NextState;
-use crate::Proposal;
+use crate::ProposalData;
 use crate::Request;
 use crate::Response;
 use crate::SwarmTime;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
+use std::time::Duration;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GnomeId(pub u32);
 
 pub struct Gnome {
@@ -26,7 +27,8 @@ pub struct Gnome {
     new_neighbors: Vec<Neighbor>,
     refreshed_neighbors: Vec<Neighbor>,
     swarm_diameter: u8,
-    proposal: Option<Proposal>,
+    proposal_id: Option<(SwarmTime, GnomeId)>,
+    proposal_data: ProposalData,
     next_state: NextState,
 }
 
@@ -34,7 +36,7 @@ impl Gnome {
     pub fn new(sender: Sender<Response>, receiver: Receiver<Request>) -> Self {
         Gnome {
             id: gnome_id_dispenser(),
-            awareness: Awareness::Unaware(SwarmTime(0)),
+            awareness: Awareness::Unaware,
             swarm_time: SwarmTime(0),
             receiver,
             sender,
@@ -42,8 +44,9 @@ impl Gnome {
             new_neighbors: vec![],
             refreshed_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
             swarm_diameter: DEFAULT_SWARM_DIAMETER,
-            proposal: None,
-            next_state: NextState::from_awareness(Awareness::Unaware(SwarmTime(0))),
+            proposal_id: None,
+            proposal_data: ProposalData(0),
+            next_state: NextState::from(SwarmTime(0), Awareness::Unaware),
         }
     }
 
@@ -80,7 +83,17 @@ impl Gnome {
             match request {
                 Request::Disconnect => return true,
                 Request::Status => {
-                    println!("{:?}, neighbors: {}", self.awareness, self.neighbors.len());
+                    let mut propid = "".to_string();
+                    if let Some((p_time, p_gid)) = self.proposal_id {
+                        propid = format!("PropID-{}-{}", p_time.0, p_gid.0);
+                    }
+                    println!(
+                        "{:10} {:?} {:?}, neighbors: {}",
+                        self.swarm_time.0,
+                        self.awareness,
+                        propid,
+                        self.neighbors.len()
+                    );
                 }
                 Request::MakeProposal(_proposal) => {}
                 Request::AddNeighbor(neighbor) => {
@@ -92,13 +105,11 @@ impl Gnome {
     }
 
     pub fn do_your_job(mut self) {
-        let timer = timer::Timer::new();
-        let (tx, timeout_receiver) = channel();
-        let mut txc = tx.clone();
-        let mut _guard = timer.schedule_with_delay(chrono::Duration::seconds(1), move || {
-            // This closure is executed on the scheduler thread,
-            // so we want to move it away asap.
-            let _ignored = txc.send(()); // Avoid unwrapping here.
+        let (timer_sender, timeout_receiver) = channel();
+        let clone_timer_sender = timer_sender.clone();
+        let mut _guard = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(500));
+            if let Ok(()) = clone_timer_sender.send("Time out") {}
         });
 
         // let mut loop_breaker = 10;
@@ -117,10 +128,10 @@ impl Gnome {
             let timeout = timeout_receiver.try_recv().is_ok();
             if advance_to_next_turn | timeout {
                 self.swap_neighbors();
-                println!(
-                    "Advancing to next turn! (Neighbors count: {})",
-                    self.neighbors.len()
-                );
+                // println!(
+                //     "Advancing to next turn! (Neighbors count: {})",
+                //     self.neighbors.len()
+                // );
                 let sync_neighbors_st = self.update_state();
                 // println!("New self: {:?}", self.awareness);
                 let message_to_send = self.prepare_message();
@@ -129,9 +140,10 @@ impl Gnome {
                     self.sync_neighbors_time();
                 }
                 drop(_guard);
-                txc = tx.clone();
-                _guard = timer.schedule_with_delay(chrono::Duration::seconds(1), move || {
-                    let _ignored = txc.send(()); // Avoid unwrapping here.
+                let clone_timer_sender = timer_sender.clone();
+                _guard = thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(500));
+                    if let Ok(()) = clone_timer_sender.send("Time out") {}
                 });
             } else {
                 // println!("Not advancing to next turn.");
@@ -163,10 +175,20 @@ impl Gnome {
     }
 
     pub fn prepare_message(&self) -> Message {
-        if let Awareness::Aware(_swarm_time, 0, proposal) = self.awareness {
-            Message::Proposal(self.awareness, proposal)
+        let data: Data = if let Awareness::Aware(0) = self.awareness {
+            // Message::Proposal(self.awareness, proposal)
+            Data::Proposal(
+                self.proposal_id.unwrap().0,
+                self.proposal_id.unwrap().1,
+                self.proposal_data,
+            )
         } else {
-            Message::KeepAlive(self.awareness)
+            Data::KeepAlive
+        };
+        Message {
+            swarm_time: self.swarm_time,
+            awareness: self.awareness,
+            data,
         }
     }
 
@@ -184,9 +206,10 @@ impl Gnome {
     fn update_state(&mut self) -> bool {
         let mut sync_neighbors_swarm_time = false;
         self.swarm_time = self.next_state.next_swarm_time();
+        // println!("Next swarm time: {:?}", self.swarm_time);
         if self.next_state.become_confused {
-            self.set_awareness(Awareness::Confused(self.swarm_time, self.swarm_diameter));
-            self.proposal = None;
+            self.set_awareness(Awareness::Confused(self.swarm_diameter));
+            self.proposal_id = None;
             return sync_neighbors_swarm_time;
         }
         if self.next_state.any_confused || self.next_state.any_unaware {
@@ -199,10 +222,10 @@ impl Gnome {
             self.next_state.all_unaware = false;
         }
         if self.next_state.all_unaware {
-            if let Awareness::Unaware(_swarm_time) = self.awareness {
+            if let Awareness::Unaware = self.awareness {
                 // TODO add check if there was confusion just before
-                if let Some(proposal) = self.proposal {
-                    self.set_awareness(Awareness::Aware(self.swarm_time, 0, proposal));
+                if self.proposal_id.is_some() {
+                    self.set_awareness(Awareness::Aware(0));
                 }
             } else {
                 println!("All neighbors unaware, but me: {:?}", self.awareness);
@@ -210,62 +233,61 @@ impl Gnome {
                 // return;
             }
         } else if self.next_state.all_aware {
+            // println!("All aware!");
             if self.awareness.is_unaware() {
-                self.proposal = self.next_state.proposal;
+                self.proposal_id = self.next_state.proposal_id;
+                self.proposal_data = self.next_state.proposal_data;
             }
             self.set_awareness(Awareness::Aware(
-                self.swarm_time,
+                // self.swarm_time,
                 self.next_state.awareness_diameter + 1,
-                self.next_state.proposal.unwrap(),
+                // self.next_state.proposal.unwrap(),
             ));
-            let proposal_time = self.proposal.unwrap().0;
-            if self.swarm_time - proposal_time >= (2 * self.swarm_diameter) as u32 {
-                let neighborhood = self.awareness.neighborhood().unwrap();
+            let proposal_time = self.proposal_id.unwrap().0;
+            let neighborhood = self.awareness.neighborhood().unwrap();
+            if neighborhood >= self.swarm_diameter
+                || self.swarm_time - proposal_time >= (2 * self.swarm_diameter as u32)
+            {
                 if neighborhood >= self.swarm_diameter {
-                    let (proposal_time, proposal_data) = self.proposal.unwrap();
                     // SYNC swarm_time
                     self.swarm_time = SwarmTime(
                         proposal_time.0 + 2 * (self.next_state.awareness_diameter as u32 + 1),
                     );
-                    self.set_awareness(Awareness::Unaware(self.swarm_time));
-                    let _ = self
-                        .sender
-                        .send(Response::Data(Box::new([proposal_data; 1024])));
-                    self.proposal = None;
+                    self.set_awareness(Awareness::Unaware);
+                    let _ = self.sender.send(Response::Data(self.proposal_data));
+                    // self.proposal_data = ProposalData(0);
+                    self.proposal_id = None;
                     sync_neighbors_swarm_time = true;
                 } else {
                     println!("ERROR: Swarm diameter too small or Proposal was backdated!");
-                    self.proposal = None;
-                    self.set_awareness(Awareness::Unaware(self.swarm_time));
+                    self.proposal_id = None;
+                    self.set_awareness(Awareness::Unaware);
                 }
             } else {
                 self.set_awareness(Awareness::Aware(
-                    self.swarm_time,
+                    // self.swarm_time,
                     self.next_state.awareness_diameter + 1,
-                    self.proposal.unwrap(),
+                    // self.proposal.unwrap(),
                 ));
             }
         } else if self.next_state.all_confused {
             if self.next_state.confusion_diameter == 0 {
-                self.set_awareness(Awareness::Unaware(self.swarm_time));
+                self.set_awareness(Awareness::Unaware);
             } else {
                 self.set_awareness(Awareness::Confused(
-                    self.swarm_time,
+                    // self.swarm_time,
                     self.next_state.confusion_diameter - 1,
                 ));
             }
         } else if self.next_state.any_confused {
-            self.set_awareness(Awareness::Confused(self.swarm_time, self.swarm_diameter));
+            self.set_awareness(Awareness::Confused(self.swarm_diameter));
         } else if self.next_state.any_aware {
-            if let Awareness::Unaware(_swarm_time) = self.awareness {
-                self.set_awareness(Awareness::Aware(
-                    self.swarm_time,
-                    0,
-                    self.next_state.proposal.unwrap(),
-                ))
+            if let Awareness::Unaware = self.awareness {
+                self.set_awareness(Awareness::Aware(0));
+                // self.next_state.proposal.unwrap()))
             }
         }
-        self.next_state = NextState::from_awareness(self.awareness);
+        self.next_state = NextState::from(self.swarm_time, self.awareness);
         sync_neighbors_swarm_time
     }
 
@@ -277,11 +299,11 @@ impl Gnome {
         );
         for mut neighbor in loop_neighbors {
             looped = true;
-            let (served, sanity_passed) = neighbor.try_recv(self.awareness);
+            let (served, sanity_passed) = neighbor.try_recv(self.awareness, self.proposal_id);
             if served {
                 if sanity_passed {
-                    if let Some(proposal) = neighbor.proposal {
-                        if let Some(existing_proposal) = &self.proposal {
+                    if let Some(proposal) = neighbor.proposal_id {
+                        if let Some(existing_proposal) = &self.proposal_id {
                             if proposal.ne(existing_proposal) && self.reject_all_proposals() {
                                 // Droping an unsober neighbor
                                 continue;
@@ -305,9 +327,9 @@ impl Gnome {
 
     fn reject_all_proposals(&self) -> bool {
         match self.awareness {
-            Awareness::Unaware(_st) => false,
-            Awareness::Confused(_st, _n) => true,
-            Awareness::Aware(_st, n, _p) => n >= self.swarm_diameter,
+            Awareness::Unaware => false,
+            Awareness::Confused(_) => true,
+            Awareness::Aware(n) => n >= self.swarm_diameter,
         }
     }
 }

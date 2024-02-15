@@ -24,7 +24,7 @@ impl Manager {
         let mut swarm = Swarm::join(name.clone(), neighbors);
         let sender = swarm.sender.clone();
         let receiver = swarm.receiver.take();
-        println!("Joined `{}`", swarm.name);
+        println!("Joined `{}` swarm", swarm.name);
         self.swarms.insert(name, swarm);
         (sender, receiver.unwrap())
     }
@@ -40,7 +40,7 @@ impl Manager {
             let _ = swarm.sender.send(Request::Disconnect);
             let jh = swarm.join_handle.take().unwrap();
             let _ = jh.join();
-            println!("Leaving `{}`", swarm.name);
+            println!("Leaving `{}` swarm", swarm.name);
         }
         drop(self)
     }
