@@ -20,8 +20,16 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn include(&self, request: NeighborRequest, response: NeighborResponse) -> Message {
+    pub fn include_response(
+        &self,
+        request: NeighborRequest,
+        response: NeighborResponse,
+    ) -> Message {
         let data = Data::Response(request, response);
+        Message { data, ..*self }
+    }
+    pub fn include_request(&self, request: NeighborRequest) -> Message {
+        let data = Data::Request(request);
         Message { data, ..*self }
     }
 }
@@ -39,7 +47,7 @@ impl Display for Message {
 #[derive(Clone, Copy, Debug)]
 pub enum Data {
     KeepAlive,
-    Request,
+    Request(NeighborRequest),
     Response(NeighborRequest, NeighborResponse),
     ProposalId(SwarmTime, GnomeId),
     Proposal(SwarmTime, GnomeId, ProposalData),
@@ -48,7 +56,7 @@ impl Display for Data {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::KeepAlive => write!(f, "KeepAlive",),
-            Self::Request => write!(f, "Request"),
+            Self::Request(_) => write!(f, "Request"),
             Self::Response(_, _) => write!(f, "Response",),
             Self::ProposalId(swarm_time, gnome_id) => {
                 write!(f, "PropID-{}-{}", swarm_time.0, gnome_id.0)

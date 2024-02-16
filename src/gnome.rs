@@ -110,6 +110,14 @@ impl Gnome {
                         }
                     }
                 }
+                Request::AskData(gnome_id, request) => {
+                    for neighbor in &mut self.neighbors {
+                        if neighbor.id == gnome_id {
+                            neighbor.request_data(request);
+                            break;
+                        }
+                    }
+                }
             }
         }
         false
@@ -176,7 +184,10 @@ impl Gnome {
         let unserved_neighbors = std::mem::replace(&mut self.neighbors, served_neighbors);
         for mut neighbor in unserved_neighbors {
             if let Some((request, response)) = neighbor.get_specialized_data() {
-                let new_message = message.include(request, response);
+                let new_message = message.include_response(request, response);
+                let _ = neighbor.sender.send(new_message);
+            } else if let Some(request) = neighbor.our_requests.pop_front() {
+                let new_message = message.include_request(request);
                 let _ = neighbor.sender.send(new_message);
             } else {
                 let _ = neighbor.sender.send(message);
@@ -281,7 +292,15 @@ impl Gnome {
                         proposal_time.0 + 2 * (self.next_state.awareness_diameter as u32 + 1),
                     );
                     self.set_awareness(Awareness::Unaware);
-                    let _ = self.sender.send(Response::Data(self.proposal_data));
+                    if let Some((proposal_time, proposer)) = self.proposal_id {
+                        let _ = self.sender.send(Response::Data(
+                            proposal_time,
+                            proposer,
+                            self.proposal_data,
+                        ));
+                    } else {
+                        println!("ERROR: No data to send!");
+                    }
                     // self.proposal_data = ProposalData(0);
                     self.proposal_id = None;
                     sync_neighbors_swarm_time = true;
@@ -329,6 +348,9 @@ impl Gnome {
         );
         for mut neighbor in loop_neighbors {
             looped = true;
+            if let Some(response) = neighbor.our_responses.pop_front() {
+                let _ = self.sender.send(response);
+            }
             let (served, sanity_passed, new_proposal) =
                 neighbor.try_recv(self.awareness, self.proposal_id);
             if !new_proposal_received {

@@ -3,6 +3,7 @@ use crate::Data;
 use crate::GnomeId;
 use crate::Message;
 use crate::ProposalData;
+use crate::Response;
 use crate::SwarmTime;
 
 use std::collections::VecDeque;
@@ -18,6 +19,9 @@ pub struct Neighbor {
     pub prev_awareness: Option<Awareness>,
     pub proposal_id: Option<(SwarmTime, GnomeId)>,
     pub proposal_data: ProposalData,
+    pub our_requests: VecDeque<NeighborRequest>,
+    pub our_responses: VecDeque<Response>,
+    requests: VecDeque<NeighborRequest>,
     requested_data: VecDeque<(NeighborRequest, NeighborResponse)>,
 }
 
@@ -49,6 +53,9 @@ impl Neighbor {
             prev_awareness: None,
             proposal_id: None,
             proposal_data: ProposalData(0),
+            our_requests: VecDeque::new(),
+            our_responses: VecDeque::new(),
+            requests: VecDeque::new(),
             requested_data: VecDeque::new(),
         }
     }
@@ -140,7 +147,32 @@ impl Neighbor {
                     self.awareness = awareness;
                     println!("{:?} << {}", self.id, m);
                 }
-                _ => {}
+                Data::Request(request) => {
+                    // TODO: add logic for awareness & neighborhood updating
+                    self.requests.push_back(request)
+                }
+                Data::Response(request, response) => {
+                    // TODO: add logic for awareness & neighborhood updating
+                    match (request, response) {
+                        (
+                            NeighborRequest::ListingFrom(_swarm_time),
+                            NeighborResponse::Listing(count, listing),
+                        ) => {
+                            self.our_responses
+                                .push_back(Response::Listing(count, listing));
+                        }
+                        (
+                            NeighborRequest::Proposal(swarm_time, gnome_id),
+                            NeighborResponse::Proposal(data),
+                        ) => {
+                            self.our_responses
+                                .push_back(Response::Data(swarm_time, gnome_id, data));
+                        }
+                        (_, _) => {
+                            println!("ERROR: Unexpected neighbor request/response pair!");
+                        }
+                    }
+                }
             }
             let new_swarm_time = self.swarm_time;
 
@@ -184,5 +216,8 @@ impl Neighbor {
 
     pub fn add_requested_data(&mut self, request: NeighborRequest, data: NeighborResponse) {
         self.requested_data.push_front((request, data));
+    }
+    pub fn request_data(&mut self, request: NeighborRequest) {
+        self.our_requests.push_front(request);
     }
 }

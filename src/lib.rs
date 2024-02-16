@@ -40,6 +40,7 @@ pub struct Proposal {
 pub enum Request {
     MakeProposal(Box<[u8; 1024]>),
     AddNeighbor(Neighbor),
+    AskData(GnomeId, NeighborRequest),
     SendData(GnomeId, NeighborRequest, NeighborResponse),
     Disconnect,
     Status,
@@ -47,18 +48,26 @@ pub enum Request {
 
 #[derive(PartialEq)]
 pub enum Response {
-    Data(ProposalData),
+    Data(SwarmTime, GnomeId, ProposalData),
     DataInquiry(GnomeId, NeighborRequest),
+    Listing(u8, [(SwarmTime, GnomeId); 128]),
 }
 
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Response::Data(boxed_data) => {
-                write!(f, "Data: {:?}", &boxed_data)
+            Response::Data(swarm_time, gnome_id, boxed_data) => {
+                write!(
+                    f,
+                    "PropID-{:?}-{:?}: {:?}",
+                    swarm_time, gnome_id, &boxed_data
+                )
             }
             Response::DataInquiry(gnome_id, data_id) => {
                 write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)
+            }
+            Response::Listing(count, _data) => {
+                write!(f, "Listing with {:?} entries", count)
             }
         }
     }

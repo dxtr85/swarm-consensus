@@ -67,7 +67,7 @@ fn gnome_message_exchange() {
     let unwrapped = rcvd.unwrap();
     assert_eq!(
         unwrapped,
-        Response::Data(p1.data),
+        Response::Data(SwarmTime(0), left_id, p1.data),
         "User received unexpected response!"
     );
 
