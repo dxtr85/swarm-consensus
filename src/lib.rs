@@ -9,8 +9,10 @@ use crate::message::Message;
 use crate::swarm::SwarmTime;
 mod manager;
 use manager::Manager;
+use neighbor::NeighborRequest;
 mod neighbor;
 use crate::neighbor::Neighbor;
+use crate::neighbor::NeighborResponse;
 mod next_state;
 use crate::next_state::NextState;
 use std::fmt;
@@ -38,6 +40,7 @@ pub struct Proposal {
 pub enum Request {
     MakeProposal(Box<[u8; 1024]>),
     AddNeighbor(Neighbor),
+    SendData(GnomeId, NeighborRequest, NeighborResponse),
     Disconnect,
     Status,
 }
@@ -45,6 +48,7 @@ pub enum Request {
 #[derive(PartialEq)]
 pub enum Response {
     Data(ProposalData),
+    DataInquiry(GnomeId, NeighborRequest),
 }
 
 impl fmt::Debug for Response {
@@ -52,6 +56,9 @@ impl fmt::Debug for Response {
         match self {
             Response::Data(boxed_data) => {
                 write!(f, "Data: {:?}", &boxed_data)
+            }
+            Response::DataInquiry(gnome_id, data_id) => {
+                write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)
             }
         }
     }

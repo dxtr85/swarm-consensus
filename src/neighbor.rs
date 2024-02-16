@@ -5,18 +5,32 @@ use crate::Message;
 use crate::ProposalData;
 use crate::SwarmTime;
 
+use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, Sender};
 
 #[derive(Debug)]
 pub struct Neighbor {
-    id: GnomeId,
+    pub id: GnomeId,
     receiver: Receiver<Message>,
     pub sender: Sender<Message>,
     pub swarm_time: SwarmTime,
     pub awareness: Awareness,
     pub prev_awareness: Option<Awareness>,
     pub proposal_id: Option<(SwarmTime, GnomeId)>,
-    pub proposal_data: ProposalData
+    pub proposal_data: ProposalData,
+    requested_data: VecDeque<(NeighborRequest, NeighborResponse)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NeighborRequest {
+    ListingFrom(SwarmTime),
+    Proposal(SwarmTime, GnomeId),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum NeighborResponse {
+    Listing(u8, [(SwarmTime, GnomeId); 128]),
+    Proposal(ProposalData),
 }
 
 impl Neighbor {
@@ -34,26 +48,24 @@ impl Neighbor {
             awareness: Awareness::Unaware,
             prev_awareness: None,
             proposal_id: None,
-            proposal_data: ProposalData(0)
+            proposal_data: ProposalData(0),
+            requested_data: VecDeque::new(),
         }
     }
-    // fn swarm_time(&self) -> SwarmTime {
-    //     match self.awareness {
-    //         Awareness::Unaware => st,
-    //         Awareness::Aware( _p, _pd) => st,
-    //         Awareness::Confused(st, _cd) => st,
-    //     }
-    // }
 
     pub fn set_swarm_time(&mut self, swarm_time: SwarmTime) {
         self.awareness = Awareness::Unaware;
-        self.swarm_time = swarm_time; 
+        self.swarm_time = swarm_time;
     }
 
-
-   pub fn try_recv(&mut self, gnome_awareness: Awareness, proposal_id: Option<(SwarmTime, GnomeId)>) -> (bool, bool) {
+    pub fn try_recv(
+        &mut self,
+        gnome_awareness: Awareness,
+        proposal_id: Option<(SwarmTime, GnomeId)>,
+    ) -> (bool, bool, bool) {
         let mut message_recvd = false;
         let mut sanity_passed = true;
+        let mut new_proposal = false;
         if let Ok(
             m @ Message {
                 swarm_time,
@@ -63,7 +75,7 @@ impl Neighbor {
         ) = self.receiver.try_recv()
         {
             message_recvd = true;
-            if self.swarm_time > swarm_time{
+            if self.swarm_time > swarm_time {
                 println!("Received a message with older swarm_time than previous!");
             }
             self.swarm_time = swarm_time;
@@ -90,36 +102,43 @@ impl Neighbor {
                     }
                     self.prev_awareness = Some(self.awareness);
                     self.awareness = awareness;
-                    println!("{:?} {}", self.id, m);
+                    println!("{:?} << {}", self.id, m);
                 }
                 Data::Proposal(proposal_time, proposer, data) => {
                     // A gnome can not announce a different action unless the previous
                     // action was completed or the confusion timeout has passed
                     if !gnome_awareness.is_unaware() {
-                         let (known_proposal_time, known_proposer) = proposal_id.unwrap();
-                         if known_proposal_time != proposal_time && known_proposer != proposer{
-                        println!("Gnome is not unaware(1), sanity fail!");
-                        sanity_passed = false;
-                    }}
+                        let (known_proposal_time, known_proposer) = proposal_id.unwrap();
+                        if known_proposal_time != proposal_time && known_proposer != proposer {
+                            println!("Gnome is not unaware(1), sanity fail!");
+                            sanity_passed = false;
+                        }
+                    } else {
+                        new_proposal = true;
+                    }
 
                     self.prev_awareness = None;
                     self.awareness = awareness;
                     self.proposal_id = Some((proposal_time, proposer));
                     self.proposal_data = data;
-                    println!("{:?} {}", self.id, m);
+                    println!("{:?} << {}", self.id, m);
                 }
                 Data::ProposalId(proposal_time, proposer) => {
                     // A gnome can not announce a different action unless the previous
                     // action was completed or the confusion timeout has passed
                     if !gnome_awareness.is_unaware() {
-                         let (known_proposal_time, known_proposer) = proposal_id.unwrap();
-                         if known_proposal_time != proposal_time && known_proposer != proposer{
-                        println!("Gnome is not unaware(2), sanity fail!");
-                        sanity_passed = false;
-                    }}
+                        let (known_proposal_time, known_proposer) = proposal_id.unwrap();
+                        if known_proposal_time != proposal_time && known_proposer != proposer {
+                            println!("Gnome is not unaware(2), sanity fail!");
+                            sanity_passed = false;
+                        }
+                    } else {
+                        println!("Got new proposal without data, this should not happen...");
+                        new_proposal = true;
+                    }
                     self.prev_awareness = None;
                     self.awareness = awareness;
-                    println!("{:?} {}", self.id, m);
+                    println!("{:?} << {}", self.id, m);
                 }
                 _ => {}
             }
@@ -135,9 +154,10 @@ impl Neighbor {
                 sanity_passed = false;
             }
         }
-        if ! sanity_passed{        println!("Sanity passed: {}", sanity_passed);
+        if !sanity_passed {
+            println!("Sanity passed: {}", sanity_passed);
         };
-        (message_recvd, sanity_passed)
+        (message_recvd, sanity_passed, new_proposal)
     }
 
     fn sanity_check(&self, awareness: &Awareness, gnome_neighborhood: u8) -> bool {
@@ -156,5 +176,13 @@ impl Neighbor {
         let not_too_aware = new_neighborhood <= gnome_neighborhood + 1;
 
         backtrack_sanity && neighborhood_increase_sanity && not_too_aware
+    }
+
+    pub fn get_specialized_data(&mut self) -> Option<(NeighborRequest, NeighborResponse)> {
+        self.requested_data.pop_back()
+    }
+
+    pub fn add_requested_data(&mut self, request: NeighborRequest, data: NeighborResponse) {
+        self.requested_data.push_front((request, data));
     }
 }

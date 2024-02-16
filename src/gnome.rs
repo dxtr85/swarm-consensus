@@ -12,6 +12,7 @@ use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -30,6 +31,7 @@ pub struct Gnome {
     proposal_id: Option<(SwarmTime, GnomeId)>,
     proposal_data: ProposalData,
     next_state: NextState,
+    timeout_duration: Duration,
 }
 
 impl Gnome {
@@ -47,6 +49,7 @@ impl Gnome {
             proposal_id: None,
             proposal_data: ProposalData(0),
             next_state: NextState::from(SwarmTime(0), Awareness::Unaware),
+            timeout_duration: Duration::from_millis(500),
         }
     }
 
@@ -99,54 +102,56 @@ impl Gnome {
                 Request::AddNeighbor(neighbor) => {
                     self.add_neighbor(neighbor);
                 }
+                Request::SendData(gnome_id, request, data) => {
+                    for neighbor in &mut self.neighbors {
+                        if neighbor.id == gnome_id {
+                            neighbor.add_requested_data(request, data);
+                            break;
+                        }
+                    }
+                }
             }
         }
         false
     }
 
+    fn start_new_timer(
+        &self,
+        duration: Duration,
+        sender: Sender<String>,
+        old_handle: Option<JoinHandle<()>>,
+    ) -> JoinHandle<()> {
+        if let Some(old_handle) = old_handle {
+            drop(old_handle);
+        }
+
+        thread::spawn(move || {
+            thread::sleep(duration);
+            if let Ok(()) = sender.send("Time out".to_string()) {}
+        })
+    }
     pub fn do_your_job(mut self) {
         let (timer_sender, timeout_receiver) = channel();
-        let clone_timer_sender = timer_sender.clone();
-        let mut _guard = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(500));
-            if let Ok(()) = clone_timer_sender.send("Time out") {}
-        });
+        let mut _guard = self.start_new_timer(self.timeout_duration, timer_sender.clone(), None);
 
-        // let mut loop_breaker = 10;
         loop {
-            // println!("In loop");
             if self.serve_user_requests() {
                 // println!("EXIT on user request.");
                 break;
             };
-            // println!("In loop {loop_breaker}");
-            // loop_breaker -= 1;
-            // if loop_breaker == 0 {
-            // break;
-            // }
-            let advance_to_next_turn = self.try_recv();
+            let (advance_to_next_turn, new_proposal) = self.try_recv();
             let timeout = timeout_receiver.try_recv().is_ok();
             if advance_to_next_turn | timeout {
-                self.swap_neighbors();
-                // println!(
-                //     "Advancing to next turn! (Neighbors count: {})",
-                //     self.neighbors.len()
-                // );
-                let sync_neighbors_st = self.update_state();
-                // println!("New self: {:?}", self.awareness);
-                let message_to_send = self.prepare_message();
-                self.send_all(message_to_send);
-                if sync_neighbors_st {
-                    self.sync_neighbors_time();
+                self.update_state();
+                if !new_proposal {
+                    self.swap_neighbors();
+                    self.send_specialized();
+                } else {
+                    self.concat_neighbors();
+                    self.send_all();
                 }
-                drop(_guard);
-                let clone_timer_sender = timer_sender.clone();
-                _guard = thread::spawn(move || {
-                    thread::sleep(Duration::from_millis(500));
-                    if let Ok(()) = clone_timer_sender.send("Time out") {}
-                });
-            } else {
-                // println!("Not advancing to next turn.");
+                _guard =
+                    self.start_new_timer(self.timeout_duration, timer_sender.clone(), Some(_guard));
             }
         }
         // println!("out of loop.");
@@ -156,11 +161,29 @@ impl Gnome {
         self.new_neighbors.push(neighbor);
     }
 
-    pub fn send_all(&mut self, value: Message) {
-        self.neighbors.append(&mut self.new_neighbors);
-        for neighbor in &mut self.neighbors {
-            let _ = neighbor.sender.send(value);
+    pub fn send_all(&mut self) {
+        let message = self.prepare_message();
+        println!("{:?} >  {}", self.id, message);
+        for neighbor in &self.neighbors {
+            let _ = neighbor.sender.send(message);
         }
+    }
+
+    pub fn send_specialized(&mut self) {
+        let message = self.prepare_message();
+        println!("{:?} >  {}", self.id, message);
+        let served_neighbors = Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME);
+        let unserved_neighbors = std::mem::replace(&mut self.neighbors, served_neighbors);
+        for mut neighbor in unserved_neighbors {
+            if let Some((request, response)) = neighbor.get_specialized_data() {
+                let new_message = message.include(request, response);
+                let _ = neighbor.sender.send(new_message);
+            } else {
+                let _ = neighbor.sender.send(message);
+            }
+            self.neighbors.push(neighbor);
+        }
+        self.neighbors.append(&mut self.new_neighbors);
     }
 
     fn sync_neighbors_time(&mut self) {
@@ -175,8 +198,8 @@ impl Gnome {
     }
 
     pub fn prepare_message(&self) -> Message {
-        let data: Data = if let Awareness::Aware(0) = self.awareness {
-            // Message::Proposal(self.awareness, proposal)
+        // println!("Preparing message: {:?}", self.awareness);
+        let data: Data = if let Awareness::Aware(_) = self.awareness {
             Data::Proposal(
                 self.proposal_id.unwrap().0,
                 self.proposal_id.unwrap().1,
@@ -194,7 +217,7 @@ impl Gnome {
 
     fn swap_neighbors(&mut self) {
         while let Some(neighbor) = self.neighbors.pop() {
-            println!("Drop neighbor that was late");
+            println!("Drop neighbor {:?} that was late", neighbor.id);
             drop(neighbor);
         }
         self.neighbors = std::mem::replace(
@@ -203,14 +226,18 @@ impl Gnome {
         );
     }
 
-    fn update_state(&mut self) -> bool {
+    fn concat_neighbors(&mut self) {
+        self.neighbors.append(&mut self.refreshed_neighbors);
+    }
+
+    fn update_state(&mut self) {
         let mut sync_neighbors_swarm_time = false;
         self.swarm_time = self.next_state.next_swarm_time();
         // println!("Next swarm time: {:?}", self.swarm_time);
         if self.next_state.become_confused {
             self.set_awareness(Awareness::Confused(self.swarm_diameter));
             self.proposal_id = None;
-            return sync_neighbors_swarm_time;
+            return;
         }
         if self.next_state.any_confused || self.next_state.any_unaware {
             self.next_state.all_aware = false;
@@ -288,18 +315,25 @@ impl Gnome {
             }
         }
         self.next_state = NextState::from(self.swarm_time, self.awareness);
-        sync_neighbors_swarm_time
+        if sync_neighbors_swarm_time {
+            self.sync_neighbors_time();
+        }
     }
 
-    fn try_recv(&mut self) -> bool {
+    fn try_recv(&mut self) -> (bool, bool) {
         let mut looped = false;
+        let mut new_proposal_received = false;
         let loop_neighbors = std::mem::replace(
             &mut self.neighbors,
             Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
         );
         for mut neighbor in loop_neighbors {
             looped = true;
-            let (served, sanity_passed) = neighbor.try_recv(self.awareness, self.proposal_id);
+            let (served, sanity_passed, new_proposal) =
+                neighbor.try_recv(self.awareness, self.proposal_id);
+            if !new_proposal_received {
+                new_proposal_received = new_proposal;
+            }
             if served {
                 if sanity_passed {
                     if let Some(proposal) = neighbor.proposal_id {
@@ -322,7 +356,10 @@ impl Gnome {
                 self.neighbors.push(neighbor);
             }
         }
-        self.neighbors.is_empty() && looped
+        (
+            self.neighbors.is_empty() && looped || new_proposal_received,
+            new_proposal_received,
+        )
     }
 
     fn reject_all_proposals(&self) -> bool {

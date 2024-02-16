@@ -29,7 +29,7 @@ impl Manager {
         (sender, receiver.unwrap())
     }
 
-    pub fn get_status(&self, name: &str) {
+    pub fn print_status(&self, name: &str) {
         if let Some(swarm) = self.swarms.get(name) {
             let _ = swarm.sender.send(Request::Status);
         }

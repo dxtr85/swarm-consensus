@@ -21,7 +21,7 @@ fn gnome_message_exchange() {
 
     let neighbors: Vec<Neighbor> = vec![left, right];
     let (_, resp_receiver) = manager.join_a_swarm("message exchange".to_string(), Some(neighbors));
-    manager.get_status("message exchange");
+    manager.print_status("message exchange");
     let p1: Proposal = Proposal {
         proposal_time: SwarmTime(0),
         proposer: left_id,
@@ -41,7 +41,7 @@ fn gnome_message_exchange() {
         awareness: right_awareness,
         data: Data::Proposal(SwarmTime(0), left_id, ProposalData(1)),
     });
-    manager.get_status("message exchange");
+    manager.print_status("message exchange");
 
     let msg_res = resp_receiver.try_recv();
     assert!(msg_res.is_err(), "User received unexpected message!");
@@ -58,7 +58,7 @@ fn gnome_message_exchange() {
         awareness: right_awareness,
         data: Data::ProposalId(SwarmTime(0), left_id),
     });
-    manager.get_status("message exchange");
+    manager.print_status("message exchange");
 
     let rcvd = resp_receiver.recv();
 
@@ -72,7 +72,7 @@ fn gnome_message_exchange() {
     );
 
     println!("<< User {:?}", unwrapped);
-    // manager.get_status("message exchange");
+    // manager.print_status("message exchange");
     manager.finish();
 }
 
@@ -80,7 +80,7 @@ fn gnome_message_exchange() {
 // fn exit_on_request() {
 //     let mut manager = Manager::new();
 //     let _ = manager.join_a_swarm("exit on request".to_string(), None);
-//     manager.get_status("exit on request");
+//     manager.print_status("exit on request");
 //     // TODO: below is not required
 //     // manager.finish();
 // }
