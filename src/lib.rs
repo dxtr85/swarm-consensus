@@ -10,11 +10,14 @@ use crate::swarm::SwarmTime;
 mod manager;
 use manager::Manager;
 use neighbor::NeighborRequest;
+use proposal::ProposalID;
 mod neighbor;
 use crate::neighbor::Neighbor;
 use crate::neighbor::NeighborResponse;
 mod next_state;
+mod proposal;
 use crate::next_state::NextState;
+use crate::proposal::ProposalData;
 use std::fmt;
 
 #[cfg(test)]
@@ -27,16 +30,6 @@ const DEFAULT_NEIGHBORS_PER_GNOME: usize = 3;
 const DEFAULT_SWARM_DIAMETER: u8 = 7;
 // const MAX_PAYLOAD_SIZE: u32 = 1024;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ProposalData(u8);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Proposal {
-    proposal_time: SwarmTime,
-    proposer: GnomeId,
-    data: ProposalData,
-}
-
 pub enum Request {
     MakeProposal(Box<[u8; 1024]>),
     AddNeighbor(Neighbor),
@@ -48,20 +41,16 @@ pub enum Request {
 
 #[derive(PartialEq)]
 pub enum Response {
-    Data(SwarmTime, GnomeId, ProposalData),
+    Data(ProposalID, ProposalData),
     DataInquiry(GnomeId, NeighborRequest),
-    Listing(u8, [(SwarmTime, GnomeId); 128]),
+    Listing(u8, [ProposalID; 128]),
 }
 
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Response::Data(swarm_time, gnome_id, boxed_data) => {
-                write!(
-                    f,
-                    "PropID-{:?}-{:?}: {:?}",
-                    swarm_time, gnome_id, &boxed_data
-                )
+            Response::Data(prop_id, data) => {
+                write!(f, "{} {}", prop_id, data)
             }
             Response::DataInquiry(gnome_id, data_id) => {
                 write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)

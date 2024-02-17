@@ -1,3 +1,4 @@
+use crate::proposal::ProposalID;
 use crate::Awareness;
 use crate::Data;
 use crate::GnomeId;
@@ -17,7 +18,7 @@ pub struct Neighbor {
     pub swarm_time: SwarmTime,
     pub awareness: Awareness,
     pub prev_awareness: Option<Awareness>,
-    pub proposal_id: Option<(SwarmTime, GnomeId)>,
+    pub proposal_id: Option<ProposalID>,
     pub proposal_data: ProposalData,
     pub our_requests: VecDeque<NeighborRequest>,
     pub our_responses: VecDeque<Response>,
@@ -28,12 +29,12 @@ pub struct Neighbor {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NeighborRequest {
     ListingFrom(SwarmTime),
-    Proposal(SwarmTime, GnomeId),
+    Proposal(ProposalID),
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum NeighborResponse {
-    Listing(u8, [(SwarmTime, GnomeId); 128]),
+    Listing(u8, [ProposalID; 128]),
     Proposal(ProposalData),
 }
 
@@ -68,12 +69,12 @@ impl Neighbor {
     pub fn try_recv(
         &mut self,
         gnome_awareness: Awareness,
-        proposal_id: Option<(SwarmTime, GnomeId)>,
+        proposal_id: Option<ProposalID>,
     ) -> (bool, bool, bool) {
         let mut message_recvd = false;
         let mut sanity_passed = true;
         let mut new_proposal = false;
-        if let Ok(
+        while let Ok(
             m @ Message {
                 swarm_time,
                 awareness,
@@ -81,41 +82,25 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
-            message_recvd = true;
-            if self.swarm_time > swarm_time {
-                println!("Received a message with older swarm_time than previous!");
+            if self.sanity_check(&awareness, &swarm_time, &gnome_awareness) {
+                message_recvd = true;
+            } else {
+                continue;
             }
+
             self.swarm_time = swarm_time;
-            // let old_swarm_time = self.swarm_time;
+            if !awareness.is_aware() {
+                self.prev_awareness = None;
+            }
+            self.prev_awareness = Some(self.awareness);
+            self.awareness = awareness;
             match data {
-                Data::KeepAlive => {
-                    if !awareness.is_aware() {
-                        self.prev_awareness = None;
-                    }
-                    // A gnome can not keep progressing after being told
-                    // that there is a conflicting proposal (must become confused)
-                    if gnome_awareness.is_confused() && awareness.is_aware() {
-                        println!("Gnome is confused, sanity fail!");
-                        sanity_passed = false;
-                    }
-                    let gnome_neighborhood = if gnome_awareness.is_aware() {
-                        gnome_awareness.neighborhood().unwrap()
-                    } else {
-                        0
-                    };
-                    if self.awareness.is_aware() && awareness.is_aware() {
-                        sanity_passed =
-                            sanity_passed && self.sanity_check(&awareness, gnome_neighborhood);
-                    }
-                    self.prev_awareness = Some(self.awareness);
-                    self.awareness = awareness;
-                    println!("{:?} << {}", self.id, m);
-                }
-                Data::Proposal(proposal_time, proposer, data) => {
+                Data::KeepAlive => println!("{} << {}", self.id, m),
+                Data::Proposal(ProposalID(proposal_time, proposer), data) => {
                     // A gnome can not announce a different action unless the previous
                     // action was completed or the confusion timeout has passed
                     if !gnome_awareness.is_unaware() {
-                        let (known_proposal_time, known_proposer) = proposal_id.unwrap();
+                        let ProposalID(known_proposal_time, known_proposer) = proposal_id.unwrap();
                         if known_proposal_time != proposal_time && known_proposer != proposer {
                             println!("Gnome is not unaware(1), sanity fail!");
                             sanity_passed = false;
@@ -125,65 +110,48 @@ impl Neighbor {
                     }
 
                     self.prev_awareness = None;
-                    self.awareness = awareness;
-                    self.proposal_id = Some((proposal_time, proposer));
+                    self.proposal_id = Some(ProposalID(proposal_time, proposer));
                     self.proposal_data = data;
-                    println!("{:?} << {}", self.id, m);
+                    println!("{} << {}", self.id, m);
                 }
-                Data::ProposalId(proposal_time, proposer) => {
+                Data::ProposalId(ProposalID(proposal_time, proposer)) => {
                     // A gnome can not announce a different action unless the previous
                     // action was completed or the confusion timeout has passed
                     if !gnome_awareness.is_unaware() {
-                        let (known_proposal_time, known_proposer) = proposal_id.unwrap();
-                        if known_proposal_time != proposal_time && known_proposer != proposer {
-                            println!("Gnome is not unaware(2), sanity fail!");
-                            sanity_passed = false;
+                        if let Some(ProposalID(known_proposal_time, known_proposer)) = proposal_id {
+                            if known_proposal_time != proposal_time && known_proposer != proposer {
+                                println!("Gnome is not unaware(2), sanity fail!");
+                                sanity_passed = false;
+                            }
                         }
                     } else {
                         println!("Got new proposal without data, this should not happen...");
-                        new_proposal = true;
+                        // new_proposal = true;
                     }
-                    self.prev_awareness = None;
-                    self.awareness = awareness;
-                    println!("{:?} << {}", self.id, m);
+                    println!("{} << {}", self.id, m);
                 }
-                Data::Request(request) => {
-                    // TODO: add logic for awareness & neighborhood updating
-                    self.requests.push_back(request)
-                }
-                Data::Response(request, response) => {
-                    // TODO: add logic for awareness & neighborhood updating
-                    match (request, response) {
-                        (
-                            NeighborRequest::ListingFrom(_swarm_time),
-                            NeighborResponse::Listing(count, listing),
-                        ) => {
-                            self.our_responses
-                                .push_back(Response::Listing(count, listing));
-                        }
-                        (
-                            NeighborRequest::Proposal(swarm_time, gnome_id),
-                            NeighborResponse::Proposal(data),
-                        ) => {
-                            self.our_responses
-                                .push_back(Response::Data(swarm_time, gnome_id, data));
-                        }
-                        (_, _) => {
-                            println!("ERROR: Unexpected neighbor request/response pair!");
-                        }
+                Data::Request(request) => self.requests.push_back(request),
+                Data::Response(request, response) => match (request, response) {
+                    (
+                        NeighborRequest::ListingFrom(_swarm_time),
+                        NeighborResponse::Listing(count, listing),
+                    ) => {
+                        self.our_responses
+                            .push_back(Response::Listing(count, listing));
                     }
-                }
-            }
-            let new_swarm_time = self.swarm_time;
-
-            // TODO: with below if we receive messages in reversed order,
-            // we drop a neighbor, but sanity will fail anyway so...
-            if new_swarm_time < swarm_time {
-                println!(
-                    "Received a message \n{:?}\n with {:?}  when previous was {:?}",
-                    m, new_swarm_time, swarm_time
-                );
-                sanity_passed = false;
+                    (
+                        NeighborRequest::Proposal(ProposalID(swarm_time, gnome_id)),
+                        NeighborResponse::Proposal(data),
+                    ) => {
+                        self.our_responses.push_back(Response::Data(
+                            crate::proposal::ProposalID(swarm_time, gnome_id),
+                            data,
+                        ));
+                    }
+                    (_, _) => {
+                        println!("ERROR: Unexpected neighbor request/response pair!");
+                    }
+                },
             }
         }
         if !sanity_passed {
@@ -192,22 +160,56 @@ impl Neighbor {
         (message_recvd, sanity_passed, new_proposal)
     }
 
-    fn sanity_check(&self, awareness: &Awareness, gnome_neighborhood: u8) -> bool {
-        let current_neighborhood = awareness.neighborhood().unwrap();
-        let new_neighborhood = self.awareness.neighborhood().unwrap();
-        let newer_than_two_turns_before = if let Some(prev_awareness) = self.prev_awareness {
-            let prev_neighborhood = prev_awareness.neighborhood().unwrap();
-            new_neighborhood > prev_neighborhood
+    fn sanity_check(
+        &self,
+        awareness: &Awareness,
+        swarm_time: &SwarmTime,
+        gnome_awareness: &Awareness,
+    ) -> bool {
+        if self.swarm_time > *swarm_time {
+            println!("Received a message with older swarm_time than previous!");
+            return false;
+        }
+        // A gnome can not keep progressing after being told
+        // that there is a conflicting proposal (must become confused)
+        if gnome_awareness.is_confused() && awareness.is_aware() {
+            println!("Neighbor should become confused, but did not.");
+            return false;
+        }
+        if gnome_awareness.is_aware() && awareness.is_unaware() {
+            println!("Neighbor should become aware, but did not.");
+            return false;
+        }
+        if self.awareness.is_aware() && awareness.is_aware() {
+            if let Awareness::Aware(gnome_neighborhood) = gnome_awareness {
+                let new_neighborhood = awareness.neighborhood().unwrap();
+                let current_neighborhood = self.awareness.neighborhood().unwrap();
+                let newer_than_two_turns_before = if let Some(prev_awareness) = self.prev_awareness
+                {
+                    let prev_neighborhood = prev_awareness.neighborhood().unwrap();
+                    new_neighborhood > prev_neighborhood
+                } else {
+                    true
+                };
+
+                let backtrack_sanity = current_neighborhood > new_neighborhood;
+                let neighborhood_increase_sanity =
+                    new_neighborhood > current_neighborhood || newer_than_two_turns_before;
+                let not_too_aware = new_neighborhood <= gnome_neighborhood + 1;
+
+                backtrack_sanity && neighborhood_increase_sanity && not_too_aware
+            } else {
+                true
+            }
+        } else if self.awareness.is_unaware() {
+            return true;
         } else {
+            println!(
+                "Uncovered sanity_check case: {} {}",
+                self.awareness, awareness
+            );
             true
-        };
-
-        let backtrack_sanity = current_neighborhood > new_neighborhood;
-        let neighborhood_increase_sanity =
-            new_neighborhood > current_neighborhood || newer_than_two_turns_before;
-        let not_too_aware = new_neighborhood <= gnome_neighborhood + 1;
-
-        backtrack_sanity && neighborhood_increase_sanity && not_too_aware
+        }
     }
 
     pub fn get_specialized_data(&mut self) -> Option<(NeighborRequest, NeighborResponse)> {

@@ -2,6 +2,7 @@ use crate::Gnome;
 use crate::Neighbor;
 use crate::Request;
 use crate::Response;
+use std::fmt;
 use std::ops::Sub;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{spawn, JoinHandle};
@@ -49,5 +50,10 @@ impl Swarm {
             receiver: Some(receiver),
             join_handle: Some(join_handle),
         }
+    }
+}
+impl fmt::Display for SwarmTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ST{:010}", self.0)
     }
 }

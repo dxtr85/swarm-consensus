@@ -1,5 +1,4 @@
-// use crate::Proposal;
-// use crate::SwarmTime;
+use std::fmt;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Awareness {
@@ -25,4 +24,14 @@ impl Awareness {
     pub fn is_confused(&self) -> bool {
         matches!(self, Awareness::Confused(_cd))
     }
+}
+
+impl fmt::Display for Awareness{
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         match self{
+             Awareness::Unaware => write!(f, "UNA"),
+             Awareness::Aware(n)=> write!(f, "A-{}", n),
+             Awareness::Confused(n)=> write!(f, "C-{}",n)
+         }
+     }
 }
