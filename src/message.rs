@@ -36,7 +36,7 @@ impl Message {
 
 impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}, {}\t {}", self.swarm_time, self.awareness, self.data)
+        write!(f, "{} {} {}", self.swarm_time, self.awareness, self.data)
     }
 }
 

@@ -101,6 +101,24 @@ impl NextState {
             self.swarm_time.inc()
         }
     }
+    pub fn include_neighbor(&mut self, id: GnomeId, awareness: Awareness) {
+        match awareness {
+            Awareness::Unaware => {
+                self.unaware_neighbors.insert(id);
+            }
+            Awareness::Confused(_) => {
+                self.confused_neighbors.insert(id);
+            }
+            Awareness::Aware(_) => {
+                self.aware_neighbors.insert(id);
+            }
+        }
+    }
+    pub fn exclude_neighbor(&mut self, id: &GnomeId) {
+        self.aware_neighbors.remove(id);
+        self.unaware_neighbors.remove(id);
+        self.confused_neighbors.remove(id);
+    }
     pub fn all_confused(&self) -> bool {
         self.unaware_neighbors.is_empty()
             && self.aware_neighbors.is_empty()

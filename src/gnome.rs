@@ -66,6 +66,9 @@ impl Gnome {
         neighbors: Vec<Neighbor>,
     ) -> Self {
         let mut gnome = Gnome::new(sender, receiver);
+        for neig in &neighbors {
+            gnome.next_state.include_neighbor(neig.id, neig.awareness);
+        }
         gnome.neighbors = neighbors;
         gnome
     }
@@ -178,12 +181,14 @@ impl Gnome {
     }
 
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
+        self.next_state
+            .include_neighbor(neighbor.id, neighbor.awareness);
         self.new_neighbors.push(neighbor);
     }
 
     pub fn send_all(&mut self) {
         let message = self.prepare_message();
-        println!("{} >  {}", self.id, message);
+        println!("{} >>> {}", self.id, message);
         for neighbor in &self.neighbors {
             let _ = neighbor.sender.send(message);
         }
@@ -191,7 +196,7 @@ impl Gnome {
 
     pub fn send_specialized(&mut self) {
         let message = self.prepare_message();
-        println!("{} >  {}", self.id, message);
+        println!("{} >>> {}", self.id, message);
         let served_neighbors = Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME);
         let unserved_neighbors = std::mem::replace(&mut self.neighbors, served_neighbors);
         for mut neighbor in unserved_neighbors {
@@ -236,7 +241,8 @@ impl Gnome {
 
     fn swap_neighbors(&mut self) {
         while let Some(neighbor) = self.neighbors.pop() {
-            println!("Drop neighbor {:?} that was late", neighbor.id);
+            println!("Drop neighbor {} that was late", neighbor.id);
+            self.next_state.exclude_neighbor(&neighbor.id);
             drop(neighbor);
         }
         self.neighbors = std::mem::replace(
@@ -328,6 +334,8 @@ impl Gnome {
         } else if self.next_state.any_aware() {
             if let Awareness::Unaware = self.awareness {
                 self.set_awareness(Awareness::Aware(0));
+                self.proposal_id = self.next_state.proposal_id;
+                self.proposal_data = self.next_state.proposal_data;
                 // self.next_state.proposal.unwrap()))
             }
         }

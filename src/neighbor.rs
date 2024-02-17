@@ -112,7 +112,7 @@ impl Neighbor {
                     self.prev_awareness = None;
                     self.proposal_id = Some(ProposalID(proposal_time, proposer));
                     self.proposal_data = data;
-                    println!("{} << {}", self.id, m);
+                    println!("{}  <  {}", self.id, m);
                 }
                 Data::ProposalId(ProposalID(proposal_time, proposer)) => {
                     // A gnome can not announce a different action unless the previous
@@ -128,7 +128,7 @@ impl Neighbor {
                         println!("Got new proposal without data, this should not happen...");
                         // new_proposal = true;
                     }
-                    println!("{} << {}", self.id, m);
+                    println!("{}  <  {}", self.id, m);
                 }
                 Data::Request(request) => self.requests.push_back(request),
                 Data::Response(request, response) => match (request, response) {
