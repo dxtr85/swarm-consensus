@@ -1,146 +1,99 @@
-use std::collections::HashSet;
-
-use crate::gnome::GnomeId;
-use crate::Awareness;
+use crate::message::BlockID;
+use crate::message::Header;
+use crate::message::Payload;
+use crate::neighbor::Neighborhood;
+use crate::proposal::Data;
 use crate::Neighbor;
-use crate::ProposalData;
-use crate::ProposalID;
 use crate::SwarmTime;
-use crate::DEFAULT_SWARM_DIAMETER;
 
 #[derive(Debug)]
 pub struct NextState {
-    pub awareness: Awareness,
-    pub become_confused: bool,
-    pub awareness_diameter: u8, // = 255;
-    pub confusion_diameter: u8, // = 0;
+    pub neighborhood: Neighborhood,
     pub swarm_time: SwarmTime,
     pub swarm_time_min: SwarmTime,
-    pub proposal_id: Option<ProposalID>,
-    pub proposal_data: ProposalData,
-    confused_neighbors: HashSet<GnomeId>,
-    aware_neighbors: HashSet<GnomeId>,
-    unaware_neighbors: HashSet<GnomeId>,
+    pub block_id: BlockID,
+    pub data: Data,
+    all_neighbors_same_header: bool,
 }
 
 impl NextState {
-    pub fn new(swarm_time_min: SwarmTime, awareness: Awareness) -> Self {
+    pub fn new(swarm_time_min: SwarmTime) -> Self {
         NextState {
-            awareness,
-            become_confused: false,
-            awareness_diameter: 255,
-            confusion_diameter: 0,
-            swarm_time: SwarmTime(std::u32::MAX),
+            neighborhood: Neighborhood(0),
+            swarm_time: SwarmTime(0),
             swarm_time_min,
-            proposal_id: None,
-            proposal_data: ProposalData(0),
-            confused_neighbors: HashSet::new(),
-            aware_neighbors: HashSet::new(),
-            unaware_neighbors: HashSet::new(),
+            block_id: BlockID(0),
+            data: Data(0),
+            all_neighbors_same_header: true,
         }
     }
-
-    // pub fn from(swarm_time_min: SwarmTime, awareness: Awareness, other_state: NextState) -> Self {
-    //     NextState {
-    //         awareness,
-    //         swarm_time_min,
-    //         ..other_state
-    //     }
-    // }
 
     pub fn update(&mut self, neighbor: &Neighbor) {
-        match neighbor.awareness {
-            Awareness::Unaware => {
-                self.unaware_neighbors.insert(neighbor.id);
-                self.aware_neighbors.remove(&neighbor.id);
-                self.confused_neighbors.remove(&neighbor.id);
-                if neighbor.swarm_time < self.swarm_time {
-                    self.swarm_time = neighbor.swarm_time;
-                }
-            }
-            Awareness::Aware(aware_neighborhood) => {
-                if neighbor.swarm_time < self.swarm_time {
-                    self.swarm_time = neighbor.swarm_time;
-                }
-                self.aware_neighbors.insert(neighbor.id);
-                self.unaware_neighbors.remove(&neighbor.id);
-                self.confused_neighbors.remove(&neighbor.id);
-                if let Some(p) = self.proposal_id {
-                    if p != neighbor.proposal_id.unwrap() {
-                        self.become_confused = true;
-                        self.confusion_diameter = DEFAULT_SWARM_DIAMETER * 2;
-                        self.awareness = Awareness::Confused(self.confusion_diameter);
-                    }
-                } else {
-                    self.proposal_id = neighbor.proposal_id; //TODO, maybe check if there is Some?
-                    self.proposal_data = neighbor.proposal_data;
-                    self.awareness = Awareness::Aware(0);
-                    if aware_neighborhood < self.awareness_diameter {
-                        self.awareness_diameter = aware_neighborhood;
-                    }
-                }
-            }
-            Awareness::Confused(confusion_neighborhood) => {
-                if neighbor.swarm_time < self.swarm_time {
-                    self.swarm_time = neighbor.swarm_time;
-                }
-                if confusion_neighborhood > self.confusion_diameter {
-                    self.confusion_diameter = confusion_neighborhood;
-                }
-                self.confused_neighbors.insert(neighbor.id);
-                self.aware_neighbors.remove(&neighbor.id);
-                self.unaware_neighbors.remove(&neighbor.id);
-            }
+        let neighbor_st = neighbor.swarm_time;
+        if neighbor_st > self.swarm_time_min && neighbor_st < self.swarm_time {
+            self.swarm_time = neighbor_st;
+        }
+
+        let block_id_received = match neighbor.header {
+            Header::Sync => BlockID(0),
+            Header::Block(b_id) => b_id,
+        };
+        let data_received = match neighbor.payload {
+            Payload::Block(_b_id, data) => data,
+            _ => Data(0),
+        };
+
+        if self.block_id != block_id_received {
+            self.all_neighbors_same_header = false;
+        }
+
+        if block_id_received > self.block_id {
+            self.block_id = block_id_received;
+            self.data = data_received;
+            self.neighborhood = Neighborhood(0);
+        } else if block_id_received == self.block_id
+            && self.neighborhood.0 > neighbor.neighborhood.0
+        {
+            self.neighborhood = neighbor.neighborhood;
         }
     }
 
-    pub fn next_swarm_time(&self) -> SwarmTime {
-        if self.swarm_time.0 == std::u32::MAX {
+    fn next_swarm_time(&mut self) {
+        self.swarm_time = if self.swarm_time.0 == std::u32::MAX {
             self.swarm_time_min.inc()
         } else {
             self.swarm_time.inc()
+        };
+        self.swarm_time_min = self.swarm_time;
+    }
+
+    pub fn next_params(&self) -> (SwarmTime, Neighborhood, BlockID, Data) {
+        if self.all_neighbors_same_header {
+            (
+                self.swarm_time.inc(),
+                self.neighborhood.inc(),
+                self.block_id,
+                self.data,
+            )
+        } else {
+            (
+                self.swarm_time.inc(),
+                self.neighborhood,
+                self.block_id,
+                self.data,
+            )
         }
     }
-    pub fn include_neighbor(&mut self, id: GnomeId, awareness: Awareness) {
-        match awareness {
-            Awareness::Unaware => {
-                self.unaware_neighbors.insert(id);
-            }
-            Awareness::Confused(_) => {
-                self.confused_neighbors.insert(id);
-            }
-            Awareness::Aware(_) => {
-                self.aware_neighbors.insert(id);
-            }
+
+    pub fn reset_for_next_turn(&mut self, new_round: bool) {
+        self.next_swarm_time();
+        self.all_neighbors_same_header = true;
+        if new_round {
+            self.neighborhood = Neighborhood(0);
+            self.block_id = BlockID(0);
+            self.data = Data(0);
+        } else {
+            self.neighborhood = self.neighborhood.inc();
         }
     }
-    pub fn exclude_neighbor(&mut self, id: &GnomeId) {
-        self.aware_neighbors.remove(id);
-        self.unaware_neighbors.remove(id);
-        self.confused_neighbors.remove(id);
-    }
-    pub fn all_confused(&self) -> bool {
-        self.unaware_neighbors.is_empty()
-            && self.aware_neighbors.is_empty()
-            && !self.confused_neighbors.is_empty()
-    }
-    pub fn all_aware(&self) -> bool {
-        !self.aware_neighbors.is_empty()
-            && self.unaware_neighbors.is_empty()
-            && self.confused_neighbors.is_empty()
-    }
-    pub fn all_unaware(&self) -> bool {
-        !self.unaware_neighbors.is_empty()
-            && self.aware_neighbors.is_empty()
-            && self.confused_neighbors.is_empty()
-    }
-    pub fn any_confused(&self) -> bool {
-        !self.confused_neighbors.is_empty()
-    }
-    pub fn any_aware(&self) -> bool {
-        !self.aware_neighbors.is_empty()
-    }
-    // pub fn any_unaware(&self) -> bool {
-    //     !self.unaware_neighbors.is_empty()
-    // }
 }

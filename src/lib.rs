@@ -1,23 +1,20 @@
-mod awareness;
-use crate::awareness::Awareness;
 mod gnome;
 use crate::gnome::{Gnome, GnomeId};
 mod message;
 mod swarm;
-use crate::message::Data;
-use crate::message::Message;
+use crate::message::*;
 use crate::swarm::SwarmTime;
 mod manager;
 use manager::Manager;
+use message::BlockID;
 use neighbor::NeighborRequest;
-use proposal::ProposalID;
+use proposal::Data;
 mod neighbor;
 use crate::neighbor::Neighbor;
 use crate::neighbor::NeighborResponse;
 mod next_state;
 mod proposal;
 use crate::next_state::NextState;
-use crate::proposal::ProposalData;
 use std::fmt;
 
 #[cfg(test)]
@@ -41,16 +38,16 @@ pub enum Request {
 
 #[derive(PartialEq)]
 pub enum Response {
-    Data(ProposalID, ProposalData),
+    Block(BlockID, Data),
     DataInquiry(GnomeId, NeighborRequest),
-    Listing(u8, [ProposalID; 128]),
+    Listing(u8, [BlockID; 128]),
 }
 
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Response::Data(prop_id, data) => {
-                write!(f, "{} {}", prop_id, data)
+            Response::Block(prop_id, data) => {
+                write!(f, "{:?} {}", prop_id, data)
             }
             Response::DataInquiry(gnome_id, data_id) => {
                 write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)
