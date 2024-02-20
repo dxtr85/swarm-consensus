@@ -30,16 +30,20 @@ impl Display for Neighborhood {
 pub struct Neighbor {
     pub id: GnomeId,
     receiver: Receiver<Message>,
-    pub sender: Sender<Message>,
+    round_start: SwarmTime,
+    sender: Sender<Message>,
     pub swarm_time: SwarmTime,
+    pub swarm_diameter: SwarmTime,
     pub neighborhood: Neighborhood,
     pub prev_neighborhood: Option<Neighborhood>,
     pub header: Header,
     pub payload: Payload,
-    pub our_requests: VecDeque<NeighborRequest>,
-    pub our_responses: VecDeque<Response>,
+    pub user_requests: VecDeque<NeighborRequest>,
+    pub user_responses: VecDeque<Response>,
     requests: VecDeque<NeighborRequest>,
     requested_data: VecDeque<(NeighborRequest, NeighborResponse)>,
+    gnome_header: Header,
+    gnome_neighborhood: Neighborhood,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,25 +64,33 @@ impl Neighbor {
         receiver: Receiver<Message>,
         sender: Sender<Message>,
         swarm_time: SwarmTime,
+        swarm_diameter: SwarmTime,
     ) -> Self {
         Neighbor {
             id,
             receiver,
+            round_start: SwarmTime(0),
             sender,
             swarm_time,
+            swarm_diameter,
             neighborhood: Neighborhood(0),
             prev_neighborhood: None,
             header: Header::Sync,
             payload: Payload::KeepAlive,
-            our_requests: VecDeque::new(),
-            our_responses: VecDeque::new(),
+            user_requests: VecDeque::new(),
+            user_responses: VecDeque::new(),
             requests: VecDeque::new(),
             requested_data: VecDeque::new(),
+            gnome_header: Header::Sync,
+            gnome_neighborhood: Neighborhood(0),
         }
     }
 
-    pub fn set_swarm_time(&mut self, swarm_time: SwarmTime) {
+    pub fn start_new_round(&mut self, swarm_time: SwarmTime) {
         self.swarm_time = swarm_time;
+        self.round_start = swarm_time;
+        self.header = Header::Sync;
+        self.payload = Payload::KeepAlive;
     }
 
     pub fn try_recv(&mut self) -> (bool, bool, bool) {
@@ -92,10 +104,14 @@ impl Neighbor {
             payload,
         }) = self.receiver.try_recv()
         {
-            // println!("{} got {}", self.id, m);
+            // println!(
+            //     "{} got {} {} {:?}",
+            //     self.id, swarm_time, neighborhood, header
+            // );
             if self.sanity_check(&swarm_time, &neighborhood, &header) {
                 message_recvd = true;
             } else {
+                // println!("Coś nie poszło");
                 continue;
             }
             // println!("Sanity passed");
@@ -139,12 +155,12 @@ impl Neighbor {
                             if id == block_id {
                                 self.payload = payload;
                             } else {
-                                self.our_responses
+                                self.user_responses
                                     .push_back(Response::Block(block_id, data));
                             }
                         }
                         Header::Sync => {
-                            self.our_responses
+                            self.user_responses
                                 .push_back(Response::Block(block_id, data));
                         }
                     };
@@ -153,7 +169,7 @@ impl Neighbor {
                     self.requests.push_back(request);
                 }
                 Payload::Listing(count, listing) => {
-                    self.our_responses
+                    self.user_responses
                         .push_back(Response::Listing(count, listing));
                 }
             }
@@ -165,21 +181,61 @@ impl Neighbor {
     fn sanity_check(
         &self,
         swarm_time: &SwarmTime,
-        _neighborhood: &Neighborhood,
+        neighborhood: &Neighborhood,
         header: &Header,
     ) -> bool {
         if self.swarm_time > *swarm_time {
             println!("Received a message with older swarm_time than previous!");
             return false;
         }
-        if let Header::Block(id) = self.header {
-            return match header {
-                Header::Block(new_id) => new_id <= &id, //&& self.neighborhood <= neighborhood,
-                Header::Sync => true, //TODO: maybe check here if neighborhood was big enough to swich
-            };
+        // A neighbor can not announce a number greater than the number
+        // we announced to him, plus one
+        let hood_inc_limited = if self.gnome_header == *header {
+            neighborhood.0 <= self.gnome_neighborhood.0 + 1
         } else {
-            return true;
+            true
+        };
+        // println!("hood_inc_limited: {}", hood_inc_limited);
+
+        if self.header == *header {
+            // A gnome can not stay at the same neighborhood number for more than
+            // 2 turns
+            let hood_increased = if let Some(prev_neighborhood) = self.prev_neighborhood {
+                // println!(
+                //     "{} new: {:?} > prev: {:?}",
+                //     swarm_time, neighborhood, prev_neighborhood
+                // );
+                neighborhood.0 > prev_neighborhood.0
+            } else {
+                // A gnome can not backtrack by announcing a smaller neighborhood
+                // number than before
+                // println!(
+                //     "{} current: {:?} <= new: {:?}",
+                //     swarm_time, self.neighborhood, neighborhood
+                // );
+                self.neighborhood.0 <= neighborhood.0
+            };
+            // println!("hood_increased: {}", hood_increased);
+            hood_increased && hood_inc_limited
+        } else {
+            let no_backdating = self.swarm_time - self.round_start < self.swarm_diameter;
+            // println!("no_backdating: {}", no_backdating);
+            if let Header::Block(id) = self.header {
+                match header {
+                    Header::Block(new_id) => new_id >= &id && no_backdating && hood_inc_limited,
+                    Header::Sync => false,
+                }
+            } else {
+                // Backdating check
+                no_backdating && hood_inc_limited
+            }
         }
+    }
+
+    pub fn send_out(&mut self, message: Message) {
+        let _ = self.sender.send(message);
+        self.gnome_header = message.header;
+        self.gnome_neighborhood = message.neighborhood;
     }
 
     pub fn get_specialized_data(&mut self) -> Option<(NeighborRequest, NeighborResponse)> {
@@ -190,6 +246,6 @@ impl Neighbor {
         self.requested_data.push_front((request, data));
     }
     pub fn request_data(&mut self, request: NeighborRequest) {
-        self.our_requests.push_front(request);
+        self.user_requests.push_front(request);
     }
 }

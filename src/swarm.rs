@@ -3,6 +3,7 @@ use crate::Neighbor;
 use crate::Request;
 use crate::Response;
 use std::fmt;
+use std::ops::Add;
 use std::ops::Sub;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{spawn, JoinHandle};
@@ -17,9 +18,16 @@ impl SwarmTime {
 }
 
 impl Sub for SwarmTime {
-    type Output = u32;
+    type Output = Self;
     fn sub(self, rhs: SwarmTime) -> Self::Output {
-        self.0 - rhs.0
+        SwarmTime(self.0 - rhs.0)
+    }
+}
+
+impl Add for SwarmTime {
+    type Output = SwarmTime;
+    fn add(self, rhs: SwarmTime) -> Self::Output {
+        SwarmTime(self.0 + rhs.0)
     }
 }
 

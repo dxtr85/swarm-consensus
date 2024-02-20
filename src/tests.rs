@@ -10,7 +10,7 @@ fn build_a_neighbor(id: GnomeId) -> (Neighbor, Sender<Message>, Receiver<Message
     let (s_req, r_req) = channel::<Message>();
     let (s_res, r_res) = channel::<Message>();
     (
-        Neighbor::from_id_channel_time(id, r_req, s_res, SwarmTime(0)),
+        Neighbor::from_id_channel_time(id, r_req, s_res, SwarmTime(0), DEFAULT_SWARM_DIAMETER),
         s_req,
         r_res,
     )
@@ -25,25 +25,23 @@ fn gnome_message_exchange() {
     // let (right, right_s, _) = build_a_neighbor(right_id);
 
     let neighbors: Vec<Neighbor> = vec![left];
-    let (_, resp_receiver) = manager.join_a_swarm("message exchange".to_string(), Some(neighbors));
-    // manager.print_status("message exchange");
+    let (req_sender, resp_receiver) =
+        manager.join_a_swarm("message exchange".to_string(), Some(neighbors));
+    manager.print_status("message exchange");
     println!("Neighbors sent Proposal!");
     let _ = left_s.send(Message {
         swarm_time: SwarmTime(0),
         neighborhood: neighbor::Neighborhood(0),
-        header: message::Header::Block(BlockID(1)),
-        payload: message::Payload::Block(BlockID(1), Data(1)),
+        // header: message::Header::Block(BlockID(1)),
+        // payload: message::Payload::Block(BlockID(1), Data(1)),
+        header: Header::Sync,
+        payload: Payload::KeepAlive,
     });
     // let _ = right_s.send(Message {
-    //     swarm_time: SwarmTime(5),
-    //     neighborhood: neighbor::Neighborhood(6),
+    //     swarm_time: SwarmTime(0),
+    //     neighborhood: neighbor::Neighborhood(0),
     //     header: message::Header::Block(BlockID(1)),
-    //     data: Data::Payload(BlockID(1), Payload(1)),
-    // });
-    // let _ = right_s.send(Message {
-    //     swarm_time: SwarmTime(5),
-    //     awareness: right_awareness,
-    //     data: Data::Proposal(ProposalID(SwarmTime(0), left_id), ProposalData(1)),
+    //     payload: message::Payload::Block(BlockID(1), Data(1)),
     // });
     // thread::sleep(Duration::from_millis(100));
     // manager.print_status("message exchange");
@@ -52,24 +50,41 @@ fn gnome_message_exchange() {
     thread::sleep(Duration::from_millis(100));
     let msg_res = resp_receiver.try_recv();
     assert!(msg_res.is_err(), "User received unexpected message!");
-
+    let _ = req_sender.send(Request::AddData(Data(1)));
     // println!("tu");
     let _ = left_s.send(Message {
         swarm_time: SwarmTime(1),
-        neighborhood: neighbor::Neighborhood(1),
-        header: message::Header::Block(BlockID(1)),
+        neighborhood: neighbor::Neighborhood(0),
+        // header: message::Header::Block(BlockID(2)),
+        // payload: message::Payload::Block(BlockID(2), Data(2)),
+        header: Header::Sync,
         payload: Payload::KeepAlive,
     });
     // println!("fri");
     // let _ = right_s.send(Message {
-    //     swarm_time: SwarmTime(6),
-    //     awareness: right_awareness,
-    //     data: Data::ProposalId(ProposalID(SwarmTime(0), left_id)),
+    //     swarm_time: SwarmTime(1),
+    //     neighborhood: neighbor::Neighborhood(0),
+    //     header: message::Header::Block(BlockID(2)),
+    //     payload: message::Payload::Block(BlockID(2), Data(2)),
     // });
     // manager.print_status("message exchange");
-    // println!("for");
 
     thread::sleep(Duration::from_millis(100));
+    let _ = left_s.send(Message {
+        swarm_time: SwarmTime(2),
+        neighborhood: neighbor::Neighborhood(0),
+        // header: message::Header::Block(BlockID(3)),
+        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        header: Header::Sync,
+        payload: Payload::KeepAlive,
+    });
+    // let _ = right_s.send(Message {
+    //     swarm_time: SwarmTime(2),
+    //     neighborhood: neighbor::Neighborhood(0),
+    //     header: message::Header::Block(BlockID(2)),
+    //     payload: Payload::KeepAlive,
+    // });
+    let _ = req_sender.send(Request::AddData(Data(2)));
     let rcvd = resp_receiver.recv();
 
     // println!("fajf");
@@ -82,7 +97,6 @@ fn gnome_message_exchange() {
         "User received unexpected response!"
     );
 
-    println!("^^^^^^^^^^^^ NEW {:?}", unwrapped);
     manager.print_status("message exchange");
     manager.finish();
 }

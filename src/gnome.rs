@@ -12,6 +12,7 @@ use crate::Response;
 use crate::SwarmTime;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
+use std::collections::VecDeque;
 use std::fmt;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -30,14 +31,16 @@ pub struct Gnome {
     pub id: GnomeId,
     pub neighborhood: Neighborhood,
     swarm_time: SwarmTime,
+    round_start: SwarmTime,
+    swarm_diameter: SwarmTime,
     receiver: Receiver<Request>,
     sender: Sender<Response>,
     neighbors: Vec<Neighbor>,
     new_neighbors: Vec<Neighbor>,
     refreshed_neighbors: Vec<Neighbor>,
-    swarm_diameter: u8,
     block_id: BlockID,
     data: Data,
+    proposals: VecDeque<Data>,
     next_state: NextState,
     timeout_duration: Duration,
 }
@@ -48,15 +51,17 @@ impl Gnome {
             id: gnome_id_dispenser(),
             neighborhood: Neighborhood(0),
             swarm_time: SwarmTime(0),
+            round_start: SwarmTime(0),
+            swarm_diameter: DEFAULT_SWARM_DIAMETER,
             receiver,
             sender,
             neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
             new_neighbors: vec![],
             refreshed_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
-            swarm_diameter: DEFAULT_SWARM_DIAMETER,
             block_id: BlockID(0),
             data: Data(0),
-            next_state: NextState::new(SwarmTime(0)),
+            proposals: VecDeque::new(),
+            next_state: NextState::new(),
             timeout_duration: Duration::from_millis(500),
         }
     }
@@ -95,15 +100,19 @@ impl Gnome {
                 Request::Disconnect => return true,
                 Request::Status => {
                     println!(
-                        "Status: {} {:?}-{:?}\t\t neighbors: {}",
+                        "Status: {} {} {}\t\t neighbors: {}",
                         self.swarm_time,
                         self.block_id,
                         self.neighborhood,
                         self.neighbors.len()
                     );
                 }
-                Request::MakeProposal(_proposal) => {}
+                Request::AddData(data) => {
+                    self.proposals.push_back(data);
+                    println!("vvv USER vvv REQ {}", data);
+                }
                 Request::AddNeighbor(neighbor) => {
+                    println!("{} ADD\tadd a new neighbor", neighbor.id);
                     self.add_neighbor(neighbor);
                 }
                 Request::SendData(gnome_id, request, data) => {
@@ -155,7 +164,14 @@ impl Gnome {
             let timeout = timeout_receiver.try_recv().is_ok();
             if advance_to_next_turn | timeout {
                 // && !self.neighbors.is_empty() {
-                // println!("After traj: {} {}", advance_to_next_turn, new_proposal);
+                // println!(
+                //     "After traj{}|{}|{}: {} {}",
+                //     self.neighbors.len(),
+                //     self.refreshed_neighbors.len(),
+                //     timeout,
+                //     advance_to_next_turn,
+                //     new_proposal
+                // );
                 self.update_state();
                 if !new_proposal {
                     // println!("nat nju");
@@ -180,8 +196,11 @@ impl Gnome {
     pub fn send_all(&mut self) {
         let message = self.prepare_message();
         println!("{} >>> {}", self.id, message);
-        for neighbor in &self.neighbors {
-            let _ = neighbor.sender.send(message);
+        for neighbor in &mut self.neighbors {
+            let _ = neighbor.send_out(message);
+        }
+        for neighbor in &mut self.new_neighbors {
+            let _ = neighbor.send_out(message);
         }
     }
 
@@ -199,16 +218,18 @@ impl Gnome {
                     crate::neighbor::NeighborResponse::Block(id, data) => Payload::Block(id, data),
                 };
                 let new_message = message.set_payload(payload);
-                let _ = neighbor.sender.send(new_message);
-            } else if let Some(request) = neighbor.our_requests.pop_front() {
+                let _ = neighbor.send_out(new_message);
+            } else if let Some(request) = neighbor.user_requests.pop_front() {
                 let new_message = message.include_request(request);
-                let _ = neighbor.sender.send(new_message);
+                let _ = neighbor.send_out(new_message);
             } else {
-                let _ = neighbor.sender.send(message);
+                let _ = neighbor.send_out(message);
             }
             self.neighbors.push(neighbor);
         }
-        self.neighbors.append(&mut self.new_neighbors);
+        for neighbor in &mut self.new_neighbors {
+            let _ = neighbor.send_out(message);
+        }
     }
 
     pub fn prepare_message(&self) -> Message {
@@ -230,40 +251,80 @@ impl Gnome {
 
     fn swap_neighbors(&mut self) {
         while let Some(neighbor) = self.neighbors.pop() {
-            println!("{} DROP\ttimeout waiting for message", neighbor.id);
+            println!(
+                "{} DROP\ttimeout \t neighbors: {}",
+                neighbor.id,
+                self.neighbors.len()
+            );
             drop(neighbor);
         }
         self.neighbors = std::mem::replace(
             &mut self.refreshed_neighbors,
             Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
         );
+        // println!("After słap: {}", self.neighbors.len());
     }
 
     fn concat_neighbors(&mut self) {
         self.neighbors.append(&mut self.refreshed_neighbors);
+        // println!("After konkat: {}", self.neighbors.len());
     }
 
     fn update_state(&mut self) {
-        // println!(
-        //     "Updajting stejt hud: {:?} {:?}",
-        //     self.neighborhood, self.next_state.neighborhood
-        // );
         let (n_st, n_neigh, n_bid, n_data) = self.next_state.next_params();
+        // println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
         self.swarm_time = n_st;
         self.neighborhood = n_neigh;
         self.block_id = n_bid;
         self.data = n_data;
-        if n_neigh.0 >= self.swarm_diameter {
+        let all_gnomes_aware = n_neigh.0 as u32 >= self.swarm_diameter.0;
+        let finish_round =
+            self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
+        if all_gnomes_aware || finish_round {
             let block_zero = BlockID(0);
             if n_bid > block_zero {
-                let _ = self.sender.send(Response::Block(n_bid, n_data));
-                self.block_id = block_zero;
-                self.data = Data(0);
-                self.neighborhood = Neighborhood(0);
+                if all_gnomes_aware {
+                    let _ = self.sender.send(Response::Block(n_bid, n_data));
+                    println!("^^^ USER ^^^ NEW {} {:075}", n_bid, n_data.0);
+                } else {
+                    println!(
+                        "ERROR: Swarm diameter too small or {} was backdated!",
+                        self.block_id
+                    );
+                }
+                if let Some(data) = self.proposals.pop_front() {
+                    self.block_id = BlockID(data.0);
+                    self.data = data;
+                } else {
+                    self.block_id = block_zero;
+                    self.data = Data(0);
+                }
+            } else {
+                // Sync swarm time
+                self.swarm_time = self.round_start + self.swarm_diameter;
+                if let Some(data) = self.proposals.pop_front() {
+                    self.block_id = BlockID(data.0);
+                    self.data = data;
+                }
             }
-            self.next_state.reset_for_next_turn(true);
+            self.neighborhood = Neighborhood(0);
+            self.round_start = self.swarm_time;
+
+            // At start of new round
+            // Flush awaiting neighbors
+            for neighbor in &mut self.new_neighbors {
+                let _ = neighbor.try_recv();
+            }
+            // Add new_neighbors
+            self.neighbors.append(&mut self.new_neighbors);
+            self.next_state
+                .reset_for_next_turn(true, self.block_id, self.data);
+            for neighbor in &mut self.neighbors {
+                neighbor.start_new_round(self.swarm_time);
+            }
         } else {
-            self.next_state.reset_for_next_turn(false);
+            self.next_state
+                .reset_for_next_turn(false, self.block_id, self.data);
         }
         // let mut sync_neighbors_swarm_time = false;
         // if self.next_state.become_confused {
@@ -363,7 +424,7 @@ impl Gnome {
         );
         for mut neighbor in loop_neighbors {
             looped = true;
-            if let Some(response) = neighbor.our_responses.pop_front() {
+            if let Some(response) = neighbor.user_responses.pop_front() {
                 let _ = self.sender.send(response);
             }
             let (served, sanity_passed, new_proposal) = neighbor.try_recv();
