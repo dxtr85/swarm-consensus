@@ -54,7 +54,7 @@ fn gnome_message_exchange() {
     // println!("tu");
     let _ = left_s.send(Message {
         swarm_time: SwarmTime(1),
-        neighborhood: neighbor::Neighborhood(0),
+        neighborhood: neighbor::Neighborhood(1),
         // header: message::Header::Block(BlockID(2)),
         // payload: message::Payload::Block(BlockID(2), Data(2)),
         header: Header::Sync,
@@ -69,25 +69,47 @@ fn gnome_message_exchange() {
     // });
     // manager.print_status("message exchange");
 
-    thread::sleep(Duration::from_millis(100));
-    let _ = left_s.send(Message {
-        swarm_time: SwarmTime(2),
-        neighborhood: neighbor::Neighborhood(0),
-        // header: message::Header::Block(BlockID(3)),
-        // payload: message::Payload::Block(BlockID(3), Data(3)),
-        header: Header::Sync,
-        payload: Payload::KeepAlive,
-    });
     // let _ = right_s.send(Message {
     //     swarm_time: SwarmTime(2),
     //     neighborhood: neighbor::Neighborhood(0),
     //     header: message::Header::Block(BlockID(2)),
     //     payload: Payload::KeepAlive,
     // });
-    let _ = req_sender.send(Request::AddData(Data(2)));
-    let rcvd = resp_receiver.recv();
+    // let _ = req_sender.send(Request::AddData(Data(2)));
 
-    // println!("fajf");
+    for i in 2..7 {
+        thread::sleep(Duration::from_millis(100));
+        let _ = left_s.send(Message {
+            swarm_time: SwarmTime(i),
+            neighborhood: neighbor::Neighborhood(i as u8),
+            // header: message::Header::Block(BlockID(3)),
+            // payload: message::Payload::Block(BlockID(3), Data(3)),
+            header: Header::Sync,
+            payload: Payload::KeepAlive,
+        });
+    }
+    thread::sleep(Duration::from_millis(100));
+    let _ = left_s.send(Message {
+        swarm_time: SwarmTime(7),
+        neighborhood: neighbor::Neighborhood(0),
+        // header: message::Header::Block(BlockID(3)),
+        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        header: Header::Sync,
+        // payload: Payload::Request(NeighborRequest::ListingRequest(SwarmTime(0))),
+        payload: Payload::KeepAlive,
+    });
+    for i in 0..7 {
+        thread::sleep(Duration::from_millis(100));
+        let _ = left_s.send(Message {
+            swarm_time: SwarmTime(8 + i),
+            neighborhood: neighbor::Neighborhood(i as u8),
+            header: message::Header::Block(BlockID(1)),
+            // payload: message::Payload:: Block(BlockID(3), Data(3)),
+            // header: Header::Sync,
+            payload: Payload::KeepAlive,
+        });
+    }
+    let rcvd = resp_receiver.recv();
     assert!(rcvd.is_ok(), "User received invalid response!");
 
     let unwrapped = rcvd.unwrap();
@@ -97,7 +119,57 @@ fn gnome_message_exchange() {
         "User received unexpected response!"
     );
 
+    thread::sleep(Duration::from_millis(100));
+    let _ = left_s.send(Message {
+        swarm_time: SwarmTime(15),
+        neighborhood: neighbor::Neighborhood(0),
+        // header: message::Header::Block(BlockID(3)),
+        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        header: Header::Sync,
+        payload: Payload::Request(NeighborRequest::ListingRequest(SwarmTime(0))),
+        // payload: Payload::KeepAlive,
+    });
+    // println!("fajf");
+
+    println!("Trying receive another message...");
+    let rcvd = resp_receiver.recv();
+    assert!(rcvd.is_ok(), "User did not receive ListingRequest!");
+
+    let unwrapped = rcvd.unwrap();
+    let g_id = GnomeId(1);
+    let n_request = NeighborRequest::ListingRequest(SwarmTime(0));
+    assert_eq!(
+        unwrapped,
+        Response::DataInquiry(g_id, n_request),
+        "User received unexpected inquiry!"
+    );
+    let _ = req_sender.send(Request::SendData(
+        g_id,
+        n_request,
+        NeighborResponse::Listing(1, [BlockID(1); 128]),
+    ));
+    thread::sleep(Duration::from_millis(100));
+    let _ = left_s.send(Message {
+        swarm_time: SwarmTime(16),
+        neighborhood: neighbor::Neighborhood(1),
+        // header: message::Header::Block(BlockID(3)),
+        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        header: Header::Sync,
+        // payload: Payload::Request(NeighborRequest::ListingRequest(SwarmTime(0))),
+        payload: Payload::KeepAlive,
+    });
     manager.print_status("message exchange");
+    println!("Trying receive another message...");
+    thread::sleep(Duration::from_millis(100));
+    let _ = left_s.send(Message {
+        swarm_time: SwarmTime(17),
+        neighborhood: neighbor::Neighborhood(2),
+        // header: message::Header::Block(BlockID(3)),
+        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        header: Header::Sync,
+        // payload: Payload::Request(NeighborRequest::ListingRequest(SwarmTime(0))),
+        payload: Payload::KeepAlive,
+    });
     manager.finish();
 }
 

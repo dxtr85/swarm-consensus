@@ -44,12 +44,20 @@ impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} {} {}",
-            self.swarm_time, self.neighborhood, self.payload
+            "{} {} {} {}",
+            self.swarm_time, self.neighborhood, self.header, self.payload
         )
     }
 }
 
+impl Display for Header {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Header::Sync => write!(f, "Sync"),
+            Header::Block(b_id) => write!(f, "{}", b_id),
+        }
+    }
+}
 impl Display for BlockID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "BID-{}", self.0)
@@ -58,7 +66,7 @@ impl Display for BlockID {
 impl Display for Payload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::KeepAlive => write!(f, "KeepAlive",),
+            Self::KeepAlive => write!(f, "",),
             Self::Request(_) => write!(f, "Request"),
             Self::Listing(count, _) => write!(f, "Listing with {} elements", count),
             Self::Block(block_id, data) => {

@@ -75,24 +75,6 @@ impl Gnome {
         gnome.neighbors = neighbors;
         gnome
     }
-    // pub fn with_diameter(
-    //     swarm_diameter: u8,
-    //     sender: Sender<Response>,
-    //     receiver: Receiver<Request>,
-    // ) -> Self {
-    //     Gnome {
-    //         id: gnome_id_dispenser(),
-    //         awareness: Awareness::Unaware(0),
-    //         swarm_time: 0,
-    //         receiver,
-    //         sender,
-    //         neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
-    //         refreshed_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
-    //         swarm_diameter,
-    //         proposal: None,
-    //         next_state: NextState::from_awareness(Awareness::Unaware(0)),
-    //     }
-    // }
 
     fn serve_user_requests(&mut self) -> bool {
         if let Ok(request) = self.receiver.try_recv() {
@@ -108,7 +90,7 @@ impl Gnome {
                     );
                 }
                 Request::AddData(data) => {
-                    self.proposals.push_back(data);
+                    self.proposals.push_front(data);
                     println!("vvv USER vvv REQ {}", data);
                 }
                 Request::AddNeighbor(neighbor) => {
@@ -116,6 +98,7 @@ impl Gnome {
                     self.add_neighbor(neighbor);
                 }
                 Request::SendData(gnome_id, request, data) => {
+                    println!("Trying to inform neighbor {} about data", gnome_id);
                     for neighbor in &mut self.neighbors {
                         if neighbor.id == gnome_id {
                             neighbor.add_requested_data(request, data);
@@ -134,6 +117,17 @@ impl Gnome {
             }
         }
         false
+    }
+
+    fn serve_neighbors_requests(&mut self) {
+        for neighbor in &mut self.neighbors {
+            if let Some(request) = neighbor.requests.pop_back() {
+                println!("Some neighbor request!");
+                let _ = self
+                    .sender
+                    .send(Response::DataInquiry(neighbor.id, request));
+            }
+        }
     }
 
     fn start_new_timer(
@@ -160,10 +154,17 @@ impl Gnome {
                 // println!("EXIT on user request.");
                 break;
             };
+            self.serve_neighbors_requests();
             let (advance_to_next_turn, new_proposal) = self.try_recv();
             let timeout = timeout_receiver.try_recv().is_ok();
-            if advance_to_next_turn | timeout {
-                // && !self.neighbors.is_empty() {
+            if advance_to_next_turn
+                || timeout && !(self.neighbors.is_empty() || self.refreshed_neighbors.is_empty())
+            {
+                // println!(
+                //     "neigh: {}, ref: {}",
+                //     self.neighbors.len(),
+                //     self.refreshed_neighbors.len()
+                // );
                 // println!(
                 //     "After traj{}|{}|{}: {} {}",
                 //     self.neighbors.len(),
@@ -197,20 +198,21 @@ impl Gnome {
         let message = self.prepare_message();
         println!("{} >>> {}", self.id, message);
         for neighbor in &mut self.neighbors {
-            let _ = neighbor.send_out(message);
+            neighbor.send_out(message);
         }
         for neighbor in &mut self.new_neighbors {
-            let _ = neighbor.send_out(message);
+            neighbor.send_out(message);
         }
     }
 
     pub fn send_specialized(&mut self) {
         let message = self.prepare_message();
-        println!("{} >>> {}", self.id, message);
         let served_neighbors = Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME);
         let unserved_neighbors = std::mem::replace(&mut self.neighbors, served_neighbors);
         for mut neighbor in unserved_neighbors {
+            // println!("Trying specialized for {}", neighbor.id);
             if let Some((_req, resp)) = neighbor.get_specialized_data() {
+                // println!("Yes: {}", resp);
                 let payload = match resp {
                     crate::neighbor::NeighborResponse::Listing(count, listing) => {
                         Payload::Listing(count, listing)
@@ -218,17 +220,20 @@ impl Gnome {
                     crate::neighbor::NeighborResponse::Block(id, data) => Payload::Block(id, data),
                 };
                 let new_message = message.set_payload(payload);
-                let _ = neighbor.send_out(new_message);
-            } else if let Some(request) = neighbor.user_requests.pop_front() {
+                println!("{} >S> {}", self.id, new_message);
+                neighbor.send_out(new_message);
+            } else if let Some(request) = neighbor.user_requests.pop_back() {
                 let new_message = message.include_request(request);
-                let _ = neighbor.send_out(new_message);
+                println!("{} >S> {}", self.id, new_message);
+                neighbor.send_out(new_message);
             } else {
-                let _ = neighbor.send_out(message);
+                println!("{} >>> {}", self.id, message);
+                neighbor.send_out(message);
             }
             self.neighbors.push(neighbor);
         }
         for neighbor in &mut self.new_neighbors {
-            let _ = neighbor.send_out(message);
+            neighbor.send_out(message);
         }
     }
 
@@ -292,7 +297,7 @@ impl Gnome {
                         self.block_id
                     );
                 }
-                if let Some(data) = self.proposals.pop_front() {
+                if let Some(data) = self.proposals.pop_back() {
                     self.block_id = BlockID(data.0);
                     self.data = data;
                 } else {
@@ -302,7 +307,7 @@ impl Gnome {
             } else {
                 // Sync swarm time
                 self.swarm_time = self.round_start + self.swarm_diameter;
-                if let Some(data) = self.proposals.pop_front() {
+                if let Some(data) = self.proposals.pop_back() {
                     self.block_id = BlockID(data.0);
                     self.data = data;
                 }
@@ -316,103 +321,17 @@ impl Gnome {
                 let _ = neighbor.try_recv();
             }
             // Add new_neighbors
-            self.neighbors.append(&mut self.new_neighbors);
+            self.refreshed_neighbors.append(&mut self.new_neighbors);
             self.next_state
                 .reset_for_next_turn(true, self.block_id, self.data);
-            for neighbor in &mut self.neighbors {
+            // println!("\n\ntutaj {}\n\n", self.refreshed_neighbors.len());
+            for neighbor in &mut self.refreshed_neighbors {
                 neighbor.start_new_round(self.swarm_time);
             }
         } else {
             self.next_state
                 .reset_for_next_turn(false, self.block_id, self.data);
         }
-        // let mut sync_neighbors_swarm_time = false;
-        // if self.next_state.become_confused {
-        //     self.set_awareness(Awareness::Confused(self.swarm_diameter));
-        //     self.data_id = None;
-        //     self.next_state.become_confused = false;
-        //     return;
-        // }
-        // if self.next_state.all_unaware() {
-        //     if let Awareness::Unaware = self.awareness {
-        //         // TODO add check if there was confusion just before
-        //         if self.data_id.is_some() {
-        //             self.set_awareness(Awareness::Aware(0));
-        //         }
-        //     } else {
-        //         println!("All neighbors unaware, but me: {}", self.awareness);
-        //         // Can not update awareness state when all neighbors are unaware
-        //         // return;
-        //     }
-        // } else if self.next_state.all_aware() {
-        //     // println!("All aware!");
-        //     if self.awareness.is_unaware() {
-        //         self.data_id = self.next_state.data_id;
-        //         self.proposal_data = self.next_state.proposal_data;
-        //     }
-        //     self.set_awareness(Awareness::Aware(
-        //         // self.swarm_time,
-        //         self.next_state.awareness_diameter + 1,
-        //         // self.next_state.proposal.unwrap(),
-        //     ));
-        //     let proposal_time = self.data_id.unwrap().0;
-        //     let neighborhood = self.awareness.neighborhood().unwrap();
-        //     if neighborhood >= self.swarm_diameter
-        //         || self.swarm_time - proposal_time >= (2 * self.swarm_diameter as u32)
-        //     {
-        //         if neighborhood >= self.swarm_diameter {
-        //             // SYNC swarm_time
-        //             self.swarm_time = SwarmTime(
-        //                 proposal_time.0 + 2 * (self.next_state.awareness_diameter as u32 + 1),
-        //             );
-        //             self.set_awareness(Awareness::Unaware);
-        //             if let Some(ProposalID(proposal_time, proposer)) = self.data_id {
-        //                 let _ = self.sender.send(Response::Data(
-        //                     ProposalID(proposal_time, proposer),
-        //                     self.proposal_data,
-        //                 ));
-        //             } else {
-        //                 println!("ERROR: No data to send!");
-        //             }
-        //             // self.proposal_data = ProposalData(0);
-        //             self.data_id = None;
-        //             sync_neighbors_swarm_time = true;
-        //         } else {
-        //             println!("ERROR: Swarm diameter too small or Proposal was backdated!");
-        //             self.data_id = None;
-        //             self.set_awareness(Awareness::Unaware);
-        //         }
-        //     } else {
-        //         self.set_awareness(Awareness::Aware(
-        //             // self.swarm_time,
-        //             self.next_state.awareness_diameter + 1,
-        //             // self.proposal.unwrap(),
-        //         ));
-        //     }
-        // } else if self.next_state.all_confused() {
-        //     if self.next_state.confusion_diameter == 0 {
-        //         self.set_awareness(Awareness::Unaware);
-        //     } else {
-        //         self.set_awareness(Awareness::Confused(
-        //             // self.swarm_time,
-        //             self.next_state.confusion_diameter - 1,
-        //         ));
-        //     }
-        // } else if self.next_state.any_confused() {
-        //     self.set_awareness(Awareness::Confused(self.swarm_diameter));
-        // } else if self.next_state.any_aware() {
-        //     if let Awareness::Unaware = self.awareness {
-        //         self.set_awareness(Awareness::Aware(0));
-        //         self.data_id = self.next_state.data_id;
-        //         self.proposal_data = self.next_state.proposal_data;
-        //         // self.next_state.proposal.unwrap()))
-        //     }
-        // }
-        // self.next_state.swarm_time_min = self.swarm_time;
-        // self.next_state.awareness = self.awareness;
-        // if sync_neighbors_swarm_time {
-        //     self.sync_neighbors_time();
-        // }
     }
 
     fn try_recv(&mut self) -> (bool, bool) {
@@ -424,7 +343,7 @@ impl Gnome {
         );
         for mut neighbor in loop_neighbors {
             looped = true;
-            if let Some(response) = neighbor.user_responses.pop_front() {
+            if let Some(response) = neighbor.user_responses.pop_back() {
                 let _ = self.sender.send(response);
             }
             let (served, sanity_passed, new_proposal) = neighbor.try_recv();

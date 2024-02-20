@@ -40,8 +40,8 @@ pub struct Neighbor {
     pub payload: Payload,
     pub user_requests: VecDeque<NeighborRequest>,
     pub user_responses: VecDeque<Response>,
-    requests: VecDeque<NeighborRequest>,
-    requested_data: VecDeque<(NeighborRequest, NeighborResponse)>,
+    pub requests: VecDeque<NeighborRequest>,
+    pub requested_data: VecDeque<(NeighborRequest, NeighborResponse)>,
     gnome_header: Header,
     gnome_neighborhood: Neighborhood,
 }
@@ -87,34 +87,36 @@ impl Neighbor {
     }
 
     pub fn start_new_round(&mut self, swarm_time: SwarmTime) {
+        // println!("\n\nStarting new round!");
         self.swarm_time = swarm_time;
         self.round_start = swarm_time;
         self.header = Header::Sync;
         self.payload = Payload::KeepAlive;
+        self.prev_neighborhood = None;
+        self.neighborhood = Neighborhood(0);
     }
 
     pub fn try_recv(&mut self) -> (bool, bool, bool) {
         let mut message_recvd = false;
         let sanity_passed = true;
         let mut new_proposal = false;
-        while let Ok(Message {
-            swarm_time,
-            neighborhood,
-            header,
-            payload,
-        }) = self.receiver.try_recv()
+        while let Ok(
+            message @ Message {
+                swarm_time,
+                neighborhood,
+                header,
+                payload,
+            },
+        ) = self.receiver.try_recv()
         {
-            // println!(
-            //     "{} got {} {} {:?}",
-            //     self.id, swarm_time, neighborhood, header
-            // );
+            println!("{}  <  {}", self.id, message);
             if self.sanity_check(&swarm_time, &neighborhood, &header) {
                 message_recvd = true;
             } else {
-                // println!("Coś nie poszło");
+                println!("Coś nie poszło {}", message);
                 continue;
             }
-            // println!("Sanity passed");
+            // println!("Sanity passed {}", message);
 
             self.swarm_time = swarm_time;
             match header {
@@ -156,21 +158,22 @@ impl Neighbor {
                                 self.payload = payload;
                             } else {
                                 self.user_responses
-                                    .push_back(Response::Block(block_id, data));
+                                    .push_front(Response::Block(block_id, data));
                             }
                         }
                         Header::Sync => {
                             self.user_responses
-                                .push_back(Response::Block(block_id, data));
+                                .push_front(Response::Block(block_id, data));
                         }
                     };
                 }
                 Payload::Request(request) => {
-                    self.requests.push_back(request);
+                    // println!("Pushing riquest");
+                    self.requests.push_front(request);
                 }
                 Payload::Listing(count, listing) => {
                     self.user_responses
-                        .push_back(Response::Listing(count, listing));
+                        .push_front(Response::Listing(count, listing));
                 }
             }
             // println!("returning: {} {:?}", new_proposal, self.neighborhood);
@@ -198,6 +201,7 @@ impl Neighbor {
         // println!("hood_inc_limited: {}", hood_inc_limited);
 
         if self.header == *header {
+            // println!("same header");
             // A gnome can not stay at the same neighborhood number for more than
             // 2 turns
             let hood_increased = if let Some(prev_neighborhood) = self.prev_neighborhood {
@@ -215,7 +219,10 @@ impl Neighbor {
                 // );
                 self.neighborhood.0 <= neighborhood.0
             };
-            // println!("hood_increased: {}", hood_increased);
+            // println!(
+            //     "{:?} {} {} hood_increased: {}",
+            //     self.prev_neighborhood, self.neighborhood, neighborhood, hood_increased
+            // );
             hood_increased && hood_inc_limited
         } else {
             let no_backdating = self.swarm_time - self.round_start < self.swarm_diameter;
