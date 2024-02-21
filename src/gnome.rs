@@ -97,6 +97,10 @@ impl Gnome {
                     println!("{} ADD\tadd a new neighbor", neighbor.id);
                     self.add_neighbor(neighbor);
                 }
+                Request::DropNeighbor(n_id) => {
+                    println!("{} DROP\ta neighbor on user request", n_id);
+                    self.drop_neighbor(n_id);
+                }
                 Request::SendData(gnome_id, request, data) => {
                     println!("Trying to inform neighbor {} about data", gnome_id);
                     for neighbor in &mut self.neighbors {
@@ -194,6 +198,22 @@ impl Gnome {
         self.new_neighbors.push(neighbor);
     }
 
+    pub fn drop_neighbor(&mut self, neighbor_id: GnomeId) {
+        if let Some(index) = self.neighbors.iter().position(|x| x.id == neighbor_id) {
+            self.neighbors.remove(index);
+        }
+        if let Some(index) = self
+            .refreshed_neighbors
+            .iter()
+            .position(|x| x.id == neighbor_id)
+        {
+            self.refreshed_neighbors.remove(index);
+        }
+        if let Some(index) = self.new_neighbors.iter().position(|x| x.id == neighbor_id) {
+            self.new_neighbors.remove(index);
+        }
+    }
+
     pub fn send_all(&mut self) {
         let message = self.prepare_message();
         println!("{} >>> {}", self.id, message);
@@ -267,12 +287,10 @@ impl Gnome {
             &mut self.refreshed_neighbors,
             Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
         );
-        // println!("After słap: {}", self.neighbors.len());
     }
 
     fn concat_neighbors(&mut self) {
         self.neighbors.append(&mut self.refreshed_neighbors);
-        // println!("After konkat: {}", self.neighbors.len());
     }
 
     fn update_state(&mut self) {
@@ -324,7 +342,6 @@ impl Gnome {
             self.refreshed_neighbors.append(&mut self.new_neighbors);
             self.next_state
                 .reset_for_next_turn(true, self.block_id, self.data);
-            // println!("\n\ntutaj {}\n\n", self.refreshed_neighbors.len());
             for neighbor in &mut self.refreshed_neighbors {
                 neighbor.start_new_round(self.swarm_time);
             }
@@ -343,7 +360,7 @@ impl Gnome {
         );
         for mut neighbor in loop_neighbors {
             looped = true;
-            if let Some(response) = neighbor.user_responses.pop_back() {
+            while let Some(response) = neighbor.user_responses.pop_back() {
                 let _ = self.sender.send(response);
             }
             let (served, sanity_passed, new_proposal) = neighbor.try_recv();

@@ -1,3 +1,4 @@
+use super::neighbor::Neighborhood;
 use super::*;
 use std::thread;
 
@@ -6,109 +7,116 @@ use std::{
     time::Duration,
 };
 
+struct TestManager {
+    manager: Manager,
+    swarm_name: String,
+    neighbors: Vec<(GnomeId, Sender<Message>)>,
+}
+
+impl TestManager {
+    pub fn join_a_swarm(
+        swarm_name: &str,
+        neighbors_count: u32,
+    ) -> (TestManager, Sender<Request>, Receiver<Response>) {
+        let mut manager = Manager::new();
+        let mut neighbors = Vec::with_capacity(neighbors_count as usize);
+        let mut mgr_neighbors: Vec<Neighbor> = Vec::with_capacity(neighbors_count as usize);
+        for i in 1..neighbors_count + 1 {
+            let (neighbor, sender, _receiver) = build_a_neighbor(GnomeId(i));
+            mgr_neighbors.push(neighbor);
+            neighbors.push((GnomeId(i), sender));
+        }
+
+        let (req_sender, resp_receiver) =
+            manager.join_a_swarm(swarm_name.to_string(), Some(mgr_neighbors));
+        let manager = TestManager {
+            manager,
+            swarm_name: swarm_name.to_string(),
+            neighbors,
+        };
+        (manager, req_sender, resp_receiver)
+    }
+
+    pub fn status(&self) {
+        self.manager.print_status(&self.swarm_name);
+    }
+
+    pub fn turn(&mut self, mut messages: Vec<Option<Message>>) {
+        for (_id, sender) in &mut self.neighbors {
+            if let Some(Some(message)) = messages.pop() {
+                let _ = sender.send(message);
+            }
+        }
+    }
+
+    pub fn finish(self) {
+        self.manager.finish();
+    }
+}
+
 fn build_a_neighbor(id: GnomeId) -> (Neighbor, Sender<Message>, Receiver<Message>) {
-    let (s_req, r_req) = channel::<Message>();
-    let (s_res, r_res) = channel::<Message>();
+    let (mocked_remote_sender, receiver) = channel::<Message>();
+    let (sender, mocked_remote_receiver) = channel::<Message>();
     (
-        Neighbor::from_id_channel_time(id, r_req, s_res, SwarmTime(0), DEFAULT_SWARM_DIAMETER),
-        s_req,
-        r_res,
+        Neighbor::from_id_channel_time(id, receiver, sender, SwarmTime(0), DEFAULT_SWARM_DIAMETER),
+        mocked_remote_sender,
+        mocked_remote_receiver,
     )
 }
 
 #[test]
 fn gnome_message_exchange() {
-    let mut manager = Manager::new();
-    let left_id = gnome::GnomeId(1);
-    // let right_id = gnome::GnomeId(2);
-    let (left, left_s, _) = build_a_neighbor(left_id);
-    // let (right, right_s, _) = build_a_neighbor(right_id);
+    let (mut manager, req_sender, resp_receiver) =
+        TestManager::join_a_swarm("gnome message exchange", 1);
 
-    let neighbors: Vec<Neighbor> = vec![left];
-    let (req_sender, resp_receiver) =
-        manager.join_a_swarm("message exchange".to_string(), Some(neighbors));
-    manager.print_status("message exchange");
     println!("Neighbors sent Proposal!");
-    let _ = left_s.send(Message {
+    manager.turn(vec![Some(Message {
         swarm_time: SwarmTime(0),
-        neighborhood: neighbor::Neighborhood(0),
-        // header: message::Header::Block(BlockID(1)),
-        // payload: message::Payload::Block(BlockID(1), Data(1)),
+        neighborhood: Neighborhood(0),
         header: Header::Sync,
         payload: Payload::KeepAlive,
-    });
-    // let _ = right_s.send(Message {
-    //     swarm_time: SwarmTime(0),
-    //     neighborhood: neighbor::Neighborhood(0),
-    //     header: message::Header::Block(BlockID(1)),
-    //     payload: message::Payload::Block(BlockID(1), Data(1)),
-    // });
-    // thread::sleep(Duration::from_millis(100));
-    // manager.print_status("message exchange");
+    })]);
 
-    // println!("łan");
     thread::sleep(Duration::from_millis(100));
     let msg_res = resp_receiver.try_recv();
     assert!(msg_res.is_err(), "User received unexpected message!");
     let _ = req_sender.send(Request::AddData(Data(1)));
-    // println!("tu");
-    let _ = left_s.send(Message {
+
+    manager.turn(vec![Some(Message {
         swarm_time: SwarmTime(1),
-        neighborhood: neighbor::Neighborhood(1),
-        // header: message::Header::Block(BlockID(2)),
-        // payload: message::Payload::Block(BlockID(2), Data(2)),
+        neighborhood: Neighborhood(1),
         header: Header::Sync,
         payload: Payload::KeepAlive,
-    });
-    // println!("fri");
-    // let _ = right_s.send(Message {
-    //     swarm_time: SwarmTime(1),
-    //     neighborhood: neighbor::Neighborhood(0),
-    //     header: message::Header::Block(BlockID(2)),
-    //     payload: message::Payload::Block(BlockID(2), Data(2)),
-    // });
-    // manager.print_status("message exchange");
-
-    // let _ = right_s.send(Message {
-    //     swarm_time: SwarmTime(2),
-    //     neighborhood: neighbor::Neighborhood(0),
-    //     header: message::Header::Block(BlockID(2)),
-    //     payload: Payload::KeepAlive,
-    // });
-    // let _ = req_sender.send(Request::AddData(Data(2)));
+    })]);
 
     for i in 2..7 {
         thread::sleep(Duration::from_millis(100));
-        let _ = left_s.send(Message {
+        manager.turn(vec![Some(Message {
             swarm_time: SwarmTime(i),
-            neighborhood: neighbor::Neighborhood(i as u8),
-            // header: message::Header::Block(BlockID(3)),
-            // payload: message::Payload::Block(BlockID(3), Data(3)),
+            neighborhood: Neighborhood(i as u8),
             header: Header::Sync,
             payload: Payload::KeepAlive,
-        });
+        })]);
     }
+
     thread::sleep(Duration::from_millis(100));
-    let _ = left_s.send(Message {
+    manager.turn(vec![Some(Message {
         swarm_time: SwarmTime(7),
-        neighborhood: neighbor::Neighborhood(0),
-        // header: message::Header::Block(BlockID(3)),
-        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        neighborhood: Neighborhood(0),
         header: Header::Sync,
-        // payload: Payload::Request(NeighborRequest::ListingRequest(SwarmTime(0))),
         payload: Payload::KeepAlive,
-    });
+    })]);
+
     for i in 0..7 {
         thread::sleep(Duration::from_millis(100));
-        let _ = left_s.send(Message {
+        manager.turn(vec![Some(Message {
             swarm_time: SwarmTime(8 + i),
-            neighborhood: neighbor::Neighborhood(i as u8),
+            neighborhood: Neighborhood(i as u8),
             header: message::Header::Block(BlockID(1)),
-            // payload: message::Payload:: Block(BlockID(3), Data(3)),
-            // header: Header::Sync,
             payload: Payload::KeepAlive,
-        });
+        })]);
     }
+
     let rcvd = resp_receiver.recv();
     assert!(rcvd.is_ok(), "User received invalid response!");
 
@@ -120,16 +128,12 @@ fn gnome_message_exchange() {
     );
 
     thread::sleep(Duration::from_millis(100));
-    let _ = left_s.send(Message {
+    manager.turn(vec![Some(Message {
         swarm_time: SwarmTime(15),
-        neighborhood: neighbor::Neighborhood(0),
-        // header: message::Header::Block(BlockID(3)),
-        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        neighborhood: Neighborhood(0),
         header: Header::Sync,
         payload: Payload::Request(NeighborRequest::ListingRequest(SwarmTime(0))),
-        // payload: Payload::KeepAlive,
-    });
-    // println!("fajf");
+    })]);
 
     println!("Trying receive another message...");
     let rcvd = resp_receiver.recv();
@@ -148,36 +152,31 @@ fn gnome_message_exchange() {
         n_request,
         NeighborResponse::Listing(1, [BlockID(1); 128]),
     ));
+
     thread::sleep(Duration::from_millis(100));
-    let _ = left_s.send(Message {
+    manager.turn(vec![Some(Message {
         swarm_time: SwarmTime(16),
-        neighborhood: neighbor::Neighborhood(1),
-        // header: message::Header::Block(BlockID(3)),
-        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        neighborhood: Neighborhood(1),
         header: Header::Sync,
-        // payload: Payload::Request(NeighborRequest::ListingRequest(SwarmTime(0))),
         payload: Payload::KeepAlive,
-    });
-    manager.print_status("message exchange");
+    })]);
+
+    manager.status();
     println!("Trying receive another message...");
     thread::sleep(Duration::from_millis(100));
-    let _ = left_s.send(Message {
+    manager.turn(vec![Some(Message {
         swarm_time: SwarmTime(17),
-        neighborhood: neighbor::Neighborhood(2),
-        // header: message::Header::Block(BlockID(3)),
-        // payload: message::Payload::Block(BlockID(3), Data(3)),
+        neighborhood: Neighborhood(2),
         header: Header::Sync,
-        // payload: Payload::Request(NeighborRequest::ListingRequest(SwarmTime(0))),
         payload: Payload::KeepAlive,
-    });
+    })]);
     manager.finish();
 }
 
 // #[test]
 // fn exit_on_request() {
-//     let mut manager = Manager::new();
-//     let _ = manager.join_a_swarm("exit on request".to_string(), None);
-//     manager.print_status("exit on request");
+//     let (manager, _s, _r) = TestManager::join_a_swarm("exit on request", 0);
+//     manager.status();
 //     // TODO: below is not required
-//     // manager.finish();
+//     manager.finish();
 // }

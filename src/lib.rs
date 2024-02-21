@@ -30,6 +30,7 @@ const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
 pub enum Request {
     AddData(Data),
     AddNeighbor(Neighbor),
+    DropNeighbor(GnomeId),
     AskData(GnomeId, NeighborRequest),
     SendData(GnomeId, NeighborRequest, NeighborResponse),
     Disconnect,
