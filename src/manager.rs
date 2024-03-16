@@ -16,6 +16,15 @@ impl Manager {
         }
     }
 
+    pub fn add_neighbor_to_a_swarm(&mut self, name: String, neighbor: Neighbor) {
+        if let Some(swarm) = self.swarms.get_mut(&name) {
+            match swarm.sender.send(Request::AddNeighbor(neighbor)) {
+                Ok(()) => println!("Added neighbor to existing swarm"),
+                Err(e) => println!("Failed adding neighbor to existing swarm: {:?}", e),
+            }
+        }
+    }
+
     pub fn join_a_swarm(
         &mut self,
         name: String,

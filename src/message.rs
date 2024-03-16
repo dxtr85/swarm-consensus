@@ -27,7 +27,7 @@ pub enum Payload {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BlockID(pub u8);
+pub struct BlockID(pub u32);
 
 impl Message {
     pub fn set_payload(&self, payload: Payload) -> Message {

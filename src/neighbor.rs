@@ -30,8 +30,8 @@ impl Display for Neighborhood {
 pub struct Neighbor {
     pub id: GnomeId,
     receiver: Receiver<Message>,
-    round_start: SwarmTime,
     sender: Sender<Message>,
+    round_start: SwarmTime,
     pub swarm_time: SwarmTime,
     pub swarm_diameter: SwarmTime,
     pub neighborhood: Neighborhood,
@@ -110,19 +110,28 @@ impl Neighbor {
         ) = self.receiver.try_recv()
         {
             println!("{}  <  {}", self.id, message);
+            // We only check sanity after we're synced
+            // if self.round_start.0 > 0 {
             if self.sanity_check(&swarm_time, &neighborhood, &header) {
                 message_recvd = true;
             } else {
                 println!("Coś nie poszło {}", message);
                 continue;
             }
+            // } else {
+            //     message_recvd = true;
+            // }
             // println!("Sanity passed {}", message);
 
             self.swarm_time = swarm_time;
             match header {
                 Header::Sync => {
                     if self.header == Header::Sync {
-                        self.prev_neighborhood = Some(self.neighborhood);
+                        if neighborhood.0 > 0 {
+                            self.prev_neighborhood = Some(self.neighborhood);
+                        } else {
+                            self.prev_neighborhood = None;
+                        }
                     } else {
                         self.prev_neighborhood = None;
                         self.header = Header::Sync;
@@ -194,35 +203,42 @@ impl Neighbor {
         // A neighbor can not announce a number greater than the number
         // we announced to him, plus one
         let hood_inc_limited = if self.gnome_header == *header {
+            println!("{} <= {}", neighborhood.0, self.gnome_neighborhood.0 + 1);
             neighborhood.0 <= self.gnome_neighborhood.0 + 1
         } else {
             true
         };
-        // println!("hood_inc_limited: {}", hood_inc_limited);
+        println!("hood_inc_limited: {}", hood_inc_limited);
 
         if self.header == *header {
             // println!("same header");
             // A gnome can not stay at the same neighborhood number for more than
             // 2 turns
             let hood_increased = if let Some(prev_neighborhood) = self.prev_neighborhood {
-                // println!(
-                //     "{} new: {:?} > prev: {:?}",
-                //     swarm_time, neighborhood, prev_neighborhood
-                // );
-                neighborhood.0 > prev_neighborhood.0
+                println!(
+                    "{} new: {:?} > pprev: {:?}",
+                    swarm_time, neighborhood, prev_neighborhood
+                );
+                if neighborhood.0 == 0
+                    && u32::from(self.neighborhood.0 + 1) >= self.swarm_diameter.0
+                {
+                    true
+                } else {
+                    neighborhood.0 > prev_neighborhood.0
+                }
             } else {
                 // A gnome can not backtrack by announcing a smaller neighborhood
                 // number than before
-                // println!(
-                //     "{} current: {:?} <= new: {:?}",
-                //     swarm_time, self.neighborhood, neighborhood
-                // );
+                println!(
+                    "{} current: {:?} <= new: {:?}",
+                    swarm_time, self.neighborhood, neighborhood
+                );
                 self.neighborhood.0 <= neighborhood.0
             };
-            // println!(
-            //     "{:?} {} {} hood_increased: {}",
-            //     self.prev_neighborhood, self.neighborhood, neighborhood, hood_increased
-            // );
+            println!(
+                "{:?} {} {} hood_increased: {}",
+                self.prev_neighborhood, self.neighborhood, neighborhood, hood_increased
+            );
             hood_increased && hood_inc_limited
         } else {
             let no_backdating = self.swarm_time - self.round_start < self.swarm_diameter;
@@ -242,6 +258,7 @@ impl Neighbor {
     pub fn send_out(&mut self, message: Message) {
         let _ = self.sender.send(message);
         self.gnome_header = message.header;
+        println!("new gn: {}", message.neighborhood.0);
         self.gnome_neighborhood = message.neighborhood;
     }
 

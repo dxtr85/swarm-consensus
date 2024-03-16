@@ -31,7 +31,8 @@ impl NextState {
     pub fn update(&mut self, neighbor: &Neighbor) {
         // println!("Update {:?}", neighbor);
         let neighbor_st = neighbor.swarm_time;
-        if neighbor_st > self.swarm_time_min && neighbor_st <= self.swarm_time {
+        if neighbor_st > self.swarm_time_min {
+            //&& neighbor_st <= self.swarm_time {
             self.swarm_time = neighbor_st;
         }
 
@@ -96,6 +97,7 @@ impl NextState {
         self.data = data;
         self.all_neighbors_same_header = true;
         self.neighborhood = if new_round {
+            self.all_neighbors_same_header = false;
             Neighborhood(0)
         } else {
             self.neighborhood.inc()
