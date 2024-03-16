@@ -68,7 +68,7 @@ impl Gnome {
             data: Data(0),
             proposals: VecDeque::new(),
             next_state: NextState::new(),
-            timeout_duration: Duration::from_millis(5000),
+            timeout_duration: Duration::from_millis(500),
         }
     }
 
@@ -358,7 +358,7 @@ impl Gnome {
                 Payload::Block(self.block_id, self.data),
             )
         };
-        println!("prep msg nhood: {}", self.neighborhood);
+        // println!("prep msg nhood: {}", self.neighborhood);
         Message {
             swarm_time: self.swarm_time,
             neighborhood: self.neighborhood,
@@ -515,6 +515,11 @@ impl Gnome {
                     //     "bifor updejt {:?} {:?}",
                     //     neighbor.swarm_time, neighbor.payload
                     // );
+
+                    //TODO: this is wacky
+                    if self.round_start.0 == 0 {
+                        self.next_state.swarm_time = neighbor.swarm_time;
+                    }
                     self.next_state.update(&neighbor);
                     // println!("bifor pusz {:?}", self.next_state);
                     self.refreshed_neighbors.push(neighbor);
