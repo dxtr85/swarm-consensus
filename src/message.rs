@@ -18,9 +18,10 @@ pub enum Header {
     Sync,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Payload {
     KeepAlive,
+    Bye,
     Block(BlockID, Data),
     Request(NeighborRequest),
     Listing(u8, [BlockID; 128]),
@@ -37,6 +38,19 @@ impl Message {
     pub fn include_request(&self, request: NeighborRequest) -> Message {
         let payload = Payload::Request(request);
         Message { payload, ..*self }
+    }
+
+    pub fn bye() -> Message {
+        Message {
+            swarm_time: SwarmTime(0),
+            neighborhood: Neighborhood(0),
+            header: Header::Sync,
+            payload: Payload::Bye,
+        }
+    }
+
+    pub fn is_bye(&self) -> bool {
+        self.payload == Payload::Bye
     }
 }
 
@@ -67,6 +81,7 @@ impl Display for Payload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::KeepAlive => write!(f, "",),
+            Self::Bye => write!(f, "Bye",),
             Self::Request(_) => write!(f, "Request"),
             Self::Listing(count, _) => write!(f, "Listing with {} elements", count),
             Self::Block(block_id, data) => {

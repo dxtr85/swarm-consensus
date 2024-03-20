@@ -7,7 +7,7 @@ mod swarm;
 pub use crate::swarm::SwarmTime;
 pub use message::{Header, Message, Payload};
 mod manager;
-use manager::Manager;
+pub use manager::Manager;
 pub use message::BlockID;
 pub use neighbor::NeighborRequest;
 pub use proposal::Data;
@@ -19,6 +19,8 @@ mod next_state;
 mod proposal;
 use crate::next_state::NextState;
 use std::fmt;
+// use std::sync::mpsc::channel;
+use std::sync::mpsc::Sender;
 
 #[cfg(test)]
 mod tests;
@@ -73,6 +75,6 @@ fn gnome_id_dispenser() -> GnomeId {
     }
 }
 
-pub fn start() -> Manager {
-    Manager::new()
+pub fn start(sender: Sender<(String, Sender<Request>)>) -> Manager {
+    Manager::new(sender)
 }

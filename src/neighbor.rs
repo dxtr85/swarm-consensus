@@ -96,10 +96,11 @@ impl Neighbor {
         self.neighborhood = Neighborhood(0);
     }
 
-    pub fn try_recv(&mut self) -> (bool, bool, bool) {
+    pub fn try_recv(&mut self) -> (bool, bool, bool, bool) {
         let mut message_recvd = false;
         let sanity_passed = true;
         let mut new_proposal = false;
+        let mut drop_me = false;
         while let Ok(
             message @ Message {
                 swarm_time,
@@ -110,8 +111,10 @@ impl Neighbor {
         ) = self.receiver.try_recv()
         {
             println!("{}  <  {}", self.id, message);
-            // We only check sanity after we're synced
-            // if self.round_start.0 > 0 {
+            if message.is_bye(){
+                drop_me = true;
+                return (message_recvd, sanity_passed, new_proposal, drop_me);
+            }
             if self.sanity_check(&swarm_time, &neighborhood, &header) {
                 message_recvd = true;
             } else {
@@ -160,6 +163,10 @@ impl Neighbor {
                 Payload::KeepAlive => {
                     // println!("KeepAlive");
                 }
+                Payload::Bye => {
+                    println!("Bye");
+                    drop_me = true;
+                }
                 Payload::Block(block_id, data) => {
                     match self.header {
                         Header::Block(id) => {
@@ -187,7 +194,7 @@ impl Neighbor {
             }
             // println!("returning: {} {:?}", new_proposal, self.neighborhood);
         }
-        (message_recvd, sanity_passed, new_proposal)
+        (message_recvd, sanity_passed, new_proposal, drop_me)
     }
 
     fn sanity_check(
@@ -197,7 +204,7 @@ impl Neighbor {
         header: &Header,
     ) -> bool {
         if self.swarm_time > *swarm_time {
-            println!("Received a message with older swarm_time than previous!");
+            println!("Received a message with older swarm_time {} than previous {}!", swarm_time, self.swarm_time);
             return false;
         }
         // A neighbor can not announce a number greater than the number
@@ -235,10 +242,19 @@ impl Neighbor {
                 // );
                 self.neighborhood.0 <= neighborhood.0
             };
-            // println!(
-            //     "{:?} {} {} hood_increased: {}",
-            //     self.prev_neighborhood, self.neighborhood, neighborhood, hood_increased
-            // );
+            if !hood_increased {
+                println!(
+                    "fail hood_increased {:?} {} {} ",
+                    self.prev_neighborhood, self.neighborhood, neighborhood
+                );
+            }
+            if !hood_inc_limited {
+                println!(
+                    "fail hood_inc_limited   {} <= {}",
+                    neighborhood.0,
+                    self.gnome_neighborhood.0 + 1
+                );
+            }
             hood_increased && hood_inc_limited
         } else {
             let no_backdating = self.swarm_time - self.round_start < self.swarm_diameter;

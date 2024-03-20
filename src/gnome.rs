@@ -269,7 +269,11 @@ impl Gnome {
     }
 
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
-        self.new_neighbors.push(neighbor);
+        if self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
+            self.fast_neighbors.push(neighbor);
+        } else {
+            self.new_neighbors.push(neighbor);
+        }
     }
 
     pub fn drop_neighbor(&mut self, neighbor_id: GnomeId) {
@@ -295,9 +299,11 @@ impl Gnome {
         let message = self.prepare_message();
         println!("{} >>> {}", self.id, message);
         for neighbor in &mut self.fast_neighbors {
+            // println!("snd3 ");
             neighbor.send_out(message);
         }
         for neighbor in &mut self.slow_neighbors {
+            // println!("snd4 ");
             neighbor.send_out(message);
         }
         // for neighbor in &mut self.new_neighbors {
@@ -336,6 +342,7 @@ impl Gnome {
                     println!("{} >>> {}", self.id, message);
                     generic_info_printed = true;
                 }
+                // println!("snd {}", message);
                 neighbor.send_out(message);
             }
             if fast {
@@ -394,8 +401,13 @@ impl Gnome {
     fn update_state(&mut self) {
         let (n_st, n_neigh, n_bid, n_data) = self.next_state.next_params();
         // println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
+        if n_st.0 - self.swarm_time.0 >= self.swarm_diameter.0 + self.swarm_diameter.0 {
+            println!("Not updating neighborhood when catching up with swarm");
+        } else {
+            self.neighborhood = n_neigh;
+        }
         self.swarm_time = n_st;
-        self.neighborhood = n_neigh;
+        // self.neighborhood = n_neigh;
         self.block_id = n_bid;
         self.data = n_data;
     }
@@ -410,6 +422,9 @@ impl Gnome {
         // );
         if all_gnomes_aware || finish_round {
             let block_zero = BlockID(0);
+            // if finish_round {
+            //     println!("finish round");
+            // }
             if self.block_id > block_zero {
                 if all_gnomes_aware {
                     let _ = self.sender.send(Response::Block(self.block_id, self.data));
@@ -429,10 +444,13 @@ impl Gnome {
                 }
             } else {
                 // Sync swarm time
-                // println!("Sync swarm time");
+                // println!("Sync swarm time {}", self.neighborhood);
                 // self.swarm_time = self.round_start + self.swarm_diameter;
                 self.round_start = self.swarm_time;
+                // if self.neighborhood.0 as u32 >= self.swarm_diameter.0 {
+                // println!("set N-0");
                 self.neighborhood = Neighborhood(0);
+                // }
                 // self.next_state.all_neighbors_same_header = false;
                 // println!("--------round start to: {}", self.swarm_time);
                 if let Some(data) = self.proposals.pop_back() {
@@ -450,6 +468,7 @@ impl Gnome {
                 let msg = self.prepare_message();
                 for mut neighbor in new_neighbors {
                     let _ = neighbor.try_recv();
+                    // println!("snd2 {}", msg);
                     neighbor.send_out(msg);
                     self.fast_neighbors.push(neighbor);
                 }
@@ -490,8 +509,9 @@ impl Gnome {
             while let Some(response) = neighbor.user_responses.pop_back() {
                 let _ = self.sender.send(response);
             }
-            let (served, sanity_passed, new_proposal) = neighbor.try_recv();
+            let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv();
             // println!(
+            // println!("snd {}", pass);
             //     "{} srv:{} pass:{} new:{}",
             //     neighbor.id, served, sanity_passed, new_proposal
             // );
@@ -522,17 +542,25 @@ impl Gnome {
                     }
                     self.next_state.update(&neighbor);
                     // println!("bifor pusz {:?}", self.next_state);
-                    self.refreshed_neighbors.push(neighbor);
+                    if !drop_me {
+                        self.refreshed_neighbors.push(neighbor);
+                    } else {
+                        println!("Droping disconnected neighbor");
+                    }
                 } else {
                     println!("Dropping an insane neighbor");
                     continue;
                 }
             } else {
                 // println!("pusz");
-                if fast {
-                    self.fast_neighbors.push(neighbor);
+                if !drop_me {
+                    if fast {
+                        self.fast_neighbors.push(neighbor);
+                    } else {
+                        self.slow_neighbors.push(neighbor);
+                    }
                 } else {
-                    self.slow_neighbors.push(neighbor);
+                    println!("Dropping neighbor");
                 }
             }
         }
