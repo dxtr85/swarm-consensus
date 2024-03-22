@@ -12,6 +12,7 @@ pub struct NextState {
     pub swarm_time: SwarmTime,
     pub swarm_time_min: SwarmTime,
     pub block_id: BlockID,
+    pub last_accepted_block: BlockID,
     pub data: Data,
     all_neighbors_same_header: bool,
 }
@@ -23,6 +24,7 @@ impl NextState {
             swarm_time: SwarmTime(0),
             swarm_time_min: SwarmTime(0),
             block_id: BlockID(0),
+            last_accepted_block: BlockID(0),
             data: Data(0),
             all_neighbors_same_header: true,
         }
@@ -101,6 +103,6 @@ impl NextState {
         } else {
             self.neighborhood.inc()
         };
-        println!("bid: {}", self.block_id);
+        // println!("bid: {}", self.block_id);
     }
 }

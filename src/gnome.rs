@@ -182,6 +182,7 @@ impl Gnome {
             // println!("Droping old timeout handle, starting {:?}", duration);
             drop(terminator);
         }
+        // println!("droped");
         let (tx, rx) = channel();
         let mut send = true;
 
@@ -192,11 +193,13 @@ impl Gnome {
                 thread::sleep(dur10th);
                 match rx.try_recv() {
                     Ok(_) | Err(TryRecvError::Disconnected) => {
-                        // println!("Terminating. {}", i);
+                        // println!("Terminating. ");
                         send = false;
                         break;
                     }
-                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Empty) => {
+                        // print!(".")
+                    }
                 }
                 // if i == 5 {
                 //     let _ = sender.send(Timeout::ChillOver);
@@ -242,7 +245,9 @@ impl Gnome {
                 //     advance_to_next_turn,
                 //     new_proposal
                 // );
+                // println!("1");
                 self.update_state();
+                // println!("2");
                 if !new_proposal {
                     // println!("nat nju");
                     self.swap_neighbors();
@@ -255,7 +260,9 @@ impl Gnome {
                     // if !new_timer_started {}
                 }
 
+                // println!("3");
                 self.check_if_new_round();
+                // println!("4");
                 _guard =
                     self.start_new_timer(self.timeout_duration, timer_sender.clone(), Some(_guard));
             }
@@ -400,7 +407,7 @@ impl Gnome {
 
     fn update_state(&mut self) {
         let (n_st, n_neigh, n_bid, n_data) = self.next_state.next_params();
-        println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
+        // println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
         if n_st.0 - self.swarm_time.0 >= self.swarm_diameter.0 + self.swarm_diameter.0 {
             println!("Not updating neighborhood when catching up with swarm");
         } else {
@@ -430,7 +437,8 @@ impl Gnome {
                     let _ = self.sender.send(Response::Block(self.block_id, self.data));
                     println!("^^^ USER ^^^ NEW {} {:075}", self.block_id, self.data.0);
                     self.round_start = self.swarm_time;
-                    println!("New round start: {}", self.round_start);
+                    // println!("New round start: {}", self.round_start);
+                    self.next_state.last_accepted_block = self.block_id;
                 } else {
                     println!(
                         "ERROR: Swarm diameter too small or {} was backdated!",
@@ -438,14 +446,16 @@ impl Gnome {
                     );
                 }
                 if let Some(data) = self.proposals.pop_back() {
-                    println!("some");
+                    // println!("some");
                     self.block_id = BlockID(data.0);
                     self.data = data;
                 } else {
-                    println!("none");
+                    // println!("none");
                     self.block_id = block_zero;
                     self.data = Data(0);
                 }
+                self.neighborhood = Neighborhood(0);
+                self.send_all();
             } else {
                 // Sync swarm time
                 // self.swarm_time = self.round_start + self.swarm_diameter;
@@ -472,7 +482,7 @@ impl Gnome {
                 );
                 let msg = self.prepare_message();
                 for mut neighbor in new_neighbors {
-                    let _ = neighbor.try_recv();
+                    let _ = neighbor.try_recv(self.next_state.last_accepted_block);
                     // println!("snd2 {}", msg);
                     neighbor.send_out(msg);
                     self.fast_neighbors.push(neighbor);
@@ -514,7 +524,8 @@ impl Gnome {
             while let Some(response) = neighbor.user_responses.pop_back() {
                 let _ = self.sender.send(response);
             }
-            let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv();
+            let (served, sanity_passed, new_proposal, drop_me) =
+                neighbor.try_recv(self.next_state.last_accepted_block);
             // println!(
             // println!("snd {}", pass);
             //     "{} srv:{} pass:{} new:{}",

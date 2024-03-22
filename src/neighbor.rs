@@ -96,7 +96,7 @@ impl Neighbor {
         self.neighborhood = Neighborhood(0);
     }
 
-    pub fn try_recv(&mut self) -> (bool, bool, bool, bool) {
+    pub fn try_recv(&mut self, last_accepted_block: BlockID) -> (bool, bool, bool, bool) {
         let mut message_recvd = false;
         let sanity_passed = true;
         let mut new_proposal = false;
@@ -110,6 +110,9 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
+            if message.header == Header::Block(last_accepted_block) {
+                continue;
+            }
             eprintln!("{}  <  {}", self.id, message);
             if message.is_bye() {
                 drop_me = true;
