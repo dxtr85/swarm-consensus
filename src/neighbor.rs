@@ -110,8 +110,8 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
-            println!("{}  <  {}", self.id, message);
-            if message.is_bye(){
+            eprintln!("{}  <  {}", self.id, message);
+            if message.is_bye() {
                 drop_me = true;
                 return (message_recvd, sanity_passed, new_proposal, drop_me);
             }
@@ -204,7 +204,10 @@ impl Neighbor {
         header: &Header,
     ) -> bool {
         if self.swarm_time > *swarm_time {
-            println!("Received a message with older swarm_time {} than previous {}!", swarm_time, self.swarm_time);
+            println!(
+                "Received a message with older swarm_time {} than previous {}!",
+                swarm_time, self.swarm_time
+            );
             return false;
         }
         // A neighbor can not announce a number greater than the number

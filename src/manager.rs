@@ -46,7 +46,7 @@ impl Manager {
     }
 
     pub fn notify_networking(&mut self, swarm_name: String, sender: Sender<Request>) {
-        println!("About to send notification");
+        // println!("About to send notification");
         let r = self.to_networking.send((swarm_name, sender));
         println!("notification sent: {:?}", r);
     }

@@ -235,7 +235,7 @@ impl Gnome {
                 //     self.refreshed_neighbors.len()
                 // );
                 // println!(
-                //     "After traj{}|{}|{}: {} {}",
+                //     "F{} R{} TO{} adv: {}, new prop: {}",
                 //     self.fast_neighbors.len(),
                 //     self.refreshed_neighbors.len(),
                 //     timeout,
@@ -297,7 +297,7 @@ impl Gnome {
 
     pub fn send_all(&mut self) {
         let message = self.prepare_message();
-        println!("{} >>> {}", self.id, message);
+        eprintln!("{} >>> {}", self.id, message);
         for neighbor in &mut self.fast_neighbors {
             // println!("snd3 ");
             neighbor.send_out(message);
@@ -339,7 +339,7 @@ impl Gnome {
                 neighbor.send_out(new_message);
             } else {
                 if !generic_info_printed {
-                    println!("{} >>> {}", self.id, message);
+                    eprintln!("{} >>> {}", self.id, message);
                     generic_info_printed = true;
                 }
                 // println!("snd {}", message);
@@ -400,7 +400,7 @@ impl Gnome {
 
     fn update_state(&mut self) {
         let (n_st, n_neigh, n_bid, n_data) = self.next_state.next_params();
-        // println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
+        println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
         if n_st.0 - self.swarm_time.0 >= self.swarm_diameter.0 + self.swarm_diameter.0 {
             println!("Not updating neighborhood when catching up with swarm");
         } else {
@@ -413,7 +413,7 @@ impl Gnome {
     }
 
     fn check_if_new_round(&mut self) {
-        let all_gnomes_aware = self.neighborhood.0 as u32 >= self.swarm_diameter.0;
+        let all_gnomes_aware = self.neighborhood.0 as u32 > self.swarm_diameter.0;
         let finish_round =
             self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
         // println!(
@@ -429,6 +429,8 @@ impl Gnome {
                 if all_gnomes_aware {
                     let _ = self.sender.send(Response::Block(self.block_id, self.data));
                     println!("^^^ USER ^^^ NEW {} {:075}", self.block_id, self.data.0);
+                    self.round_start = self.swarm_time;
+                    println!("New round start: {}", self.round_start);
                 } else {
                     println!(
                         "ERROR: Swarm diameter too small or {} was backdated!",
@@ -436,16 +438,19 @@ impl Gnome {
                     );
                 }
                 if let Some(data) = self.proposals.pop_back() {
+                    println!("some");
                     self.block_id = BlockID(data.0);
                     self.data = data;
                 } else {
+                    println!("none");
                     self.block_id = block_zero;
                     self.data = Data(0);
                 }
             } else {
                 // Sync swarm time
-                // println!("Sync swarm time {}", self.neighborhood);
                 // self.swarm_time = self.round_start + self.swarm_diameter;
+                // println!("Sync swarm time {}", self.swarm_time);
+                // self.next_state.swarm_time = self.swarm_time;
                 self.round_start = self.swarm_time;
                 // if self.neighborhood.0 as u32 >= self.swarm_diameter.0 {
                 // println!("set N-0");

@@ -101,5 +101,6 @@ impl NextState {
         } else {
             self.neighborhood.inc()
         };
+        println!("bid: {}", self.block_id);
     }
 }
