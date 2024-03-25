@@ -1,6 +1,7 @@
 use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
+use crate::CastID;
 use crate::Data;
 use crate::GnomeId;
 use crate::Message;
@@ -50,12 +51,14 @@ pub struct Neighbor {
 pub enum NeighborRequest {
     ListingRequest(SwarmTime),
     PayloadRequest(u8, [BlockID; 128]),
+    UnicastRequest(CastID),
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum NeighborResponse {
     Listing(u8, [BlockID; 128]),
     Block(BlockID, Data),
+    Unicast(GnomeId, CastID),
 }
 
 impl Neighbor {
@@ -111,6 +114,10 @@ impl Neighbor {
         ) = self.receiver.try_recv()
         {
             if message.header == Header::Block(last_accepted_block) {
+                // TODO: here we might be droping casting messages
+                // if message.is_cast() {
+
+                // }
                 continue;
             }
             eprintln!("{}  <  {}", self.id, message);
@@ -122,6 +129,11 @@ impl Neighbor {
                 message_recvd = true;
             } else {
                 println!("Coś nie poszło {}", message);
+                // TODO: sanity might fail for casting messages, but we still
+                // need to put them throught for user to receive
+                // if message.is_cast() {
+
+                // }
                 continue;
             }
             // } else {
@@ -193,6 +205,15 @@ impl Neighbor {
                 Payload::Listing(count, listing) => {
                     self.user_responses
                         .push_front(Response::Listing(count, listing));
+                }
+                Payload::Unicast(_data) => {
+                    // TODO: serve this
+                }
+                Payload::Multicast(_data) => {
+                    // TODO: serve this
+                }
+                Payload::Broadcast(_data) => {
+                    // TODO: serve this
                 }
             }
             // println!("returning: {} {:?}", new_proposal, self.neighborhood);
@@ -285,6 +306,7 @@ impl Neighbor {
     }
 
     pub fn get_specialized_data(&mut self) -> Option<(NeighborRequest, NeighborResponse)> {
+        // println!("Getting specialized data");
         self.requested_data.pop_back()
     }
 

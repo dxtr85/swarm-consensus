@@ -4,6 +4,7 @@ pub use crate::gnome::GnomeId;
 mod message;
 mod swarm;
 // use crate::message::*;
+pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmTime;
 pub use message::{Header, Message, Payload};
 mod manager;
@@ -19,6 +20,7 @@ mod next_state;
 mod proposal;
 use crate::next_state::NextState;
 use std::fmt;
+use std::sync::mpsc::Receiver;
 // use std::sync::mpsc::channel;
 use std::sync::mpsc::Sender;
 
@@ -40,13 +42,23 @@ pub enum Request {
     SendData(GnomeId, NeighborRequest, NeighborResponse),
     Disconnect,
     Status,
+    StartUnicast(GnomeId),
+    StartMulticast(Vec<GnomeId>),
+    StartBroadcast,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CastID(pub u8);
+
 pub enum Response {
     Block(BlockID, Data),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(u8, [BlockID; 128]),
+    Unicast(SwarmID, CastID, Receiver<Data>),
+    MulticastSource(SwarmID, CastID, Sender<Data>),
+    Multicast(SwarmID, CastID, Receiver<Data>),
+    BroadcastSource(SwarmID, CastID, Sender<Data>),
+    Broadcast(SwarmID, CastID, Receiver<Data>),
 }
 
 impl fmt::Debug for Response {
@@ -60,6 +72,21 @@ impl fmt::Debug for Response {
             }
             Response::Listing(count, _data) => {
                 write!(f, "Listing with {:?} entries", count)
+            }
+            Response::Unicast(_sid, _cid, _rdata) => {
+                write!(f, "Unicast {:?}", _cid)
+            }
+            Response::Multicast(_sid, _cid, _rdata) => {
+                write!(f, "Multicast {:?}", _cid)
+            }
+            Response::MulticastSource(_sid, _cid, _sdata) => {
+                write!(f, "Multicast source {:?}", _cid)
+            }
+            Response::Broadcast(_sid, _cid, _rdata) => {
+                write!(f, "Broadcast {:?}", _cid)
+            }
+            Response::BroadcastSource(_sid, _cid, _sdata) => {
+                write!(f, "Broadcast source {:?}", _cid)
             }
         }
     }

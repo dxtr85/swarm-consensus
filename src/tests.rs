@@ -9,6 +9,7 @@ use std::{
 
 struct TestManager {
     manager: Manager,
+    swarm_id: SwarmID,
     swarm_name: String,
     neighbors: Vec<(GnomeId, Sender<Message>)>,
 }
@@ -27,8 +28,9 @@ impl TestManager {
             neighbors.push((GnomeId(i), sender));
         }
 
-        let (req_sender, resp_receiver) =
-            manager.join_a_swarm(swarm_name.to_string(), Some(mgr_neighbors));
+        let (id, (req_sender, resp_receiver)) = manager
+            .join_a_swarm(swarm_name.to_string(), Some(mgr_neighbors))
+            .unwrap();
         let manager = TestManager {
             manager,
             swarm_name: swarm_name.to_string(),
@@ -38,7 +40,7 @@ impl TestManager {
     }
 
     pub fn status(&self) {
-        self.manager.print_status(&self.swarm_name);
+        self.manager.print_status(&self.swarm_id);
     }
 
     pub fn turn(&mut self, mut messages: Vec<Option<Message>>) {

@@ -31,22 +31,26 @@ impl Add for SwarmTime {
     }
 }
 
+#[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
+pub struct SwarmID(pub u8);
+
 pub struct Swarm {
     pub name: String,
+    pub id: SwarmID,
     pub sender: Sender<Request>,
     pub receiver: Option<Receiver<Response>>,
     pub join_handle: Option<JoinHandle<()>>,
 }
 
 impl Swarm {
-    pub fn join(name: String, neighbors: Option<Vec<Neighbor>>) -> Swarm {
+    pub fn join(name: String, id: SwarmID, neighbors: Option<Vec<Neighbor>>) -> Swarm {
         let (sender, request_receiver) = channel::<Request>();
         let (response_sender, receiver) = channel::<Response>();
 
         let gnome = if let Some(neighbors) = neighbors {
-            Gnome::new_with_neighbors(response_sender, request_receiver, neighbors)
+            Gnome::new_with_neighbors(id, response_sender, request_receiver, neighbors)
         } else {
-            Gnome::new(response_sender, request_receiver)
+            Gnome::new(id, response_sender, request_receiver)
         };
         let join_handle = spawn(move || {
             gnome.do_your_job();
@@ -54,6 +58,7 @@ impl Swarm {
 
         Swarm {
             name,
+            id,
             sender,
             receiver: Some(receiver),
             join_handle: Some(join_handle),

@@ -3,15 +3,20 @@ use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
 use crate::neighbor::Neighborhood;
+use crate::CastID;
 use crate::Data;
 use crate::Message;
 use crate::Neighbor;
+use crate::NeighborRequest;
+use crate::NeighborResponse;
 use crate::NextState;
 use crate::Request;
 use crate::Response;
+use crate::SwarmID;
 use crate::SwarmTime;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -34,6 +39,7 @@ impl fmt::Display for GnomeId {
 pub struct Gnome {
     pub id: GnomeId,
     pub neighborhood: Neighborhood,
+    swarm_id: SwarmID,
     swarm_time: SwarmTime,
     round_start: SwarmTime,
     swarm_diameter: SwarmTime,
@@ -48,13 +54,16 @@ pub struct Gnome {
     proposals: VecDeque<Data>,
     next_state: NextState,
     timeout_duration: Duration,
+    pending_unicasts: HashMap<CastID, (SwarmID, GnomeId)>,
+    active_unicasts: HashMap<CastID, Sender<Data>>,
 }
 
 impl Gnome {
-    pub fn new(sender: Sender<Response>, receiver: Receiver<Request>) -> Self {
+    pub fn new(swarm_id: SwarmID, sender: Sender<Response>, receiver: Receiver<Request>) -> Self {
         Gnome {
             id: gnome_id_dispenser(),
             neighborhood: Neighborhood(0),
+            swarm_id,
             swarm_time: SwarmTime(0),
             round_start: SwarmTime(0),
             swarm_diameter: DEFAULT_SWARM_DIAMETER,
@@ -69,15 +78,18 @@ impl Gnome {
             proposals: VecDeque::new(),
             next_state: NextState::new(),
             timeout_duration: Duration::from_millis(500),
+            pending_unicasts: HashMap::new(),
+            active_unicasts: HashMap::new(),
         }
     }
 
     pub fn new_with_neighbors(
+        swarm_id: SwarmID,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
         neighbors: Vec<Neighbor>,
     ) -> Self {
-        let mut gnome = Gnome::new(sender, receiver);
+        let mut gnome = Gnome::new(swarm_id, sender, receiver);
         gnome.fast_neighbors = neighbors;
         gnome
     }
@@ -147,18 +159,80 @@ impl Gnome {
                         }
                     }
                 }
+                Request::StartUnicast(gnome_id) => {
+                    println!("Received StartUnicast {:?}", gnome_id);
+                    let mut request_sent = false;
+                    let cast_id = self.next_unicast_id().unwrap();
+                    let request = NeighborRequest::UnicastRequest(cast_id);
+                    for neighbor in &mut self.fast_neighbors {
+                        if neighbor.id == gnome_id {
+                            println!("Sending to neighbor");
+                            neighbor.request_data(request);
+                            request_sent = true;
+                            break;
+                        }
+                    }
+                    if !request_sent {
+                        for neighbor in &mut self.slow_neighbors {
+                            if neighbor.id == gnome_id {
+                                neighbor.request_data(request);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Request::StartMulticast(_) | Request::StartBroadcast => {
+                    todo!()
+                }
             }
         }
         (exit_app, new_user_proposal)
     }
 
+    fn is_unicast_id_available(&self, cast_id: CastID) -> bool {
+        !(self.active_unicasts.contains_key(&cast_id)
+            || self.pending_unicasts.contains_key(&cast_id))
+    }
+
+    fn next_unicast_id(&self) -> Option<CastID> {
+        for i in 0..=255 {
+            let cast_id = CastID(i);
+            if self.is_unicast_id_available(cast_id) {
+                return Some(cast_id);
+            }
+        }
+        None
+    }
+
     fn serve_neighbors_requests(&mut self) {
         for neighbor in &mut self.fast_neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
-                println!("Some neighbor request!");
-                let _ = self
-                    .sender
-                    .send(Response::DataInquiry(neighbor.id, request));
+                println!("Some neighbor request! {:?}", request);
+                match request {
+                    NeighborRequest::UnicastRequest(cast_id) => {
+                        // TODO: fix this
+                        // if self.is_unicast_id_available(cast_id) {
+                        let (sender, receiver) = channel();
+                        self.active_unicasts.insert(cast_id, sender);
+                        neighbor.add_requested_data(
+                            request,
+                            NeighborResponse::Unicast(self.id, cast_id),
+                        );
+                        let res =
+                            self.sender
+                                .send(Response::Unicast(self.swarm_id, cast_id, receiver));
+                        println!("To user: {:?}", res);
+                        // }else {
+                        //     if let Some(cast_id) = self.next_unicast_id(){
+
+                        //     }}
+                    }
+                    _ => {
+                        let _ = self
+                            .sender
+                            .send(Response::DataInquiry(neighbor.id, request));
+                    }
+                }
             }
         }
         for neighbor in &mut self.slow_neighbors {
@@ -270,7 +344,7 @@ impl Gnome {
                 // println!("EXIT on user request.");
                 break;
             };
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(250));
         }
         // println!("out of loop.");
     }
@@ -330,12 +404,30 @@ impl Gnome {
         for mut neighbor in unserved_neighbors {
             // println!("Trying specialized for {}", neighbor.id);
             if let Some((_req, resp)) = neighbor.get_specialized_data() {
-                // println!("Yes: {}", resp);
+                // println!("Yes: {:?}", resp);
                 let payload = match resp {
                     crate::neighbor::NeighborResponse::Listing(count, listing) => {
                         Payload::Listing(count, listing)
                     }
                     crate::neighbor::NeighborResponse::Block(id, data) => Payload::Block(id, data),
+                    crate::NeighborResponse::Unicast(_gnome_id, cast_id) => {
+                        // if let Some((swarm_id, g_id)) = self.pending_unicasts.remove(&cast_id) {
+                        //     if gnome_id == g_id {
+                        let (sender, receiver) = channel();
+                        self.active_unicasts.insert(cast_id, sender);
+                        let _ =
+                            self.sender
+                                .send(Response::Unicast(self.swarm_id, cast_id, receiver));
+                        Payload::Unicast(Data(0))
+                        //     } else {
+                        //         println!("CastID {:?}, reserved for {:?}", cast_id, g_id);
+                        //         self.pending_unicasts.insert(cast_id, (swarm_id, g_id));
+                        //         Payload::KeepAlive
+                        //     }
+                        // } else {
+                        //     Payload::KeepAlive
+                        // }
+                    }
                 };
                 let new_message = message.set_payload(payload);
                 println!("{} >S> {}", self.id, new_message);
@@ -420,7 +512,7 @@ impl Gnome {
     }
 
     fn check_if_new_round(&mut self) {
-        let all_gnomes_aware = self.neighborhood.0 as u32 > self.swarm_diameter.0;
+        let all_gnomes_aware = self.neighborhood.0 as u32 >= self.swarm_diameter.0;
         let finish_round =
             self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
         // println!(
@@ -434,8 +526,11 @@ impl Gnome {
             // }
             if self.block_id > block_zero {
                 if all_gnomes_aware {
-                    let _ = self.sender.send(Response::Block(self.block_id, self.data));
-                    println!("^^^ USER ^^^ NEW {} {:075}", self.block_id, self.data.0);
+                    let res = self.sender.send(Response::Block(self.block_id, self.data));
+                    println!(
+                        "^^^ USER ^^^ {:?} NEW {} {:075}",
+                        res, self.block_id, self.data.0
+                    );
                     self.round_start = self.swarm_time;
                     // println!("New round start: {}", self.round_start);
                     self.next_state.last_accepted_block = self.block_id;
@@ -454,8 +549,8 @@ impl Gnome {
                     self.block_id = block_zero;
                     self.data = Data(0);
                 }
-                self.neighborhood = Neighborhood(0);
-                self.send_all();
+                // self.neighborhood = Neighborhood(0);
+                // self.send_all();
             } else {
                 // Sync swarm time
                 // self.swarm_time = self.round_start + self.swarm_diameter;

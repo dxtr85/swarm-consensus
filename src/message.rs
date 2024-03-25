@@ -25,6 +25,9 @@ pub enum Payload {
     Block(BlockID, Data),
     Request(NeighborRequest),
     Listing(u8, [BlockID; 128]),
+    Unicast(Data),
+    Multicast(Data),
+    Broadcast(Data),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -51,6 +54,15 @@ impl Message {
 
     pub fn is_bye(&self) -> bool {
         self.payload == Payload::Bye
+    }
+
+    pub fn is_cast(&self) -> bool {
+        match self.payload {
+            Payload::Unicast(_) => true,
+            Payload::Multicast(_) => true,
+            Payload::Broadcast(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -87,6 +99,9 @@ impl Display for Payload {
             Self::Block(block_id, data) => {
                 write!(f, "{} {}", block_id, data)
             }
+            Self::Unicast(_data) => write!(f, "Unicast",),
+            Self::Multicast(_data) => write!(f, "Multicast",),
+            Self::Broadcast(_data) => write!(f, "Broadcast",),
         }
     }
 }
