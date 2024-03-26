@@ -7,6 +7,7 @@ use crate::GnomeId;
 use crate::Message;
 use crate::Response;
 use crate::SwarmTime;
+use std::collections::HashMap;
 use std::fmt::Display;
 
 use std::collections::VecDeque;
@@ -45,6 +46,8 @@ pub struct Neighbor {
     pub requested_data: VecDeque<(NeighborRequest, NeighborResponse)>,
     gnome_header: Header,
     gnome_neighborhood: Neighborhood,
+    active_unicasts: HashMap<CastID, Sender<Data>>,
+    pending_unicasts: HashMap<CastID, Sender<Data>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +89,8 @@ impl Neighbor {
             requested_data: VecDeque::new(),
             gnome_header: Header::Sync,
             gnome_neighborhood: Neighborhood(0),
+            active_unicasts: HashMap::new(),
+            pending_unicasts: HashMap::new(),
         }
     }
 
@@ -97,6 +102,10 @@ impl Neighbor {
         self.payload = Payload::KeepAlive;
         self.prev_neighborhood = None;
         self.neighborhood = Neighborhood(0);
+    }
+
+    pub fn add_unicast(&mut self, cast_id: CastID, sender: Sender<Data>) {
+        self.pending_unicasts.insert(cast_id, sender);
     }
 
     pub fn try_recv(&mut self, last_accepted_block: BlockID) -> (bool, bool, bool, bool) {
@@ -115,9 +124,9 @@ impl Neighbor {
         {
             if message.header == Header::Block(last_accepted_block) {
                 // TODO: here we might be droping casting messages
-                // if message.is_cast() {
-
-                // }
+                if message.is_cast() {
+                    println!("Unserved casting 1");
+                }
                 continue;
             }
             eprintln!("{}  <  {}", self.id, message);
@@ -131,9 +140,9 @@ impl Neighbor {
                 println!("Coś nie poszło {}", message);
                 // TODO: sanity might fail for casting messages, but we still
                 // need to put them throught for user to receive
-                // if message.is_cast() {
-
-                // }
+                if message.is_cast() {
+                    println!("Unserved casting 2");
+                }
                 continue;
             }
             // } else {
@@ -206,13 +215,21 @@ impl Neighbor {
                     self.user_responses
                         .push_front(Response::Listing(count, listing));
                 }
-                Payload::Unicast(_data) => {
+                Payload::Unicast(cid, data) => {
+                    // TODO: serve this
+                    println!("Served casting 3");
+                    if let Some(sender) = self.active_unicasts.get(&cid) {
+                        let _ = sender.send(data);
+                    } else if let Some(sender) = self.pending_unicasts.remove(&cid) {
+                        let _ = sender.send(data);
+                        self.active_unicasts.insert(cid, sender);
+                        //TODO: inform gnome about unicast activation;
+                    }
+                }
+                Payload::Multicast(_mid, _data) => {
                     // TODO: serve this
                 }
-                Payload::Multicast(_data) => {
-                    // TODO: serve this
-                }
-                Payload::Broadcast(_data) => {
+                Payload::Broadcast(_bid, _data) => {
                     // TODO: serve this
                 }
             }

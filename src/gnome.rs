@@ -2,13 +2,13 @@ use crate::gnome_id_dispenser;
 use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
+use crate::neighbor::NeighborResponse;
 use crate::neighbor::Neighborhood;
 use crate::CastID;
 use crate::Data;
 use crate::Message;
 use crate::Neighbor;
 use crate::NeighborRequest;
-use crate::NeighborResponse;
 use crate::NextState;
 use crate::Request;
 use crate::Response;
@@ -17,6 +17,7 @@ use crate::SwarmTime;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -54,8 +55,8 @@ pub struct Gnome {
     proposals: VecDeque<Data>,
     next_state: NextState,
     timeout_duration: Duration,
-    pending_unicasts: HashMap<CastID, (SwarmID, GnomeId)>,
-    active_unicasts: HashMap<CastID, Sender<Data>>,
+    pending_unicasts: HashMap<GnomeId, (CastID, Receiver<Data>)>,
+    active_unicasts: HashSet<CastID>,
 }
 
 impl Gnome {
@@ -79,7 +80,7 @@ impl Gnome {
             next_state: NextState::new(),
             timeout_duration: Duration::from_millis(500),
             pending_unicasts: HashMap::new(),
-            active_unicasts: HashMap::new(),
+            active_unicasts: HashSet::new(),
         }
     }
 
@@ -160,14 +161,17 @@ impl Gnome {
                     }
                 }
                 Request::StartUnicast(gnome_id) => {
-                    println!("Received StartUnicast {:?}", gnome_id);
+                    // println!("Received StartUnicast {:?}", gnome_id);
                     let mut request_sent = false;
                     let cast_id = self.next_unicast_id().unwrap();
                     let request = NeighborRequest::UnicastRequest(cast_id);
                     for neighbor in &mut self.fast_neighbors {
                         if neighbor.id == gnome_id {
-                            println!("Sending to neighbor");
+                            println!("Sending UnicastRequest to neighbor");
                             neighbor.request_data(request);
+                            let (sender, receiver) = channel();
+                            neighbor.add_unicast(cast_id, sender);
+                            self.pending_unicasts.insert(gnome_id, (cast_id, receiver));
                             request_sent = true;
                             break;
                         }
@@ -175,10 +179,17 @@ impl Gnome {
                     if !request_sent {
                         for neighbor in &mut self.slow_neighbors {
                             if neighbor.id == gnome_id {
+                                request_sent = true;
                                 neighbor.request_data(request);
+                                let (sender, receiver) = channel();
+                                neighbor.add_unicast(cast_id, sender);
+                                self.pending_unicasts.insert(gnome_id, (cast_id, receiver));
                                 break;
                             }
                         }
+                    }
+                    if !request_sent {
+                        println!("Unable to find gnome with id {}", gnome_id);
                     }
                 }
                 Request::StartMulticast(_) | Request::StartBroadcast => {
@@ -190,8 +201,10 @@ impl Gnome {
     }
 
     fn is_unicast_id_available(&self, cast_id: CastID) -> bool {
-        !(self.active_unicasts.contains_key(&cast_id)
-            || self.pending_unicasts.contains_key(&cast_id))
+        !(
+            self.active_unicasts.contains(&cast_id)
+            // || self.pending_unicasts.contains_key(&cast_id)
+        )
     }
 
     fn next_unicast_id(&self) -> Option<CastID> {
@@ -205,27 +218,39 @@ impl Gnome {
     }
 
     fn serve_neighbors_requests(&mut self) {
-        for neighbor in &mut self.fast_neighbors {
+        let next_uni_id = self.next_unicast_id();
+        let mut neighbors = std::mem::replace(&mut self.fast_neighbors, Vec::new());
+        for neighbor in &mut neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
                 println!("Some neighbor request! {:?}", request);
                 match request {
                     NeighborRequest::UnicastRequest(cast_id) => {
-                        // TODO: fix this
-                        // if self.is_unicast_id_available(cast_id) {
-                        let (sender, receiver) = channel();
-                        self.active_unicasts.insert(cast_id, sender);
-                        neighbor.add_requested_data(
-                            request,
-                            NeighborResponse::Unicast(self.id, cast_id),
-                        );
-                        let res =
-                            self.sender
-                                .send(Response::Unicast(self.swarm_id, cast_id, receiver));
-                        println!("To user: {:?}", res);
-                        // }else {
-                        //     if let Some(cast_id) = self.next_unicast_id(){
-
-                        //     }}
+                        if self.is_unicast_id_available(cast_id) {
+                            println!("add to pending");
+                            // TODO: drop unicast when Data::Empty sent
+                            let (sender, receiver) = channel();
+                            self.pending_unicasts.insert(self.id, (cast_id, receiver));
+                            neighbor.add_unicast(cast_id, sender);
+                            neighbor.add_requested_data(
+                                request,
+                                NeighborResponse::Unicast(self.id, cast_id),
+                            );
+                            // println!("To user: {:?}", res);
+                        } else {
+                            if let Some(cast_id) = next_uni_id {
+                                let (sender, receiver) = channel();
+                                println!("add to pending 2");
+                                self.pending_unicasts
+                                    .insert(neighbor.id, (cast_id, receiver));
+                                neighbor.add_unicast(cast_id, sender);
+                                neighbor.add_requested_data(
+                                    request,
+                                    NeighborResponse::Unicast(self.id, cast_id),
+                                );
+                            } else {
+                                println!("Unable to find free Unicast ID");
+                            }
+                        }
                     }
                     _ => {
                         let _ = self
@@ -235,6 +260,7 @@ impl Gnome {
                 }
             }
         }
+        let _ = std::mem::replace(&mut self.fast_neighbors, neighbors);
         for neighbor in &mut self.slow_neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
                 println!("Some neighbor request!");
@@ -406,27 +432,30 @@ impl Gnome {
             if let Some((_req, resp)) = neighbor.get_specialized_data() {
                 // println!("Yes: {:?}", resp);
                 let payload = match resp {
-                    crate::neighbor::NeighborResponse::Listing(count, listing) => {
-                        Payload::Listing(count, listing)
-                    }
-                    crate::neighbor::NeighborResponse::Block(id, data) => Payload::Block(id, data),
-                    crate::NeighborResponse::Unicast(_gnome_id, cast_id) => {
-                        // if let Some((swarm_id, g_id)) = self.pending_unicasts.remove(&cast_id) {
-                        //     if gnome_id == g_id {
-                        let (sender, receiver) = channel();
-                        self.active_unicasts.insert(cast_id, sender);
-                        let _ =
-                            self.sender
-                                .send(Response::Unicast(self.swarm_id, cast_id, receiver));
-                        Payload::Unicast(Data(0))
-                        //     } else {
+                    NeighborResponse::Listing(count, listing) => Payload::Listing(count, listing),
+                    NeighborResponse::Block(id, data) => Payload::Block(id, data),
+                    NeighborResponse::Unicast(gnome_id, cast_id) => {
+                        println!("{:?} pending: {:?}", gnome_id, self.pending_unicasts);
+                        if let Some((_cast_id_local, receiver)) =
+                            self.pending_unicasts.remove(&gnome_id)
+                        {
+                            //     if cast_id_local.0 == cast_id.0 {
+                            println!("Sending Unicast response to user and neighbor");
+                            let _ = self.sender.send(Response::Unicast(
+                                self.swarm_id,
+                                cast_id,
+                                receiver,
+                            ));
+                            Payload::Unicast(cast_id, Data(0))
+                        // } else if self.is_unicast_id_available(cast_id){
                         //         println!("CastID {:?}, reserved for {:?}", cast_id, g_id);
                         //         self.pending_unicasts.insert(cast_id, (swarm_id, g_id));
                         //         Payload::KeepAlive
                         //     }
-                        // } else {
-                        //     Payload::KeepAlive
-                        // }
+                        } else {
+                            println!("No pending unicast found");
+                            Payload::KeepAlive
+                        }
                     }
                 };
                 let new_message = message.set_payload(payload);
@@ -617,6 +646,7 @@ impl Gnome {
         for mut neighbor in loop_neighbors {
             looped = true;
             while let Some(response) = neighbor.user_responses.pop_back() {
+                println!("Got response: {:?}", response);
                 let _ = self.sender.send(response);
             }
             let (served, sanity_passed, new_proposal, drop_me) =

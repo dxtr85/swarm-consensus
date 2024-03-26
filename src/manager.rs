@@ -46,7 +46,7 @@ impl Manager {
     ) -> Result<(SwarmID, (Sender<Request>, Receiver<Response>)), String> {
         if let Some(swarm_id) = self.next_avail_swarm_id() {
             let mut swarm = Swarm::join(name.clone(), swarm_id, neighbors);
-            println!("swarm {} created ", name);
+            println!("swarm '{}' created ", name);
             let sender = swarm.sender.clone();
             let receiver = swarm.receiver.take();
             println!("Joined `{}` swarm", swarm.name);

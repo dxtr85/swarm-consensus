@@ -1,6 +1,7 @@
 use crate::neighbor::NeighborRequest;
 use crate::neighbor::Neighborhood;
 use crate::proposal::Data;
+use crate::CastID;
 use crate::SwarmTime;
 use std::fmt::Display;
 
@@ -25,9 +26,9 @@ pub enum Payload {
     Block(BlockID, Data),
     Request(NeighborRequest),
     Listing(u8, [BlockID; 128]),
-    Unicast(Data),
-    Multicast(Data),
-    Broadcast(Data),
+    Unicast(CastID, Data),
+    Multicast(CastID, Data),
+    Broadcast(CastID, Data),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -58,9 +59,9 @@ impl Message {
 
     pub fn is_cast(&self) -> bool {
         match self.payload {
-            Payload::Unicast(_) => true,
-            Payload::Multicast(_) => true,
-            Payload::Broadcast(_) => true,
+            Payload::Unicast(_, _) => true,
+            Payload::Multicast(_, _) => true,
+            Payload::Broadcast(_, _) => true,
             _ => false,
         }
     }
@@ -99,9 +100,9 @@ impl Display for Payload {
             Self::Block(block_id, data) => {
                 write!(f, "{} {}", block_id, data)
             }
-            Self::Unicast(_data) => write!(f, "Unicast",),
-            Self::Multicast(_data) => write!(f, "Multicast",),
-            Self::Broadcast(_data) => write!(f, "Broadcast",),
+            Self::Unicast(_uid, _data) => write!(f, "Unicast",),
+            Self::Multicast(_mid, _data) => write!(f, "Multicast",),
+            Self::Broadcast(_bid, _data) => write!(f, "Broadcast",),
         }
     }
 }
