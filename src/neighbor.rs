@@ -6,11 +6,13 @@ use crate::Data;
 use crate::GnomeId;
 use crate::Message;
 use crate::Response;
+use crate::SwarmID;
 use crate::SwarmTime;
 use std::collections::HashMap;
 use std::fmt::Display;
 
 use std::collections::VecDeque;
+use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender};
 
 #[derive(Clone, Copy, Debug)]
@@ -47,21 +49,23 @@ pub struct Neighbor {
     gnome_header: Header,
     gnome_neighborhood: Neighborhood,
     active_unicasts: HashMap<CastID, Sender<Data>>,
-    pending_unicasts: HashMap<CastID, Sender<Data>>,
+    // pending_unicasts: HashMap<CastID, Sender<Data>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NeighborRequest {
     ListingRequest(SwarmTime),
     PayloadRequest(u8, [BlockID; 128]),
-    UnicastRequest(CastID),
+    UnicastRequest(SwarmID, [CastID; 256]),
+    CustomRequest(u8, Data),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NeighborResponse {
     Listing(u8, [BlockID; 128]),
     Block(BlockID, Data),
-    Unicast(GnomeId, CastID),
+    Unicast(SwarmID, CastID),
+    CustomResponse(u8, Data),
 }
 
 impl Neighbor {
@@ -90,7 +94,7 @@ impl Neighbor {
             gnome_header: Header::Sync,
             gnome_neighborhood: Neighborhood(0),
             active_unicasts: HashMap::new(),
-            pending_unicasts: HashMap::new(),
+            // pending_unicasts: HashMap::new(),
         }
     }
 
@@ -104,9 +108,9 @@ impl Neighbor {
         self.neighborhood = Neighborhood(0);
     }
 
-    pub fn add_unicast(&mut self, cast_id: CastID, sender: Sender<Data>) {
-        self.pending_unicasts.insert(cast_id, sender);
-    }
+    // pub fn add_unicast(&mut self, cast_id: CastID, sender: Sender<Data>) {
+    //     self.pending_unicasts.insert(cast_id, sender);
+    // }
 
     pub fn try_recv(&mut self, last_accepted_block: BlockID) -> (bool, bool, bool, bool) {
         let mut message_recvd = false;
@@ -211,19 +215,29 @@ impl Neighbor {
                     // println!("Pushing riquest");
                     self.requests.push_front(request);
                 }
-                Payload::Listing(count, listing) => {
-                    self.user_responses
-                        .push_front(Response::Listing(count, listing));
-                }
+                Payload::Response(response) => match response {
+                    NeighborResponse::Listing(count, listing) => self
+                        .user_responses
+                        .push_front(Response::Listing(count, listing)),
+                    NeighborResponse::Block(block_id, data) => {
+                        self.user_responses
+                            .push_front(Response::Block(block_id, data));
+                    }
+                    NeighborResponse::Unicast(swarm_id, cast_id) => {
+                        // TODO: make channels async
+                        let (sender, receiver) = channel();
+                        self.active_unicasts.insert(cast_id, sender);
+                        self.user_responses
+                            .push_front(Response::Unicast(swarm_id, cast_id, receiver));
+                    }
+                    NeighborResponse::CustomResponse(id, data) => {
+                        self.user_responses.push_front(Response::Custom(id, data))
+                    }
+                },
                 Payload::Unicast(cid, data) => {
-                    // TODO: serve this
-                    println!("Served casting 3");
+                    // println!("Served casting 3");
                     if let Some(sender) = self.active_unicasts.get(&cid) {
                         let _ = sender.send(data);
-                    } else if let Some(sender) = self.pending_unicasts.remove(&cid) {
-                        let _ = sender.send(data);
-                        self.active_unicasts.insert(cid, sender);
-                        //TODO: inform gnome about unicast activation;
                     }
                 }
                 Payload::Multicast(_mid, _data) => {
@@ -329,7 +343,16 @@ impl Neighbor {
 
     pub fn add_requested_data(&mut self, request: NeighborRequest, data: NeighborResponse) {
         self.requested_data.push_front((request, data));
+
+        // TODO: maybe move it somewhere else?
+        if let NeighborResponse::Unicast(swarm_id, cast_id) = data {
+            let (sender, receiver) = channel();
+            self.active_unicasts.insert(cast_id, sender);
+            self.user_responses
+                .push_front(Response::Unicast(swarm_id, cast_id, receiver));
+        }
     }
+
     pub fn request_data(&mut self, request: NeighborRequest) {
         self.user_requests.push_front(request);
     }

@@ -2,6 +2,7 @@ use crate::neighbor::NeighborRequest;
 use crate::neighbor::Neighborhood;
 use crate::proposal::Data;
 use crate::CastID;
+use crate::NeighborResponse;
 use crate::SwarmTime;
 use std::fmt::Display;
 
@@ -25,7 +26,8 @@ pub enum Payload {
     Bye,
     Block(BlockID, Data),
     Request(NeighborRequest),
-    Listing(u8, [BlockID; 128]),
+    Response(NeighborResponse),
+    // Listing(u8, [BlockID; 128]),
     Unicast(CastID, Data),
     Multicast(CastID, Data),
     Broadcast(CastID, Data),
@@ -96,7 +98,7 @@ impl Display for Payload {
             Self::KeepAlive => write!(f, "",),
             Self::Bye => write!(f, "Bye",),
             Self::Request(_) => write!(f, "Request"),
-            Self::Listing(count, _) => write!(f, "Listing with {} elements", count),
+            Self::Response(_nresp) => write!(f, "Response"),
             Self::Block(block_id, data) => {
                 write!(f, "{} {}", block_id, data)
             }

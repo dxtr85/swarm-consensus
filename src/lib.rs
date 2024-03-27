@@ -45,6 +45,7 @@ pub enum Request {
     StartUnicast(GnomeId),
     StartMulticast(Vec<GnomeId>),
     StartBroadcast,
+    Custom(u8, Data),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,6 +60,7 @@ pub enum Response {
     Multicast(SwarmID, CastID, Receiver<Data>),
     BroadcastSource(SwarmID, CastID, Sender<Data>),
     Broadcast(SwarmID, CastID, Receiver<Data>),
+    Custom(u8, Data),
 }
 
 impl fmt::Debug for Response {
@@ -87,6 +89,9 @@ impl fmt::Debug for Response {
             }
             Response::BroadcastSource(_sid, _cid, _sdata) => {
                 write!(f, "Broadcast source {:?}", _cid)
+            }
+            Response::Custom(id, _sdata) => {
+                write!(f, "Custom response {}", id)
             }
         }
     }
