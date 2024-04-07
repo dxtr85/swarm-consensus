@@ -3,15 +3,15 @@ use crate::Neighbor;
 use crate::Request;
 use crate::Response;
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub struct Manager {
     swarms: HashMap<SwarmID, Swarm>,
-    to_networking: Sender<(String, Sender<Request>)>,
+    to_networking: Sender<(String, Sender<Request>, Sender<u32>)>,
 }
 
 impl Manager {
-    pub fn new(to_networking: Sender<(String, Sender<Request>)>) -> Manager {
+    pub fn new(to_networking: Sender<(String, Sender<Request>, Sender<u32>)>) -> Manager {
         Manager {
             swarms: HashMap::new(),
             to_networking, // Send a message to networking about new swarm subscription, and where to send Neighbors
@@ -45,12 +45,13 @@ impl Manager {
         neighbors: Option<Vec<Neighbor>>,
     ) -> Result<(SwarmID, (Sender<Request>, Receiver<Response>)), String> {
         if let Some(swarm_id) = self.next_avail_swarm_id() {
-            let mut swarm = Swarm::join(name.clone(), swarm_id, neighbors);
+            let (band_send, band_recv) = channel();
+            let mut swarm = Swarm::join(name.clone(), swarm_id, neighbors, band_recv);
             println!("swarm '{}' created ", name);
             let sender = swarm.sender.clone();
             let receiver = swarm.receiver.take();
             println!("Joined `{}` swarm", swarm.name);
-            self.notify_networking(name.clone(), sender.clone());
+            self.notify_networking(name.clone(), sender.clone(), band_send);
             println!("inserting swarm");
             self.swarms.insert(swarm_id, swarm);
             Ok((swarm_id, (sender, receiver.unwrap())))
@@ -59,9 +60,16 @@ impl Manager {
         }
     }
 
-    pub fn notify_networking(&mut self, swarm_name: String, sender: Sender<Request>) {
+    pub fn notify_networking(
+        &mut self,
+        swarm_name: String,
+        sender: Sender<Request>,
+        avail_bandwith_sender: Sender<u32>,
+    ) {
         // println!("About to send notification");
-        let r = self.to_networking.send((swarm_name, sender));
+        let r = self
+            .to_networking
+            .send((swarm_name, sender, avail_bandwith_sender));
         println!("notification sent: {:?}", r);
     }
 

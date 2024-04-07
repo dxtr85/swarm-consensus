@@ -43,14 +43,25 @@ pub struct Swarm {
 }
 
 impl Swarm {
-    pub fn join(name: String, id: SwarmID, neighbors: Option<Vec<Neighbor>>) -> Swarm {
+    pub fn join(
+        name: String,
+        id: SwarmID,
+        neighbors: Option<Vec<Neighbor>>,
+        band_receiver: Receiver<u32>,
+    ) -> Swarm {
         let (sender, request_receiver) = channel::<Request>();
         let (response_sender, receiver) = channel::<Response>();
 
         let gnome = if let Some(neighbors) = neighbors {
-            Gnome::new_with_neighbors(id, response_sender, request_receiver, neighbors)
+            Gnome::new_with_neighbors(
+                id,
+                response_sender,
+                request_receiver,
+                band_receiver,
+                neighbors,
+            )
         } else {
-            Gnome::new(id, response_sender, request_receiver)
+            Gnome::new(id, response_sender, request_receiver, band_receiver)
         };
         let join_handle = spawn(move || {
             gnome.do_your_job();

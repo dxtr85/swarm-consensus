@@ -45,6 +45,7 @@ pub struct Gnome {
     round_start: SwarmTime,
     swarm_diameter: SwarmTime,
     receiver: Receiver<Request>,
+    band_receiver: Receiver<u32>,
     sender: Sender<Response>,
     fast_neighbors: Vec<Neighbor>,
     slow_neighbors: Vec<Neighbor>,
@@ -60,7 +61,12 @@ pub struct Gnome {
 }
 
 impl Gnome {
-    pub fn new(swarm_id: SwarmID, sender: Sender<Response>, receiver: Receiver<Request>) -> Self {
+    pub fn new(
+        swarm_id: SwarmID,
+        sender: Sender<Response>,
+        receiver: Receiver<Request>,
+        band_receiver: Receiver<u32>,
+    ) -> Self {
         Gnome {
             id: gnome_id_dispenser(),
             neighborhood: Neighborhood(0),
@@ -69,6 +75,7 @@ impl Gnome {
             round_start: SwarmTime(0),
             swarm_diameter: DEFAULT_SWARM_DIAMETER,
             receiver,
+            band_receiver,
             sender,
             fast_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
             slow_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
@@ -88,9 +95,10 @@ impl Gnome {
         swarm_id: SwarmID,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
+        band_receiver: Receiver<u32>,
         neighbors: Vec<Neighbor>,
     ) -> Self {
-        let mut gnome = Gnome::new(swarm_id, sender, receiver);
+        let mut gnome = Gnome::new(swarm_id, sender, receiver, band_receiver);
         gnome.fast_neighbors = neighbors;
         gnome
     }
@@ -319,6 +327,12 @@ impl Gnome {
     }
     pub fn do_your_job(mut self) {
         let (timer_sender, timeout_receiver) = channel();
+        let mut available_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
+            band
+        } else {
+            0
+        };
+        println!("Avail bandwith: {}", available_bandwith);
         let mut _guard = self.start_new_timer(self.timeout_duration, timer_sender.clone(), None);
         self.send_all();
 
@@ -327,6 +341,11 @@ impl Gnome {
             self.serve_neighbors_requests();
             let (fast_advance_to_next_turn, fast_new_proposal) = self.try_recv(true);
             let (slow_advance_to_next_turn, slow_new_proposal) = self.try_recv(false);
+            if let Ok(band) = self.band_receiver.try_recv() {
+                available_bandwith = band;
+                println!("Avail bandwith: {}", available_bandwith);
+                //TODO make use of available_bandwith during multicasting setup
+            }
             let timeout = timeout_receiver.try_recv().is_ok();
             let advance_to_next_turn = fast_advance_to_next_turn || slow_advance_to_next_turn;
             let new_proposal = fast_new_proposal || slow_new_proposal;
