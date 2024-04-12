@@ -20,7 +20,7 @@ impl SwarmTime {
 impl Sub for SwarmTime {
     type Output = Self;
     fn sub(self, rhs: SwarmTime) -> Self::Output {
-        SwarmTime(self.0 - rhs.0)
+        SwarmTime(self.0.wrapping_sub(rhs.0))
     }
 }
 

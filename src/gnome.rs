@@ -59,6 +59,7 @@ pub struct Gnome {
     timeout_duration: Duration,
     // pending_unicasts: HashMap<GnomeId, (CastID, Receiver<Data>)>,
     active_unicasts: HashSet<CastID>,
+    send_immediate: bool,
 }
 
 impl Gnome {
@@ -90,6 +91,7 @@ impl Gnome {
             timeout_duration: Duration::from_millis(500),
             // pending_unicasts: HashMap::new(),
             active_unicasts: HashSet::new(),
+            send_immediate: false,
         }
     }
 
@@ -326,10 +328,12 @@ impl Gnome {
     }
 
     pub fn do_your_job(mut self) {
+        println!("Waiting for user/network to provide some Neighbors...");
         while self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
+            // println!("in while");
             let _ = self.serve_user_requests();
         }
-        // println!("Have neighbors!");
+        println!("Have neighbors!");
         let (timer_sender, timeout_receiver) = channel();
         let mut available_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
             band
@@ -355,52 +359,34 @@ impl Gnome {
             let new_proposal = fast_new_proposal || slow_new_proposal;
             // if new_user_proposal
             if advance_to_next_turn
+                || self.send_immediate
                 || timeout
                     && !(self.fast_neighbors.is_empty()
                         && self.slow_neighbors.is_empty()
                         && self.refreshed_neighbors.is_empty())
             {
-                // println!(
-                //     "neigh: {}, ref: {}",
-                //     self.fast_neighbors.len(),
-                //     self.refreshed_neighbors.len()
-                // );
-                // println!(
-                //     "F{} R{} TO{} adv: {}, new prop: {}",
-                //     self.fast_neighbors.len(),
-                //     self.refreshed_neighbors.len(),
-                //     timeout,
-                //     advance_to_next_turn,
-                //     new_proposal
-                // );
-                // println!("1");
                 self.update_state();
-                // println!("2");
-                if !new_proposal {
-                    // println!("nat nju");
+                if !new_proposal && !self.send_immediate {
                     self.swap_neighbors();
                     self.send_specialized(true);
                     self.send_specialized(false);
                 } else {
-                    // println!("nju");
                     self.concat_neighbors();
                     self.send_all();
-                    // if !new_timer_started {}
                 }
+                // if self.send_immediate {
+                self.send_immediate = false;
+                // }
 
-                // println!("3");
                 self.check_if_new_round();
-                // println!("4");
                 _guard =
                     self.start_new_timer(self.timeout_duration, timer_sender.clone(), Some(_guard));
             }
             if exit_app {
-                // println!("EXIT on user request.");
                 break;
             };
             // thread::sleep(Duration::from_millis(250));
         }
-        // println!("out of loop.");
     }
 
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
@@ -613,6 +599,7 @@ impl Gnome {
                     self.block_id = BlockID(data.0);
                     self.data = data;
                     self.my_proposed_block = Some(data);
+                    self.send_immediate = true;
                 } else {
                     // println!("none");
                     self.block_id = block_zero;
@@ -634,21 +621,25 @@ impl Gnome {
                     self.block_id = BlockID(data.0);
                     self.data = data;
                     self.my_proposed_block = Some(data);
+                    self.send_immediate = true;
                 }
                 // At start of new round
                 // Flush awaiting neighbors
                 // We ignore msgs from new neighbors until start of next round
 
-                let new_neighbors = std::mem::replace(
-                    &mut self.new_neighbors,
-                    Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
-                );
-                let msg = self.prepare_message();
-                for mut neighbor in new_neighbors {
-                    let _ = neighbor.try_recv(self.next_state.last_accepted_block);
-                    // println!("snd2 {}", msg);
-                    neighbor.send_out(msg);
-                    self.fast_neighbors.push(neighbor);
+                if !self.new_neighbors.is_empty() {
+                    let new_neighbors = std::mem::replace(
+                        &mut self.new_neighbors,
+                        Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
+                    );
+
+                    let msg = self.prepare_message();
+                    for mut neighbor in new_neighbors {
+                        let _ = neighbor.try_recv(self.next_state.last_accepted_block);
+                        // println!("snd2 {}", msg);
+                        neighbor.send_out(msg);
+                        self.fast_neighbors.push(neighbor);
+                    }
                 }
             }
 
