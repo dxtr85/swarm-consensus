@@ -10,7 +10,7 @@ use crate::SwarmTime;
 pub struct NextState {
     pub neighborhood: Neighborhood,
     pub swarm_time: SwarmTime,
-    pub swarm_time_min: SwarmTime,
+    pub swarm_time_max: SwarmTime,
     pub block_id: BlockID,
     pub last_accepted_block: BlockID,
     pub data: Data,
@@ -22,7 +22,7 @@ impl NextState {
         NextState {
             neighborhood: Neighborhood(0),
             swarm_time: SwarmTime(0),
-            swarm_time_min: SwarmTime(0),
+            swarm_time_max: SwarmTime(std::u32::MAX),
             block_id: BlockID(0),
             last_accepted_block: BlockID(0),
             data: Data(0),
@@ -33,7 +33,8 @@ impl NextState {
     pub fn update(&mut self, neighbor: &Neighbor) {
         // println!("Update {:?}", neighbor);
         let neighbor_st = neighbor.swarm_time;
-        if neighbor_st > self.swarm_time_min && neighbor_st <= self.swarm_time {
+
+        if neighbor_st < self.swarm_time_max && neighbor_st < self.swarm_time {
             self.swarm_time = neighbor_st;
         }
 
@@ -71,7 +72,7 @@ impl NextState {
         } else {
             self.swarm_time.inc()
         };
-        self.swarm_time_min = self.swarm_time;
+        self.swarm_time_max = self.swarm_time.inc();
     }
 
     pub fn next_params(&self) -> (SwarmTime, Neighborhood, BlockID, Data) {

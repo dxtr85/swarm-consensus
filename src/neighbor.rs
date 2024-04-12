@@ -126,6 +126,7 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
+            // message_recvd = true;
             if message.header == Header::Block(last_accepted_block) {
                 // TODO: here we might be droping casting messages
                 if message.is_cast() {
@@ -138,9 +139,9 @@ impl Neighbor {
                 drop_me = true;
                 return (message_recvd, sanity_passed, new_proposal, drop_me);
             }
-            if self.sanity_check(&swarm_time, &neighborhood, &header) {
-                message_recvd = true;
-            } else {
+            if !self.sanity_check(&swarm_time, &neighborhood, &header) {
+                //     message_recvd = true;
+                // } else {
                 println!("Coś nie poszło {}", message);
                 // TODO: sanity might fail for casting messages, but we still
                 // need to put them throught for user to receive
@@ -148,10 +149,10 @@ impl Neighbor {
                     println!("Unserved casting 2");
                 }
                 continue;
-            }
-            // } else {
-            //     message_recvd = true;
             // }
+            } else {
+                message_recvd = true;
+            }
             // println!("Sanity passed {}", message);
 
             self.swarm_time = swarm_time;

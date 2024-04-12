@@ -13,7 +13,7 @@ pub struct SwarmTime(pub u32);
 
 impl SwarmTime {
     pub fn inc(&self) -> Self {
-        SwarmTime(self.0 + 1)
+        SwarmTime(self.0.wrapping_add(1))
     }
 }
 

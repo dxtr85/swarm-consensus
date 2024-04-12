@@ -16,7 +16,7 @@ use crate::SwarmID;
 use crate::SwarmTime;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
-// use std::collections::HashMap;
+
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt;
@@ -53,6 +53,7 @@ pub struct Gnome {
     refreshed_neighbors: Vec<Neighbor>,
     block_id: BlockID,
     data: Data,
+    my_proposed_block: Option<Data>,
     proposals: VecDeque<Data>,
     next_state: NextState,
     timeout_duration: Duration,
@@ -83,6 +84,7 @@ impl Gnome {
             refreshed_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
             block_id: BlockID(0),
             data: Data(0),
+            my_proposed_block: None,
             proposals: VecDeque::new(),
             next_state: NextState::new(),
             timeout_duration: Duration::from_millis(500),
@@ -314,9 +316,6 @@ impl Gnome {
                         // print!(".")
                     }
                 }
-                // if i == 5 {
-                //     let _ = sender.send(Timeout::ChillOver);
-                // }
             }
 
             if send {
@@ -325,7 +324,12 @@ impl Gnome {
         });
         tx
     }
+
     pub fn do_your_job(mut self) {
+        while self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
+            let _ = self.serve_user_requests();
+        }
+        // println!("Have neighbors!");
         let (timer_sender, timeout_receiver) = channel();
         let mut available_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
             band
@@ -349,8 +353,8 @@ impl Gnome {
             let timeout = timeout_receiver.try_recv().is_ok();
             let advance_to_next_turn = fast_advance_to_next_turn || slow_advance_to_next_turn;
             let new_proposal = fast_new_proposal || slow_new_proposal;
-            if new_user_proposal
-                || advance_to_next_turn
+            // if new_user_proposal
+            if advance_to_next_turn
                 || timeout
                     && !(self.fast_neighbors.is_empty()
                         && self.slow_neighbors.is_empty()
@@ -394,7 +398,7 @@ impl Gnome {
                 // println!("EXIT on user request.");
                 break;
             };
-            thread::sleep(Duration::from_millis(250));
+            // thread::sleep(Duration::from_millis(250));
         }
         // println!("out of loop.");
     }
@@ -554,13 +558,16 @@ impl Gnome {
     fn update_state(&mut self) {
         let (n_st, n_neigh, n_bid, n_data) = self.next_state.next_params();
         // println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
-        if n_st.0 - self.swarm_time.0 >= self.swarm_diameter.0 + self.swarm_diameter.0 {
-            println!("Not updating neighborhood when catching up with swarm");
+        if let Some(sub) = n_st.0.checked_sub(self.swarm_time.0) {
+            if sub >= self.swarm_diameter.0 + self.swarm_diameter.0 {
+                println!("Not updating neighborhood when catching up with swarm");
+            } else {
+                self.neighborhood = n_neigh;
+            }
         } else {
             self.neighborhood = n_neigh;
         }
         self.swarm_time = n_st;
-        // self.neighborhood = n_neigh;
         self.block_id = n_bid;
         self.data = n_data;
     }
@@ -576,7 +583,7 @@ impl Gnome {
         if all_gnomes_aware || finish_round {
             let block_zero = BlockID(0);
             // if finish_round {
-            //     println!("finish round");
+            //     println!("finish round all awa: {}", all_gnomes_aware);
             // }
             if self.block_id > block_zero {
                 if all_gnomes_aware {
@@ -585,6 +592,13 @@ impl Gnome {
                         "^^^ USER ^^^ {:?} NEW {} {:075}",
                         res, self.block_id, self.data.0
                     );
+                    if let Some(my_proposed_data) = self.my_proposed_block {
+                        if my_proposed_data.0 != self.block_id.0 {
+                            self.proposals.push_back(my_proposed_data);
+                        }
+                    }
+                    self.my_proposed_block = None;
+
                     self.round_start = self.swarm_time;
                     // println!("New round start: {}", self.round_start);
                     self.next_state.last_accepted_block = self.block_id;
@@ -598,13 +612,12 @@ impl Gnome {
                     // println!("some");
                     self.block_id = BlockID(data.0);
                     self.data = data;
+                    self.my_proposed_block = Some(data);
                 } else {
                     // println!("none");
                     self.block_id = block_zero;
                     self.data = Data(0);
                 }
-                // self.neighborhood = Neighborhood(0);
-                // self.send_all();
             } else {
                 // Sync swarm time
                 // self.swarm_time = self.round_start + self.swarm_diameter;
@@ -620,6 +633,7 @@ impl Gnome {
                 if let Some(data) = self.proposals.pop_back() {
                     self.block_id = BlockID(data.0);
                     self.data = data;
+                    self.my_proposed_block = Some(data);
                 }
                 // At start of new round
                 // Flush awaiting neighbors
@@ -687,21 +701,6 @@ impl Gnome {
             if served {
                 // println!("Served!");
                 if sanity_passed {
-                    // if let Some(proposal) = neighbor.data_id {
-                    //     if let Some(existing_proposal) = &self.data_id {
-                    //         if proposal.ne(existing_proposal) && self.reject_all_proposals() {
-                    //             println!("Droping an unsober neighbor");
-                    //             continue;
-                    //         }
-                    //     }
-                    // }
-
-                    // Following will not execute if above `continue` was evaluated
-                    // println!(
-                    //     "bifor updejt {:?} {:?}",
-                    //     neighbor.swarm_time, neighbor.payload
-                    // );
-
                     //TODO: this is wacky
                     if self.round_start.0 == 0 {
                         self.next_state.swarm_time = neighbor.swarm_time;
@@ -730,14 +729,6 @@ impl Gnome {
                 }
             }
         }
-        // if new_proposal_received {
-        //     println!(
-        //         "neigh: {} {} {:?}",
-        //         self.neighbors.len(),
-        //         looped,
-        //         new_proposal_received
-        //     );
-        // }
         (
             self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() && looped
                 || new_proposal_received,
