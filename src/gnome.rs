@@ -1,4 +1,4 @@
-use crate::gnome_id_dispenser;
+// use crate::gnome_id_dispenser;
 use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
@@ -25,10 +25,10 @@ use std::thread;
 use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct GnomeId(pub u32);
+pub struct GnomeId(pub u64);
 impl fmt::Display for GnomeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "GID{:9}", self.0)
+        write!(f, "GID-{:x}", self.0)
     }
 }
 
@@ -64,13 +64,14 @@ pub struct Gnome {
 
 impl Gnome {
     pub fn new(
+        id: GnomeId,
         swarm_id: SwarmID,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
         band_receiver: Receiver<u32>,
     ) -> Self {
         Gnome {
-            id: gnome_id_dispenser(),
+            id,
             neighborhood: Neighborhood(0),
             swarm_id,
             swarm_time: SwarmTime(0),
@@ -96,13 +97,14 @@ impl Gnome {
     }
 
     pub fn new_with_neighbors(
+        id: GnomeId,
         swarm_id: SwarmID,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
         band_receiver: Receiver<u32>,
         neighbors: Vec<Neighbor>,
     ) -> Self {
-        let mut gnome = Gnome::new(swarm_id, sender, receiver, band_receiver);
+        let mut gnome = Gnome::new(id, swarm_id, sender, receiver, band_receiver);
         gnome.fast_neighbors = neighbors;
         gnome
     }

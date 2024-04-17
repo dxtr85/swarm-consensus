@@ -1,18 +1,23 @@
 use crate::swarm::{Swarm, SwarmID};
-use crate::Neighbor;
 use crate::Request;
 use crate::Response;
+use crate::{GnomeId, Neighbor};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub struct Manager {
+    gnome_id: GnomeId,
     swarms: HashMap<SwarmID, Swarm>,
     to_networking: Sender<(String, Sender<Request>, Sender<u32>)>,
 }
 
 impl Manager {
-    pub fn new(to_networking: Sender<(String, Sender<Request>, Sender<u32>)>) -> Manager {
+    pub fn new(
+        gnome_id: GnomeId,
+        to_networking: Sender<(String, Sender<Request>, Sender<u32>)>,
+    ) -> Manager {
         Manager {
+            gnome_id,
             swarms: HashMap::new(),
             to_networking, // Send a message to networking about new swarm subscription, and where to send Neighbors
         }
@@ -46,7 +51,8 @@ impl Manager {
     ) -> Result<(SwarmID, (Sender<Request>, Receiver<Response>)), String> {
         if let Some(swarm_id) = self.next_avail_swarm_id() {
             let (band_send, band_recv) = channel();
-            let mut swarm = Swarm::join(name.clone(), swarm_id, neighbors, band_recv);
+            let mut swarm =
+                Swarm::join(name.clone(), swarm_id, self.gnome_id, neighbors, band_recv);
             println!("swarm '{}' created ", name);
             let sender = swarm.sender.clone();
             let receiver = swarm.receiver.take();

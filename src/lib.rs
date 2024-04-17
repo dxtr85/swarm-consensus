@@ -107,6 +107,6 @@ fn gnome_id_dispenser() -> GnomeId {
     }
 }
 
-pub fn start(sender: Sender<(String, Sender<Request>, Sender<u32>)>) -> Manager {
-    Manager::new(sender)
+pub fn start(gnome_id: GnomeId, sender: Sender<(String, Sender<Request>, Sender<u32>)>) -> Manager {
+    Manager::new(gnome_id, sender)
 }

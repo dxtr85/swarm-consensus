@@ -1,4 +1,5 @@
 use crate::Gnome;
+use crate::GnomeId;
 use crate::Neighbor;
 use crate::Request;
 use crate::Response;
@@ -46,6 +47,7 @@ impl Swarm {
     pub fn join(
         name: String,
         id: SwarmID,
+        gnome_id: GnomeId,
         neighbors: Option<Vec<Neighbor>>,
         band_receiver: Receiver<u32>,
     ) -> Swarm {
@@ -54,6 +56,7 @@ impl Swarm {
 
         let gnome = if let Some(neighbors) = neighbors {
             Gnome::new_with_neighbors(
+                gnome_id,
                 id,
                 response_sender,
                 request_receiver,
@@ -61,7 +64,13 @@ impl Swarm {
                 neighbors,
             )
         } else {
-            Gnome::new(id, response_sender, request_receiver, band_receiver)
+            Gnome::new(
+                gnome_id,
+                id,
+                response_sender,
+                request_receiver,
+                band_receiver,
+            )
         };
         let join_handle = spawn(move || {
             gnome.do_your_job();
