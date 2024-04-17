@@ -347,7 +347,7 @@ impl Gnome {
         self.send_all();
 
         loop {
-            let (exit_app, new_user_proposal) = self.serve_user_requests();
+            let (exit_app, _new_user_proposal) = self.serve_user_requests();
             self.serve_neighbors_requests();
             let (fast_advance_to_next_turn, fast_new_proposal) = self.try_recv(true);
             let (slow_advance_to_next_turn, slow_new_proposal) = self.try_recv(false);

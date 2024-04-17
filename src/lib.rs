@@ -97,15 +97,15 @@ impl fmt::Debug for Response {
     }
 }
 
-static mut GNOME_ID: GnomeId = GnomeId(0);
+// static mut GNOME_ID: GnomeId = GnomeId(0);
 
-fn gnome_id_dispenser() -> GnomeId {
-    unsafe {
-        let next_id = GNOME_ID;
-        GNOME_ID = GnomeId(GNOME_ID.0 + 1);
-        next_id
-    }
-}
+// fn gnome_id_dispenser() -> GnomeId {
+//     unsafe {
+//         let next_id = GNOME_ID;
+//         GNOME_ID = GnomeId(GNOME_ID.0 + 1);
+//         next_id
+//     }
+// }
 
 pub fn start(gnome_id: GnomeId, sender: Sender<(String, Sender<Request>, Sender<u32>)>) -> Manager {
     Manager::new(gnome_id, sender)
