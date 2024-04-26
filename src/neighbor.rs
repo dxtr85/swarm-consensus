@@ -126,7 +126,7 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
-            // message_recvd = true;
+            message_recvd = true;
             if message.header == Header::Block(last_accepted_block) {
                 // TODO: here we might be droping casting messages
                 if message.is_cast() {

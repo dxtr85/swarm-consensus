@@ -32,11 +32,6 @@ impl fmt::Display for GnomeId {
     }
 }
 
-// enum Timeout {
-//     ChillOver,
-//     Droptime,
-// }
-
 pub struct Gnome {
     pub id: GnomeId,
     pub neighborhood: Neighborhood,
@@ -57,7 +52,6 @@ pub struct Gnome {
     proposals: VecDeque<Data>,
     next_state: NextState,
     timeout_duration: Duration,
-    // pending_unicasts: HashMap<GnomeId, (CastID, Receiver<Data>)>,
     active_unicasts: HashSet<CastID>,
     send_immediate: bool,
 }
@@ -90,7 +84,6 @@ impl Gnome {
             proposals: VecDeque::new(),
             next_state: NextState::new(),
             timeout_duration: Duration::from_millis(500),
-            // pending_unicasts: HashMap::new(),
             active_unicasts: HashSet::new(),
             send_immediate: false,
         }
@@ -359,7 +352,6 @@ impl Gnome {
             let timeout = timeout_receiver.try_recv().is_ok();
             let advance_to_next_turn = fast_advance_to_next_turn || slow_advance_to_next_turn;
             let new_proposal = fast_new_proposal || slow_new_proposal;
-            // if new_user_proposal
             if advance_to_next_turn
                 || self.send_immediate
                 || timeout
@@ -376,10 +368,7 @@ impl Gnome {
                     self.concat_neighbors();
                     self.send_all();
                 }
-                // if self.send_immediate {
                 self.send_immediate = false;
-                // }
-
                 self.check_if_new_round();
                 _guard =
                     self.start_new_timer(self.timeout_duration, timer_sender.clone(), Some(_guard));
@@ -387,7 +376,7 @@ impl Gnome {
             if exit_app {
                 break;
             };
-            // thread::sleep(Duration::from_millis(250));
+            thread::sleep(Duration::from_millis(25));
         }
     }
 
@@ -422,11 +411,9 @@ impl Gnome {
         let message = self.prepare_message();
         eprintln!("{} >>> {}", self.id, message);
         for neighbor in &mut self.fast_neighbors {
-            // println!("snd3 ");
             neighbor.send_out(message);
         }
         for neighbor in &mut self.slow_neighbors {
-            // println!("snd4 ");
             neighbor.send_out(message);
         }
         // for neighbor in &mut self.new_neighbors {
@@ -564,16 +551,10 @@ impl Gnome {
         let all_gnomes_aware = self.neighborhood.0 as u32 >= self.swarm_diameter.0;
         let finish_round =
             self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
-        // println!(
-        //     "All aware: {}  finish_round: {}",
-        //     all_gnomes_aware, finish_round
-        // );
         if all_gnomes_aware || finish_round {
             let block_zero = BlockID(0);
-            // if finish_round {
-            //     println!("finish round all awa: {}", all_gnomes_aware);
-            // }
             if self.block_id > block_zero {
+                self.send_immediate = true;
                 if all_gnomes_aware {
                     let res = self.sender.send(Response::Block(self.block_id, self.data));
                     println!(
