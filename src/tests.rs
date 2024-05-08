@@ -17,9 +17,10 @@ struct TestManager {
 impl TestManager {
     pub fn join_a_swarm(
         swarm_name: &str,
-        neighbors_count: u32,
+        neighbors_count: u64,
     ) -> (TestManager, Sender<Request>, Receiver<Response>) {
-        let mut manager = Manager::new();
+        let (send, recv) = channel();
+        let mut manager = Manager::new(GnomeId(0), None, send);
         let mut neighbors = Vec::with_capacity(neighbors_count as usize);
         let mut mgr_neighbors: Vec<Neighbor> = Vec::with_capacity(neighbors_count as usize);
         for i in 1..neighbors_count + 1 {

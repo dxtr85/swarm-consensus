@@ -3,7 +3,10 @@ use crate::gnome::Gnome;
 pub use crate::gnome::GnomeId;
 mod message;
 mod swarm;
+use std::net::IpAddr;
 // use crate::message::*;
+pub use crate::gnome::Nat;
+pub use crate::gnome::NetworkSettings;
 pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmTime;
 pub use message::{Header, Message, Payload};
@@ -34,6 +37,7 @@ const DEFAULT_NEIGHBORS_PER_GNOME: usize = 3;
 const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
 // const MAX_PAYLOAD_SIZE: u32 = 1024;
 
+#[derive(Debug)]
 pub enum Request {
     AddData(Data),
     AddNeighbor(Neighbor),
@@ -46,6 +50,9 @@ pub enum Request {
     StartMulticast(Vec<GnomeId>),
     StartBroadcast,
     Custom(u8, Data),
+    SetAddress(IpAddr),
+    SetPort(u16),
+    SetNat(Nat),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,6 +67,7 @@ pub enum Response {
     Multicast(SwarmID, CastID, Receiver<Data>),
     BroadcastSource(SwarmID, CastID, Sender<Data>),
     Broadcast(SwarmID, CastID, Receiver<Data>),
+    ToGnome(NeighborResponse),
     Custom(u8, Data),
 }
 
@@ -90,6 +98,9 @@ impl fmt::Debug for Response {
             Response::BroadcastSource(_sid, _cid, _sdata) => {
                 write!(f, "Broadcast source {:?}", _cid)
             }
+            Response::ToGnome(neighbor_response) => {
+                write!(f, "ToGnome: {:?}", neighbor_response)
+            }
             Response::Custom(id, _sdata) => {
                 write!(f, "Custom response {}", id)
             }
@@ -107,6 +118,15 @@ impl fmt::Debug for Response {
 //     }
 // }
 
-pub fn start(gnome_id: GnomeId, sender: Sender<(String, Sender<Request>, Sender<u32>)>) -> Manager {
-    Manager::new(gnome_id, sender)
+pub fn start(
+    gnome_id: GnomeId,
+    network_settings: Option<NetworkSettings>,
+    sender: Sender<(
+        String,
+        Sender<Request>,
+        Sender<u32>,
+        Receiver<(NetworkSettings, Option<NetworkSettings>)>,
+    )>,
+) -> Manager {
+    Manager::new(gnome_id, network_settings, sender)
 }

@@ -1,3 +1,4 @@
+use crate::gnome::NetworkSettings;
 use crate::Gnome;
 use crate::GnomeId;
 use crate::Neighbor;
@@ -50,6 +51,8 @@ impl Swarm {
         gnome_id: GnomeId,
         neighbors: Option<Vec<Neighbor>>,
         band_receiver: Receiver<u32>,
+        net_settings_send: Sender<(NetworkSettings, Option<NetworkSettings>)>,
+        network_settings: NetworkSettings,
     ) -> Swarm {
         let (sender, request_receiver) = channel::<Request>();
         let (response_sender, receiver) = channel::<Response>();
@@ -62,6 +65,8 @@ impl Swarm {
                 request_receiver,
                 band_receiver,
                 neighbors,
+                network_settings,
+                net_settings_send,
             )
         } else {
             Gnome::new(
@@ -70,6 +75,8 @@ impl Swarm {
                 response_sender,
                 request_receiver,
                 band_receiver,
+                network_settings,
+                net_settings_send,
             )
         };
         let join_handle = spawn(move || {

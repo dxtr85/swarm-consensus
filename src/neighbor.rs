@@ -5,6 +5,7 @@ use crate::CastID;
 use crate::Data;
 use crate::GnomeId;
 use crate::Message;
+use crate::NetworkSettings;
 use crate::Response;
 use crate::SwarmID;
 use crate::SwarmTime;
@@ -45,7 +46,7 @@ pub struct Neighbor {
     pub user_requests: VecDeque<NeighborRequest>,
     pub user_responses: VecDeque<Response>,
     pub requests: VecDeque<NeighborRequest>,
-    pub requested_data: VecDeque<(NeighborRequest, NeighborResponse)>,
+    pub requested_data: VecDeque<NeighborResponse>,
     gnome_header: Header,
     gnome_neighborhood: Neighborhood,
     active_unicasts: HashMap<CastID, Sender<Data>>,
@@ -57,6 +58,8 @@ pub enum NeighborRequest {
     ListingRequest(SwarmTime),
     PayloadRequest(u8, [BlockID; 128]),
     UnicastRequest(SwarmID, [CastID; 256]),
+    ForwardConnectRequest(NetworkSettings),
+    ConnectRequest(u8, GnomeId, NetworkSettings),
     CustomRequest(u8, Data),
 }
 
@@ -65,6 +68,10 @@ pub enum NeighborResponse {
     Listing(u8, [BlockID; 128]),
     Block(BlockID, Data),
     Unicast(SwarmID, CastID),
+    ForwardConnectResponse(NetworkSettings),
+    ForwardConnectFailed,
+    ConnectResponse(u8, NetworkSettings),
+    AlreadyConnected(u8),
     CustomResponse(u8, Data),
 }
 
@@ -231,6 +238,22 @@ impl Neighbor {
                         self.user_responses
                             .push_front(Response::Unicast(swarm_id, cast_id, receiver));
                     }
+                    resp @ NeighborResponse::ForwardConnectResponse(_network_settings) => {
+                        //TODO send this to networking
+                        self.user_responses.push_front(Response::ToGnome(resp));
+                    }
+                    resp @ NeighborResponse::ForwardConnectFailed => {
+                        self.user_responses.push_front(Response::ToGnome(resp));
+                        //TODO notify gnome
+                    }
+                    resp @ NeighborResponse::AlreadyConnected(_id) => {
+                        self.user_responses.push_front(Response::ToGnome(resp));
+                        //TODO notify gnome
+                    }
+                    resp @ NeighborResponse::ConnectResponse(_id, _network_settings) => {
+                        self.user_responses.push_front(Response::ToGnome(resp));
+                        //TODO send this to gnome.ongoing_requests
+                    }
                     NeighborResponse::CustomResponse(id, data) => {
                         self.user_responses.push_front(Response::Custom(id, data))
                     }
@@ -337,13 +360,15 @@ impl Neighbor {
         self.gnome_neighborhood = message.neighborhood;
     }
 
-    pub fn get_specialized_data(&mut self) -> Option<(NeighborRequest, NeighborResponse)> {
+    pub fn get_specialized_data(&mut self) -> Option<NeighborResponse> {
         // println!("Getting specialized data");
         self.requested_data.pop_back()
     }
 
-    pub fn add_requested_data(&mut self, request: NeighborRequest, data: NeighborResponse) {
-        self.requested_data.push_front((request, data));
+    // pub fn add_requested_data(&mut self, request: NeighborRequest, data: NeighborResponse) {
+    pub fn add_requested_data(&mut self, data: NeighborResponse) {
+        // self.requested_data.push_front((request, data));
+        self.requested_data.push_front(data);
 
         // TODO: maybe move it somewhere else?
         if let NeighborResponse::Unicast(swarm_id, cast_id) = data {

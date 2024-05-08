@@ -1,4 +1,3 @@
-// use crate::gnome_id_dispenser;
 use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
@@ -17,9 +16,12 @@ use crate::SwarmTime;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
 
+use std::cmp::{max, min};
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt;
+use std::net::IpAddr;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::Duration;
@@ -32,6 +34,115 @@ impl fmt::Display for GnomeId {
     }
 }
 
+struct OngoingRequest {
+    origin: GnomeId,
+    queried_neighbors: Vec<GnomeId>,
+    timestamp: SwarmTime,
+    response: Option<NetworkSettings>,
+    network_settings: NetworkSettings,
+}
+
+struct NeighborDiscovery {
+    counter: u16,
+    treshold: u16,
+    attempts: u8,
+    try_next: bool,
+    queried_neighbors: Vec<GnomeId>,
+}
+impl NeighborDiscovery {
+    // Every new round we increment a counter.
+    // Once counter reaches defined threashold
+    // function returns true.
+    // Function may also return true if recent
+    // neighbor search ended with a failure, up to n-tries.
+    // If neither of above is true, then function returns false.
+    //
+    // TODO: modify treshold & attempts to depend on available bandwith
+    fn tick_and_check(&mut self) -> bool {
+        self.counter += 1;
+        let treshold_reached = self.counter >= self.treshold;
+        if treshold_reached {
+            self.counter = 0;
+            self.attempts = 3;
+            self.try_next = false;
+            true
+        } else if self.try_next && self.attempts > 0 {
+            self.attempts -= 1;
+            self.try_next = false;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Default for NeighborDiscovery {
+    fn default() -> Self {
+        NeighborDiscovery {
+            counter: 1000,
+            treshold: 1000,
+            attempts: 3,
+            try_next: true,
+            queried_neighbors: vec![],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Nat {
+    Unknown = 0,
+    None = 1,
+    FullCone = 2,
+    AddressRestrictedCone = 4,
+    PortRestrictedCone = 8,
+    SymmetricWithPortControl = 16,
+    Symmetric = 32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetworkSettings {
+    pub pub_ip: IpAddr,
+    pub pub_port: u16,
+    pub nat_type: Nat,
+    pub port_range: (u16, u16),
+}
+
+impl NetworkSettings {
+    pub fn update(&mut self, other: Self) {
+        self.pub_ip = other.pub_ip;
+        self.pub_port = other.pub_port;
+        self.nat_type = other.nat_type;
+        let (o_min, o_max) = other.port_range;
+        let (my_min, my_max) = self.port_range;
+        self.port_range = (min(my_min, o_min), max(my_max, o_max));
+    }
+
+    pub fn set_ports(&mut self, port_min: u16, port_max: u16) {
+        self.port_range = (port_min, port_max);
+    }
+
+    pub fn set_port(&mut self, port: u16) {
+        let (mut my_min, mut my_max) = self.port_range;
+        if port < my_min {
+            my_min = port;
+        } else if port > my_max {
+            my_max = port;
+        }
+        self.pub_port = port;
+        self.port_range = (my_min, my_max);
+    }
+}
+
+impl Default for NetworkSettings {
+    fn default() -> Self {
+        NetworkSettings {
+            pub_ip: IpAddr::from([0, 0, 0, 0]),
+            pub_port: 1026,
+            nat_type: Nat::Unknown,
+            port_range: (std::u16::MAX, 1026),
+        }
+    }
+}
 pub struct Gnome {
     pub id: GnomeId,
     pub neighborhood: Neighborhood,
@@ -54,6 +165,10 @@ pub struct Gnome {
     timeout_duration: Duration,
     active_unicasts: HashSet<CastID>,
     send_immediate: bool,
+    network_settings: NetworkSettings,
+    net_settings_send: Sender<(NetworkSettings, Option<NetworkSettings>)>,
+    ongoing_requests: HashMap<u8, OngoingRequest>,
+    neighbor_discovery: NeighborDiscovery,
 }
 
 impl Gnome {
@@ -63,6 +178,8 @@ impl Gnome {
         sender: Sender<Response>,
         receiver: Receiver<Request>,
         band_receiver: Receiver<u32>,
+        network_settings: NetworkSettings,
+        net_settings_send: Sender<(NetworkSettings, Option<NetworkSettings>)>,
     ) -> Self {
         Gnome {
             id,
@@ -86,6 +203,10 @@ impl Gnome {
             timeout_duration: Duration::from_millis(500),
             active_unicasts: HashSet::new(),
             send_immediate: false,
+            network_settings,
+            net_settings_send,
+            ongoing_requests: HashMap::new(),
+            neighbor_discovery: NeighborDiscovery::default(),
         }
     }
 
@@ -96,8 +217,18 @@ impl Gnome {
         receiver: Receiver<Request>,
         band_receiver: Receiver<u32>,
         neighbors: Vec<Neighbor>,
+        network_settings: NetworkSettings,
+        net_settings_send: Sender<(NetworkSettings, Option<NetworkSettings>)>,
     ) -> Self {
-        let mut gnome = Gnome::new(id, swarm_id, sender, receiver, band_receiver);
+        let mut gnome = Gnome::new(
+            id,
+            swarm_id,
+            sender,
+            receiver,
+            band_receiver,
+            network_settings,
+            net_settings_send,
+        );
         gnome.fast_neighbors = neighbors;
         gnome
     }
@@ -130,12 +261,12 @@ impl Gnome {
                     println!("{} DROP\ta neighbor on user request", n_id);
                     self.drop_neighbor(n_id);
                 }
-                Request::SendData(gnome_id, request, data) => {
+                Request::SendData(gnome_id, _request, data) => {
                     println!("Trying to inform neighbor {} about data", gnome_id);
                     let mut data_sent = false;
                     for neighbor in &mut self.fast_neighbors {
                         if neighbor.id == gnome_id {
-                            neighbor.add_requested_data(request, data);
+                            neighbor.add_requested_data(data);
                             data_sent = true;
                             break;
                         }
@@ -143,7 +274,7 @@ impl Gnome {
                     if !data_sent {
                         for neighbor in &mut self.slow_neighbors {
                             if neighbor.id == gnome_id {
-                                neighbor.add_requested_data(request, data);
+                                neighbor.add_requested_data(data);
                                 break;
                             }
                         }
@@ -210,6 +341,15 @@ impl Gnome {
                 Request::Custom(_id, _data) => {
                     todo!()
                 }
+                Request::SetAddress(addr) => {
+                    self.network_settings.pub_ip = addr;
+                }
+                Request::SetPort(port) => {
+                    self.network_settings.set_port(port);
+                }
+                Request::SetNat(nat) => {
+                    self.network_settings.nat_type = nat;
+                }
             }
         }
         (exit_app, new_user_proposal)
@@ -236,8 +376,263 @@ impl Gnome {
         available
     }
 
+    // ongoing requests should be used to track which neighbor is currently selected for
+    // making a connection with another neighbor.
+    // it should contain gnome_id to identify which gnome is requesting to connect
+    // another gnome_id should identify currently queried neighbor,
+    // an u8 value should be used as an identifier of messages received from neighbors
+    // so that we can help multiple neighbors simultaneously
+    // Also each ongoing request should contain a SwarmTime timestamp marking when given
+    // query was sent, in order to timeout on unresponsive gnome
+    //
+    // if there is only one neighbor we simply send back a failure message to originating
+    // neighbor, since we do not have other neighbors to connoct to.
+    fn add_ongoing_request(&mut self, origin: GnomeId, network_settings: NetworkSettings) {
+        let neighbor_count = self.fast_neighbors.len() + self.slow_neighbors.len();
+        if neighbor_count < 2 {
+            println!("Not enough neighbors");
+            // TODO: send response to originator
+            return;
+        }
+        // if self.ongoing_requests.len() == 256{
+        //     println!("Maximum amount of ongoing requests");
+        //     return;
+        // }
+        let mut id: u8 = 0;
+        while self.ongoing_requests.contains_key(&id) {
+            id += 1;
+        }
+        let mut queried_neighbor: Option<GnomeId> = None;
+        for neigh in &mut self.fast_neighbors {
+            if neigh.id != origin {
+                queried_neighbor = Some(neigh.id);
+                neigh.request_data(NeighborRequest::ConnectRequest(
+                    id,
+                    origin,
+                    network_settings,
+                ));
+                break;
+            }
+        }
+        if queried_neighbor.is_none() {
+            for neigh in &mut self.slow_neighbors {
+                if neigh.id != origin {
+                    queried_neighbor = Some(neigh.id);
+                    neigh.request_data(NeighborRequest::ConnectRequest(
+                        id,
+                        origin,
+                        network_settings,
+                    ));
+                    break;
+                }
+            }
+        }
+        let or = OngoingRequest {
+            origin,
+            queried_neighbors: vec![queried_neighbor.unwrap()],
+            timestamp: self.swarm_time,
+            response: None,
+            network_settings,
+        };
+        self.ongoing_requests.insert(id, or);
+    }
+
+    fn serve_connect_request(
+        &mut self,
+        id: u8,
+        origin: GnomeId,
+        network_settings: NetworkSettings,
+    ) -> NeighborResponse {
+        for neighbor in &self.fast_neighbors {
+            if neighbor.id == origin {
+                return NeighborResponse::AlreadyConnected(id);
+            }
+        }
+        for neighbor in &self.slow_neighbors {
+            if neighbor.id == origin {
+                return NeighborResponse::AlreadyConnected(id);
+            }
+        }
+        // TODO: vary response depending on available bandwith
+        let _ = self
+            .net_settings_send
+            .send((self.network_settings, Some(network_settings)));
+        NeighborResponse::ConnectResponse(id, self.network_settings)
+    }
+
+    // TODO: find where to apply this function
+    fn add_ongoing_reply(&mut self, id: u8, network_settings: NetworkSettings) {
+        let opor = self.ongoing_requests.remove(&id);
+        if opor.is_some() {
+            let mut o_req = opor.unwrap();
+            o_req.response = Some(network_settings);
+            self.ongoing_requests.insert(id, o_req);
+        } else {
+            println!("No ongoing request with id: {}", id);
+        }
+    }
+
+    fn skip_neighbor(&mut self, id: u8) {
+        let mut key_to_remove = None;
+        let option_req = self.ongoing_requests.get_mut(&id);
+        if let Some(v) = option_req {
+            let mut neighbor_found = false;
+            for neighbor in &mut self.fast_neighbors {
+                if !v.queried_neighbors.contains(&neighbor.id) {
+                    neighbor_found = true;
+                    neighbor.request_data(NeighborRequest::ConnectRequest(
+                        id,
+                        v.origin,
+                        v.network_settings,
+                    ));
+                    break;
+                }
+            }
+            if !neighbor_found {
+                for neighbor in &mut self.slow_neighbors {
+                    if !v.queried_neighbors.contains(&neighbor.id) {
+                        neighbor_found = true;
+                        neighbor.request_data(NeighborRequest::ConnectRequest(
+                            id,
+                            v.origin,
+                            v.network_settings,
+                        ));
+                        break;
+                    }
+                }
+            }
+            if !neighbor_found {
+                println!("Unable to find more neighbors for {}", id);
+                let mut response_sent = false;
+                for neighbor in &mut self.fast_neighbors {
+                    if neighbor.id == v.origin {
+                        neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+                        response_sent = true;
+                        break;
+                    }
+                }
+                if !response_sent {
+                    for neighbor in &mut self.slow_neighbors {
+                        if neighbor.id == v.origin {
+                            neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+                            break;
+                        }
+                    }
+                }
+                key_to_remove = Some(id);
+            } else {
+                v.timestamp = self.swarm_time;
+            }
+        }
+        if let Some(key) = key_to_remove {
+            self.ongoing_requests.remove(&key);
+        }
+    }
+
+    // Here we iterate over every element in ongoing requests
+    // If a neighbor sends back a response to our query,
+    // this response is also inserted into ongoing requests.
+    // When we iterate over ongoing requests and see that given item
+    // contains a neighbor response
+    // we take that response and send it back to originating gnome
+    // for direct connection establishment
+    // If we find that there is no response, we can do two things:
+    // if a request was sent to a particular gnome long ago,
+    // we can select another neighbor and send him a query, resetting timestamp.
+    // if a request is fairly recent, we simply move on
+    //
+    // once we find out all neighbors have been queried we no longer need given item in
+    // ongoing requests, so we drop it and put back it's u8 identifier to available set
+    // we also send back a reply to originating neighbor
+    //
+    // TODO: cover a case when queried neighbor already is connected to origin
+    fn serve_ongoing_requests(&mut self) {
+        let mut keys_to_remove: Vec<u8> = vec![];
+        for (k, v) in &mut self.ongoing_requests {
+            if v.response.is_some() {
+                let mut response_sent = false;
+                for neighbor in &mut self.fast_neighbors {
+                    if neighbor.id == v.origin {
+                        neighbor.add_requested_data(NeighborResponse::ForwardConnectResponse(
+                            v.response.unwrap(),
+                        ));
+                        response_sent = true;
+                        break;
+                    }
+                }
+                if !response_sent {
+                    for neighbor in &mut self.slow_neighbors {
+                        if neighbor.id == v.origin {
+                            neighbor.add_requested_data(NeighborResponse::ForwardConnectResponse(
+                                v.response.unwrap(),
+                            ));
+                            break;
+                        }
+                    }
+                }
+                keys_to_remove.push(*k);
+            } else {
+                let time_delta = self.swarm_time - v.timestamp;
+                if time_delta > SwarmTime(100) {
+                    let mut neighbor_found = false;
+                    for neighbor in &mut self.fast_neighbors {
+                        if !v.queried_neighbors.contains(&neighbor.id) {
+                            neighbor_found = true;
+                            neighbor.request_data(NeighborRequest::ConnectRequest(
+                                *k,
+                                v.origin,
+                                v.network_settings,
+                            ));
+                            break;
+                        }
+                    }
+                    if !neighbor_found {
+                        for neighbor in &mut self.slow_neighbors {
+                            if !v.queried_neighbors.contains(&neighbor.id) {
+                                neighbor_found = true;
+                                neighbor.request_data(NeighborRequest::ConnectRequest(
+                                    *k,
+                                    v.origin,
+                                    v.network_settings,
+                                ));
+                                break;
+                            }
+                        }
+                    }
+                    if !neighbor_found {
+                        println!("Unable to find more neighbors for {}", k);
+                        let mut response_sent = false;
+                        for neighbor in &mut self.fast_neighbors {
+                            if neighbor.id == v.origin {
+                                neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+                                response_sent = true;
+                                break;
+                            }
+                        }
+                        if !response_sent {
+                            for neighbor in &mut self.slow_neighbors {
+                                if neighbor.id == v.origin {
+                                    neighbor
+                                        .add_requested_data(NeighborResponse::ForwardConnectFailed);
+                                    break;
+                                }
+                            }
+                        }
+                        keys_to_remove.push(*k);
+                    } else {
+                        v.timestamp = self.swarm_time;
+                    }
+                }
+            }
+        }
+        for key in keys_to_remove {
+            self.ongoing_requests.remove(&key);
+        }
+    }
+
     fn serve_neighbors_requests(&mut self) {
-        let mut neighbors = std::mem::replace(&mut self.fast_neighbors, Vec::new());
+        self.serve_ongoing_requests();
+        let mut neighbors = std::mem::take(&mut self.fast_neighbors);
         for neighbor in &mut neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
                 println!("Some neighbor request! {:?}", request);
@@ -246,23 +641,20 @@ impl Gnome {
                         for cast_id in cast_ids {
                             if self.is_unicast_id_available(cast_id) {
                                 self.active_unicasts.insert(cast_id);
-                                neighbor.add_requested_data(
-                                    request,
-                                    NeighborResponse::Unicast(self.swarm_id, cast_id),
-                                );
-                                // println!("To user: {:?}", res);
-                                // } else {
-                                //     if let Some(cast_id) = next_uni_id {
-                                //         neighbor.add_requested_data(
-                                //             request,
-                                //             NeighborResponse::Unicast(self.swarm_id, cast_id),
-                                //         );
-                                //     } else {
-                                //         println!("Unable to find free Unicast ID");
-                                //     }
+                                neighbor.add_requested_data(NeighborResponse::Unicast(
+                                    self.swarm_id,
+                                    cast_id,
+                                ));
                                 break;
                             }
                         }
+                    }
+                    NeighborRequest::ForwardConnectRequest(network_settings) => {
+                        self.add_ongoing_request(neighbor.id, network_settings);
+                    }
+                    NeighborRequest::ConnectRequest(id, gnome_id, network_settings) => {
+                        let response = self.serve_connect_request(id, gnome_id, network_settings);
+                        neighbor.add_requested_data(response);
                     }
                     _ => {
                         let _ = self
@@ -273,6 +665,7 @@ impl Gnome {
             }
         }
         let _ = std::mem::replace(&mut self.fast_neighbors, neighbors);
+
         for neighbor in &mut self.slow_neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
                 println!("Some neighbor request!");
@@ -369,7 +762,9 @@ impl Gnome {
                     self.send_all();
                 }
                 self.send_immediate = false;
-                self.check_if_new_round();
+                if self.check_if_new_round() && self.neighbor_discovery.tick_and_check() {
+                    self.query_for_new_neighbors();
+                }
                 _guard =
                     self.start_new_timer(self.timeout_duration, timer_sender.clone(), Some(_guard));
             }
@@ -432,7 +827,8 @@ impl Gnome {
         let mut generic_info_printed = false;
         for mut neighbor in unserved_neighbors {
             // println!("Trying specialized for {}", neighbor.id);
-            if let Some((_req, resp)) = neighbor.get_specialized_data() {
+            // if let Some((_req, resp)) = neighbor.get_specialized_data() {
+            if let Some(resp) = neighbor.get_specialized_data() {
                 // println!("Yes: {:?}", resp);
                 let payload = Payload::Response(resp);
                 // match resp {
@@ -547,7 +943,7 @@ impl Gnome {
         self.data = n_data;
     }
 
-    fn check_if_new_round(&mut self) {
+    fn check_if_new_round(&mut self) -> bool {
         let all_gnomes_aware = self.neighborhood.0 as u32 >= self.swarm_diameter.0;
         let finish_round =
             self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
@@ -636,9 +1032,11 @@ impl Gnome {
                 // println!("slow");
                 neighbor.start_new_round(self.swarm_time);
             }
+            true
         } else {
             self.next_state
                 .reset_for_next_turn(false, self.block_id, self.data);
+            false
         }
     }
 
@@ -659,8 +1057,32 @@ impl Gnome {
         for mut neighbor in loop_neighbors {
             looped = true;
             while let Some(response) = neighbor.user_responses.pop_back() {
-                println!("Got response: {:?}", response);
-                let _ = self.sender.send(response);
+                match response {
+                    Response::ToGnome(neighbor_response) => match neighbor_response {
+                        NeighborResponse::ConnectResponse(id, net_set) => {
+                            self.add_ongoing_reply(id, net_set);
+                        }
+                        NeighborResponse::AlreadyConnected(id) => {
+                            self.skip_neighbor(id);
+                        }
+                        NeighborResponse::ForwardConnectResponse(net_set) => {
+                            let _ = self
+                                .net_settings_send
+                                .send((self.network_settings, Some(net_set)));
+                        }
+                        NeighborResponse::ForwardConnectFailed => {
+                            // TODO build querying mechanism
+                            //TODO inform gnome's mechanism to ask another neighbor
+                        }
+                        other => {
+                            println!("Uncovered NeighborResponse: {:?}", other);
+                        }
+                    },
+                    _ => {
+                        println!("Got response: {:?}", response);
+                        let _ = self.sender.send(response);
+                    }
+                }
             }
             let (served, sanity_passed, new_proposal, drop_me) =
                 neighbor.try_recv(self.next_state.last_accepted_block);
@@ -708,5 +1130,54 @@ impl Gnome {
                 || new_proposal_received,
             new_proposal_received,
         )
+    }
+
+    // We send a query to a single neighbor asking to provide us with a new neighbor.
+    // We need to track what neighbors have been queried so that we do not query the
+    // same neighbor over again, if all our neighbors have been asked we simply clean
+    // the list of queried neighbors and start over.
+    fn query_for_new_neighbors(&mut self) {
+        let request = NeighborRequest::ForwardConnectRequest(self.network_settings);
+        let mut request_sent = false;
+        for neighbor in &mut self.fast_neighbors {
+            if !self
+                .neighbor_discovery
+                .queried_neighbors
+                .contains(&neighbor.id)
+            {
+                neighbor.request_data(request);
+                request_sent = true;
+                self.neighbor_discovery.queried_neighbors.push(neighbor.id);
+                break;
+            }
+        }
+        if !request_sent {
+            for neighbor in &mut self.slow_neighbors {
+                if !self
+                    .neighbor_discovery
+                    .queried_neighbors
+                    .contains(&neighbor.id)
+                {
+                    neighbor.request_data(request);
+                    request_sent = true;
+                    self.neighbor_discovery.queried_neighbors.push(neighbor.id);
+                    break;
+                }
+            }
+        }
+        if !request_sent {
+            self.neighbor_discovery.queried_neighbors = vec![];
+            let opt_neighbor = self.fast_neighbors.iter_mut().next();
+            if let Some(neighbor) = opt_neighbor {
+                neighbor.request_data(request);
+                self.neighbor_discovery.queried_neighbors.push(neighbor.id);
+            } else {
+                let opt_neighbor = self.slow_neighbors.iter_mut().next();
+                if let Some(neighbor) = opt_neighbor {
+                    neighbor.request_data(request);
+                    self.neighbor_discovery.queried_neighbors.push(neighbor.id);
+                }
+            }
+        }
     }
 }

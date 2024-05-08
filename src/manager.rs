@@ -1,3 +1,4 @@
+use crate::gnome::NetworkSettings;
 use crate::swarm::{Swarm, SwarmID};
 use crate::Request;
 use crate::Response;
@@ -8,17 +9,31 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 pub struct Manager {
     gnome_id: GnomeId,
     swarms: HashMap<SwarmID, Swarm>,
-    to_networking: Sender<(String, Sender<Request>, Sender<u32>)>,
+    network_settings: NetworkSettings,
+    to_networking: Sender<(
+        String,
+        Sender<Request>,
+        Sender<u32>,
+        Receiver<(NetworkSettings, Option<NetworkSettings>)>,
+    )>,
 }
 
 impl Manager {
     pub fn new(
         gnome_id: GnomeId,
-        to_networking: Sender<(String, Sender<Request>, Sender<u32>)>,
+        network_settings: Option<NetworkSettings>,
+        to_networking: Sender<(
+            String,
+            Sender<Request>,
+            Sender<u32>,
+            Receiver<(NetworkSettings, Option<NetworkSettings>)>,
+        )>,
     ) -> Manager {
+        let network_settings = network_settings.unwrap_or_default();
         Manager {
             gnome_id,
             swarms: HashMap::new(),
+            network_settings,
             to_networking, // Send a message to networking about new swarm subscription, and where to send Neighbors
         }
     }
@@ -51,13 +66,21 @@ impl Manager {
     ) -> Result<(SwarmID, (Sender<Request>, Receiver<Response>)), String> {
         if let Some(swarm_id) = self.next_avail_swarm_id() {
             let (band_send, band_recv) = channel();
-            let mut swarm =
-                Swarm::join(name.clone(), swarm_id, self.gnome_id, neighbors, band_recv);
+            let (net_settings_send, net_settings_recv) = channel();
+            let mut swarm = Swarm::join(
+                name.clone(),
+                swarm_id,
+                self.gnome_id,
+                neighbors,
+                band_recv,
+                net_settings_send,
+                self.network_settings,
+            );
             println!("swarm '{}' created ", name);
             let sender = swarm.sender.clone();
             let receiver = swarm.receiver.take();
             println!("Joined `{}` swarm", swarm.name);
-            self.notify_networking(name.clone(), sender.clone(), band_send);
+            self.notify_networking(name.clone(), sender.clone(), band_send, net_settings_recv);
             println!("inserting swarm");
             self.swarms.insert(swarm_id, swarm);
             Ok((swarm_id, (sender, receiver.unwrap())))
@@ -71,11 +94,15 @@ impl Manager {
         swarm_name: String,
         sender: Sender<Request>,
         avail_bandwith_sender: Sender<u32>,
+        network_settings_receiver: Receiver<(NetworkSettings, Option<NetworkSettings>)>,
     ) {
         // println!("About to send notification");
-        let r = self
-            .to_networking
-            .send((swarm_name, sender, avail_bandwith_sender));
+        let r = self.to_networking.send((
+            swarm_name,
+            sender,
+            avail_bandwith_sender,
+            network_settings_receiver,
+        ));
         println!("notification sent: {:?}", r);
     }
 
