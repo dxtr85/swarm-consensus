@@ -62,11 +62,13 @@ impl Manager {
     pub fn join_a_swarm(
         &mut self,
         name: String,
+        neighbor_network_settings: Option<NetworkSettings>,
         neighbors: Option<Vec<Neighbor>>,
     ) -> Result<(SwarmID, (Sender<Request>, Receiver<Response>)), String> {
         if let Some(swarm_id) = self.next_avail_swarm_id() {
             let (band_send, band_recv) = channel();
             let (net_settings_send, net_settings_recv) = channel();
+            let _ = net_settings_send.send((self.network_settings, neighbor_network_settings));
             let mut swarm = Swarm::join(
                 name.clone(),
                 swarm_id,

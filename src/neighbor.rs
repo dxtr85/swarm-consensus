@@ -156,10 +156,10 @@ impl Neighbor {
                     println!("Unserved casting 2");
                 }
                 continue;
-            // }
-            } else {
-                message_recvd = true;
             }
+            // } else {
+            //     message_recvd = true;
+            // }
             // println!("Sanity passed {}", message);
 
             self.swarm_time = swarm_time;

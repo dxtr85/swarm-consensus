@@ -387,11 +387,31 @@ impl Gnome {
     //
     // if there is only one neighbor we simply send back a failure message to originating
     // neighbor, since we do not have other neighbors to connoct to.
-    fn add_ongoing_request(&mut self, origin: GnomeId, network_settings: NetworkSettings) {
+    fn add_ongoing_request(
+        &mut self,
+        // neighbor_count: usize,
+        origin: GnomeId,
+        network_settings: NetworkSettings,
+    ) {
         let neighbor_count = self.fast_neighbors.len() + self.slow_neighbors.len();
         if neighbor_count < 2 {
-            println!("Not enough neighbors");
-            // TODO: send response to originator
+            println!("Not enough neighbors: {}", neighbor_count);
+            let mut response_sent = false;
+            for neighbor in &mut self.fast_neighbors {
+                if neighbor.id == origin {
+                    neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+                    response_sent = true;
+                    break;
+                }
+            }
+            if !response_sent {
+                for neighbor in &mut self.slow_neighbors {
+                    if neighbor.id == origin {
+                        neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+                        break;
+                    }
+                }
+            }
             return;
         }
         // if self.ongoing_requests.len() == 256{
@@ -633,6 +653,8 @@ impl Gnome {
     fn serve_neighbors_requests(&mut self) {
         self.serve_ongoing_requests();
         let mut neighbors = std::mem::take(&mut self.fast_neighbors);
+        // let n_count = neighbors.len();
+        let mut pending_ongoing_requests = vec![];
         for neighbor in &mut neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
                 println!("Some neighbor request! {:?}", request);
@@ -650,7 +672,7 @@ impl Gnome {
                         }
                     }
                     NeighborRequest::ForwardConnectRequest(network_settings) => {
-                        self.add_ongoing_request(neighbor.id, network_settings);
+                        pending_ongoing_requests.push((neighbor.id, network_settings));
                     }
                     NeighborRequest::ConnectRequest(id, gnome_id, network_settings) => {
                         let response = self.serve_connect_request(id, gnome_id, network_settings);
@@ -666,6 +688,9 @@ impl Gnome {
         }
         let _ = std::mem::replace(&mut self.fast_neighbors, neighbors);
 
+        for (id, net_set) in pending_ongoing_requests {
+            self.add_ongoing_request(id, net_set);
+        }
         for neighbor in &mut self.slow_neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
                 println!("Some neighbor request!");
