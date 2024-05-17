@@ -313,7 +313,7 @@ impl Neighbor {
                 {
                     true
                 } else {
-                    neighborhood.0 > prev_neighborhood.0
+                    neighborhood.0 > prev_neighborhood.0 || neighborhood.0 > self.neighborhood.0
                 }
             } else {
                 // A gnome can not backtrack by announcing a smaller neighborhood

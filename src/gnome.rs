@@ -1127,27 +1127,21 @@ impl Gnome {
                         self.next_state.swarm_time = neighbor.swarm_time;
                     }
                     self.next_state.update(&neighbor);
-                    // println!("bifor pusz {:?}", self.next_state);
-                    if !drop_me {
-                        self.refreshed_neighbors.push(neighbor);
-                    } else {
-                        println!("Droping disconnected neighbor");
-                    }
+                }
+                if !drop_me {
+                    self.refreshed_neighbors.push(neighbor);
                 } else {
-                    println!("Dropping an insane neighbor");
+                    println!("Dropping disconnected neighbor");
                     continue;
                 }
-            } else {
-                // println!("pusz");
-                if !drop_me {
-                    if fast {
-                        self.fast_neighbors.push(neighbor);
-                    } else {
-                        self.slow_neighbors.push(neighbor);
-                    }
+            } else if !drop_me {
+                if fast {
+                    self.fast_neighbors.push(neighbor);
                 } else {
-                    println!("Dropping neighbor");
+                    self.slow_neighbors.push(neighbor);
                 }
+            } else {
+                println!("Dropping neighbor");
             }
         }
         (
