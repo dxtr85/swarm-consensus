@@ -51,7 +51,7 @@ impl Swarm {
         gnome_id: GnomeId,
         neighbors: Option<Vec<Neighbor>>,
         band_receiver: Receiver<u32>,
-        net_settings_send: Sender<(NetworkSettings, Option<NetworkSettings>)>,
+        net_settings_send: Sender<NetworkSettings>,
         network_settings: NetworkSettings,
     ) -> Swarm {
         let (sender, request_receiver) = channel::<Request>();

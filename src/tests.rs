@@ -30,7 +30,7 @@ impl TestManager {
         }
 
         let (id, (req_sender, resp_receiver)) = manager
-            .join_a_swarm(swarm_name.to_string(), Some(mgr_neighbors))
+            .join_a_swarm(swarm_name.to_string(), None, Some(mgr_neighbors))
             .unwrap();
         let manager = TestManager {
             manager,

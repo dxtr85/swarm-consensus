@@ -16,7 +16,7 @@ use crate::SwarmTime;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
 
-use std::cmp::{max, min};
+// use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -100,11 +100,19 @@ pub enum Nat {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortAllocationRule {
+    Random = 0,
+    FullCone = 1,
+    AddressSensitive = 2,
+    PortSensitive = 4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NetworkSettings {
     pub pub_ip: IpAddr,
     pub pub_port: u16,
     pub nat_type: Nat,
-    pub port_range: (u16, u16),
+    pub port_allocation: (PortAllocationRule, i8),
 }
 
 impl NetworkSettings {
@@ -112,24 +120,40 @@ impl NetworkSettings {
         self.pub_ip = other.pub_ip;
         self.pub_port = other.pub_port;
         self.nat_type = other.nat_type;
-        let (o_min, o_max) = other.port_range;
-        let (my_min, my_max) = self.port_range;
-        self.port_range = (min(my_min, o_min), max(my_max, o_max));
-    }
-
-    pub fn set_ports(&mut self, port_min: u16, port_max: u16) {
-        self.port_range = (port_min, port_max);
+        self.port_allocation = other.port_allocation;
     }
 
     pub fn set_port(&mut self, port: u16) {
-        let (mut my_min, mut my_max) = self.port_range;
-        if port < my_min {
-            my_min = port;
-        } else if port > my_max {
-            my_max = port;
-        }
         self.pub_port = port;
-        self.port_range = (my_min, my_max);
+    }
+
+    pub fn refresh_required(&self) -> bool {
+        self.port_allocation.0 != PortAllocationRule::FullCone
+    }
+    pub fn nat_at_most_address_sensitive(&self) -> bool {
+        self.nat_type == Nat::None
+            || self.nat_type == Nat::FullCone
+            || self.nat_type == Nat::AddressRestrictedCone
+    }
+    pub fn port_allocation_predictable(&self) -> bool {
+        self.port_allocation.0 == PortAllocationRule::FullCone
+            || self.port_allocation.0 == PortAllocationRule::AddressSensitive
+            || self.port_allocation.0 == PortAllocationRule::PortSensitive
+    }
+    pub fn port_sensitive_allocation(&self) -> bool {
+        self.port_allocation.0 == PortAllocationRule::PortSensitive
+    }
+    pub fn port_increment(&self, port: u16) -> u16 {
+        match self.port_allocation {
+            (PortAllocationRule::AddressSensitive | PortAllocationRule::PortSensitive, value) => {
+                if value > 0 {
+                    port + (value as u16)
+                } else {
+                    port - (value.abs() as u16)
+                }
+            }
+            _ => port,
+        }
     }
 }
 
@@ -139,10 +163,16 @@ impl Default for NetworkSettings {
             pub_ip: IpAddr::from([0, 0, 0, 0]),
             pub_port: 1026,
             nat_type: Nat::Unknown,
-            port_range: (std::u16::MAX, 1026),
+            port_allocation: (PortAllocationRule::Random, 0),
         }
     }
 }
+struct ConnRequest {
+    conn_id: u8,
+    neighbor_id: GnomeId,
+    network_settings: NetworkSettings,
+}
+
 pub struct Gnome {
     pub id: GnomeId,
     pub neighborhood: Neighborhood,
@@ -165,8 +195,9 @@ pub struct Gnome {
     timeout_duration: Duration,
     active_unicasts: HashSet<CastID>,
     send_immediate: bool,
-    network_settings: NetworkSettings,
-    net_settings_send: Sender<(NetworkSettings, Option<NetworkSettings>)>,
+    network_settings: NetworkSettings, //TODO: do we really need those here anymore?
+    net_settings_send: Sender<NetworkSettings>,
+    pending_conn_requests: VecDeque<ConnRequest>,
     ongoing_requests: HashMap<u8, OngoingRequest>,
     neighbor_discovery: NeighborDiscovery,
 }
@@ -179,7 +210,7 @@ impl Gnome {
         receiver: Receiver<Request>,
         band_receiver: Receiver<u32>,
         network_settings: NetworkSettings,
-        net_settings_send: Sender<(NetworkSettings, Option<NetworkSettings>)>,
+        net_settings_send: Sender<NetworkSettings>,
     ) -> Self {
         Gnome {
             id,
@@ -205,6 +236,7 @@ impl Gnome {
             send_immediate: false,
             network_settings,
             net_settings_send,
+            pending_conn_requests: VecDeque::new(),
             ongoing_requests: HashMap::new(),
             neighbor_discovery: NeighborDiscovery::default(),
         }
@@ -218,7 +250,7 @@ impl Gnome {
         band_receiver: Receiver<u32>,
         neighbors: Vec<Neighbor>,
         network_settings: NetworkSettings,
-        net_settings_send: Sender<(NetworkSettings, Option<NetworkSettings>)>,
+        net_settings_send: Sender<NetworkSettings>,
     ) -> Self {
         let mut gnome = Gnome::new(
             id,
@@ -341,14 +373,48 @@ impl Gnome {
                 Request::Custom(_id, _data) => {
                     todo!()
                 }
-                Request::SetAddress(addr) => {
-                    self.network_settings.pub_ip = addr;
-                }
-                Request::SetPort(port) => {
+                Request::NetworkSettingsUpdate(notify_neighbor, ip_addr, port, nat) => {
+                    self.network_settings.pub_ip = ip_addr;
                     self.network_settings.set_port(port);
-                }
-                Request::SetNat(nat) => {
                     self.network_settings.nat_type = nat;
+
+                    if notify_neighbor {
+                        if let Some(ConnRequest {
+                            conn_id,
+                            neighbor_id,
+                            network_settings,
+                        }) = self.pending_conn_requests.pop_front()
+                        {
+                            let mut neighbor_informed = false;
+                            for neighbor in &mut self.fast_neighbors {
+                                if neighbor.id == neighbor_id {
+                                    neighbor.add_requested_data(NeighborResponse::ConnectResponse(
+                                        conn_id,
+                                        self.network_settings,
+                                    ));
+                                    neighbor_informed = true;
+                                    break;
+                                }
+                            }
+                            if !neighbor_informed {
+                                for neighbor in &mut self.slow_neighbors {
+                                    if neighbor.id == neighbor_id {
+                                        neighbor.add_requested_data(
+                                            NeighborResponse::ConnectResponse(
+                                                conn_id,
+                                                self.network_settings,
+                                            ),
+                                        );
+                                        neighbor_informed = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if neighbor_informed {
+                                let _ = self.net_settings_send.send(network_settings);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -462,22 +528,43 @@ impl Gnome {
         id: u8,
         origin: GnomeId,
         network_settings: NetworkSettings,
-    ) -> NeighborResponse {
+    ) -> Option<NeighborResponse> {
         for neighbor in &self.fast_neighbors {
             if neighbor.id == origin {
-                return NeighborResponse::AlreadyConnected(id);
+                return Some(NeighborResponse::AlreadyConnected(id));
             }
         }
         for neighbor in &self.slow_neighbors {
             if neighbor.id == origin {
-                return NeighborResponse::AlreadyConnected(id);
+                return Some(NeighborResponse::AlreadyConnected(id));
             }
         }
         // TODO: vary response depending on available bandwith
+        // TODO: In some cases we need to split this procedure in two:
+        // - first we ask networking about our current network settings
+        // - second once our network settings are refreshed we send
+        //   another message to networking to connect to neighbor
+        //   and also we return a NeighborResponse with our updated
+        //   network settings
+
+        // if self.network_settings.refresh_required() {
+        self.pending_conn_requests.push_back(ConnRequest {
+            conn_id: id,
+            neighbor_id: origin,
+            network_settings,
+        });
+        // We send None to notify networking we want it to send us
+        // back refreshed NetworkSettings
+        //     let _ = self.net_settings_send.send(None);
+        //     None
+        // } else {
         let _ = self
             .net_settings_send
-            .send((self.network_settings, Some(network_settings)));
-        NeighborResponse::ConnectResponse(id, self.network_settings)
+            // .send((self.network_settings, Some(network_settings)));
+            .send(network_settings);
+        None
+        // Some(NeighborResponse::ConnectResponse(id, self.network_settings))
+        // }
     }
 
     // TODO: find where to apply this function
@@ -675,8 +762,15 @@ impl Gnome {
                         pending_ongoing_requests.push((neighbor.id, network_settings));
                     }
                     NeighborRequest::ConnectRequest(id, gnome_id, network_settings) => {
-                        let response = self.serve_connect_request(id, gnome_id, network_settings);
-                        neighbor.add_requested_data(response);
+                        // TODO: Here we need to determine whether or not we can send
+                        // NeighborResponse right away, or should we first ask networking
+                        // to update gnome with our refreshed external ip and port.
+                        // This depends on our NAT type and port allocation rule
+                        if let Some(response) =
+                            self.serve_connect_request(id, gnome_id, network_settings)
+                        {
+                            neighbor.add_requested_data(response);
+                        }
                     }
                     _ => {
                         let _ = self
@@ -1093,7 +1187,8 @@ impl Gnome {
                         NeighborResponse::ForwardConnectResponse(net_set) => {
                             let _ = self
                                 .net_settings_send
-                                .send((self.network_settings, Some(net_set)));
+                                // .send((self.network_settings, Some(net_set)));
+                                .send(net_set);
                         }
                         NeighborResponse::ForwardConnectFailed => {
                             // TODO build querying mechanism

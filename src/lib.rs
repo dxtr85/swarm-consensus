@@ -7,6 +7,7 @@ use std::net::IpAddr;
 // use crate::message::*;
 pub use crate::gnome::Nat;
 pub use crate::gnome::NetworkSettings;
+pub use crate::gnome::PortAllocationRule;
 pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmTime;
 pub use message::{Header, Message, Payload};
@@ -50,9 +51,10 @@ pub enum Request {
     StartMulticast(Vec<GnomeId>),
     StartBroadcast,
     Custom(u8, Data),
-    SetAddress(IpAddr),
-    SetPort(u16),
-    SetNat(Nat),
+    NetworkSettingsUpdate(bool, IpAddr, u16, Nat),
+    // SetAddress(IpAddr),
+    // SetPort(u16),
+    // SetNat(Nat),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,7 +127,7 @@ pub fn start(
         String,
         Sender<Request>,
         Sender<u32>,
-        Receiver<(NetworkSettings, Option<NetworkSettings>)>,
+        Receiver<NetworkSettings>,
     )>,
 ) -> Manager {
     Manager::new(gnome_id, network_settings, sender)

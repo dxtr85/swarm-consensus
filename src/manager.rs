@@ -14,7 +14,7 @@ pub struct Manager {
         String,
         Sender<Request>,
         Sender<u32>,
-        Receiver<(NetworkSettings, Option<NetworkSettings>)>,
+        Receiver<NetworkSettings>,
     )>,
 }
 
@@ -26,7 +26,7 @@ impl Manager {
             String,
             Sender<Request>,
             Sender<u32>,
-            Receiver<(NetworkSettings, Option<NetworkSettings>)>,
+            Receiver<NetworkSettings>,
         )>,
     ) -> Manager {
         let network_settings = network_settings.unwrap_or_default();
@@ -68,7 +68,9 @@ impl Manager {
         if let Some(swarm_id) = self.next_avail_swarm_id() {
             let (band_send, band_recv) = channel();
             let (net_settings_send, net_settings_recv) = channel();
-            let _ = net_settings_send.send((self.network_settings, neighbor_network_settings));
+            if let Some(neighbor_settings) = neighbor_network_settings {
+                let _ = net_settings_send.send(neighbor_settings);
+            }
             let mut swarm = Swarm::join(
                 name.clone(),
                 swarm_id,
@@ -96,7 +98,7 @@ impl Manager {
         swarm_name: String,
         sender: Sender<Request>,
         avail_bandwith_sender: Sender<u32>,
-        network_settings_receiver: Receiver<(NetworkSettings, Option<NetworkSettings>)>,
+        network_settings_receiver: Receiver<NetworkSettings>,
     ) {
         // println!("About to send notification");
         let r = self.to_networking.send((
