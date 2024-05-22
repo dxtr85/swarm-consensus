@@ -170,7 +170,7 @@ impl Default for NetworkSettings {
 struct ConnRequest {
     conn_id: u8,
     neighbor_id: GnomeId,
-    network_settings: NetworkSettings,
+    // network_settings: NetworkSettings,
 }
 
 pub struct Gnome {
@@ -379,10 +379,11 @@ impl Gnome {
                     self.network_settings.nat_type = nat;
 
                     if notify_neighbor {
+                        println!("Trying to notify neighbor");
                         if let Some(ConnRequest {
                             conn_id,
                             neighbor_id,
-                            network_settings,
+                            // network_settings,
                         }) = self.pending_conn_requests.pop_front()
                         {
                             let mut neighbor_informed = false;
@@ -411,7 +412,10 @@ impl Gnome {
                                 }
                             }
                             if neighbor_informed {
-                                let _ = self.net_settings_send.send(network_settings);
+                                // let _ = self.net_settings_send.send(network_settings);
+                                println!("Sent back ConnResponse");
+                            } else {
+                                println!("Failed to send response");
                             }
                         }
                     }
@@ -452,7 +456,7 @@ impl Gnome {
     // query was sent, in order to timeout on unresponsive gnome
     //
     // if there is only one neighbor we simply send back a failure message to originating
-    // neighbor, since we do not have other neighbors to connoct to.
+    // neighbor, since we do not have other neighbors to connect to.
     fn add_ongoing_request(
         &mut self,
         // neighbor_count: usize,
@@ -526,6 +530,7 @@ impl Gnome {
     fn serve_connect_request(
         &mut self,
         id: u8,
+        reply_gnome: GnomeId,
         origin: GnomeId,
         network_settings: NetworkSettings,
     ) -> Option<NeighborResponse> {
@@ -544,14 +549,15 @@ impl Gnome {
         // - first we ask networking about our current network settings
         // - second once our network settings are refreshed we send
         //   another message to networking to connect to neighbor
+        println!("Trying to notify neighbor");
         //   and also we return a NeighborResponse with our updated
         //   network settings
 
         // if self.network_settings.refresh_required() {
         self.pending_conn_requests.push_back(ConnRequest {
             conn_id: id,
-            neighbor_id: origin,
-            network_settings,
+            neighbor_id: reply_gnome,
+            // network_settings,
         });
         // We send None to notify networking we want it to send us
         // back refreshed NetworkSettings
@@ -657,6 +663,7 @@ impl Gnome {
         let mut keys_to_remove: Vec<u8> = vec![];
         for (k, v) in &mut self.ongoing_requests {
             if v.response.is_some() {
+                println!("Sending response: {:?}", v.response);
                 let mut response_sent = false;
                 for neighbor in &mut self.fast_neighbors {
                     if neighbor.id == v.origin {
@@ -744,7 +751,8 @@ impl Gnome {
         let mut pending_ongoing_requests = vec![];
         for neighbor in &mut neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
-                println!("Some neighbor request! {:?}", request);
+                // println!("Some neighbor request! {:?}", request);
+                println!("Some neighbor request!");
                 match request {
                     NeighborRequest::UnicastRequest(_swarm_id, cast_ids) => {
                         for cast_id in cast_ids {
@@ -759,15 +767,13 @@ impl Gnome {
                         }
                     }
                     NeighborRequest::ForwardConnectRequest(network_settings) => {
+                        println!("ForwardConnReq");
                         pending_ongoing_requests.push((neighbor.id, network_settings));
                     }
                     NeighborRequest::ConnectRequest(id, gnome_id, network_settings) => {
-                        // TODO: Here we need to determine whether or not we can send
-                        // NeighborResponse right away, or should we first ask networking
-                        // to update gnome with our refreshed external ip and port.
-                        // This depends on our NAT type and port allocation rule
+                        println!("ConnReq");
                         if let Some(response) =
-                            self.serve_connect_request(id, gnome_id, network_settings)
+                            self.serve_connect_request(id, neighbor.id, gnome_id, network_settings)
                         {
                             neighbor.add_requested_data(response);
                         }
@@ -858,7 +864,7 @@ impl Gnome {
             let (slow_advance_to_next_turn, slow_new_proposal) = self.try_recv(false);
             if let Ok(band) = self.band_receiver.try_recv() {
                 available_bandwith = band;
-                println!("Avail bandwith: {}", available_bandwith);
+                // println!("Avail bandwith: {}", available_bandwith);
                 //TODO make use of available_bandwith during multicasting setup
             }
             let timeout = timeout_receiver.try_recv().is_ok();
@@ -923,7 +929,7 @@ impl Gnome {
 
     pub fn send_all(&mut self) {
         let message = self.prepare_message();
-        eprintln!("{} >>> {}", self.id, message);
+        // eprintln!("{} >>> {}", self.id, message);
         for neighbor in &mut self.fast_neighbors {
             neighbor.send_out(message);
         }
@@ -986,7 +992,7 @@ impl Gnome {
                 neighbor.send_out(new_message);
             } else {
                 if !generic_info_printed {
-                    eprintln!("{} >>> {}", self.id, message);
+                    // eprintln!("{} >>> {}", self.id, message);
                     generic_info_printed = true;
                 }
                 // println!("snd {}", message);
@@ -1185,6 +1191,7 @@ impl Gnome {
                             self.skip_neighbor(id);
                         }
                         NeighborResponse::ForwardConnectResponse(net_set) => {
+                            println!("ForwardConnResponse: {:?}", net_set);
                             let _ = self
                                 .net_settings_send
                                 // .send((self.network_settings, Some(net_set)));
@@ -1192,7 +1199,7 @@ impl Gnome {
                         }
                         NeighborResponse::ForwardConnectFailed => {
                             // TODO build querying mechanism
-                            //TODO inform gnome's mechanism to ask another neighbor
+                            // TODO inform gnome's mechanism to ask another neighbor
                         }
                         other => {
                             println!("Uncovered NeighborResponse: {:?}", other);
@@ -1281,17 +1288,17 @@ impl Gnome {
         }
         if !request_sent {
             self.neighbor_discovery.queried_neighbors = vec![];
-            let opt_neighbor = self.fast_neighbors.iter_mut().next();
-            if let Some(neighbor) = opt_neighbor {
-                neighbor.request_data(request);
-                self.neighbor_discovery.queried_neighbors.push(neighbor.id);
-            } else {
-                let opt_neighbor = self.slow_neighbors.iter_mut().next();
-                if let Some(neighbor) = opt_neighbor {
-                    neighbor.request_data(request);
-                    self.neighbor_discovery.queried_neighbors.push(neighbor.id);
-                }
-            }
+            // let opt_neighbor = self.fast_neighbors.iter_mut().next();
+            // if let Some(neighbor) = opt_neighbor {
+            //     neighbor.request_data(request);
+            //     self.neighbor_discovery.queried_neighbors.push(neighbor.id);
+            // } else {
+            //     let opt_neighbor = self.slow_neighbors.iter_mut().next();
+            //     if let Some(neighbor) = opt_neighbor {
+            //         neighbor.request_data(request);
+            //         self.neighbor_discovery.queried_neighbors.push(neighbor.id);
+            //     }
+            // }
         }
     }
 }

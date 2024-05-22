@@ -141,7 +141,7 @@ impl Neighbor {
                 }
                 continue;
             }
-            eprintln!("{}  <  {}", self.id, message);
+            // eprintln!("{}  <  {}", self.id, message);
             if message.is_bye() {
                 drop_me = true;
                 return (message_recvd, sanity_passed, new_proposal, drop_me);
