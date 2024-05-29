@@ -1,8 +1,8 @@
 use crate::gnome::NetworkSettings;
 use crate::swarm::{Swarm, SwarmID};
-use crate::Request;
 use crate::Response;
 use crate::{GnomeId, Neighbor};
+use crate::{NotificationBundle, Request};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -10,24 +10,14 @@ pub struct Manager {
     gnome_id: GnomeId,
     swarms: HashMap<SwarmID, Swarm>,
     network_settings: NetworkSettings,
-    to_networking: Sender<(
-        String,
-        Sender<Request>,
-        Sender<u32>,
-        Receiver<NetworkSettings>,
-    )>,
+    to_networking: Sender<NotificationBundle>,
 }
 
 impl Manager {
     pub fn new(
         gnome_id: GnomeId,
         network_settings: Option<NetworkSettings>,
-        to_networking: Sender<(
-            String,
-            Sender<Request>,
-            Sender<u32>,
-            Receiver<NetworkSettings>,
-        )>,
+        to_networking: Sender<NotificationBundle>,
     ) -> Manager {
         let network_settings = network_settings.unwrap_or_default();
         Manager {
@@ -101,12 +91,12 @@ impl Manager {
         network_settings_receiver: Receiver<NetworkSettings>,
     ) {
         // println!("About to send notification");
-        let r = self.to_networking.send((
+        let r = self.to_networking.send(NotificationBundle {
             swarm_name,
-            sender,
-            avail_bandwith_sender,
+            request_sender: sender,
+            token_sender: avail_bandwith_sender,
             network_settings_receiver,
-        ));
+        });
         println!("notification sent: {:?}", r);
     }
 

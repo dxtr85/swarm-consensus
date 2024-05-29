@@ -3,14 +3,13 @@ use crate::gnome::Gnome;
 pub use crate::gnome::GnomeId;
 mod message;
 mod swarm;
-use std::net::IpAddr;
-// use crate::message::*;
 pub use crate::gnome::Nat;
 pub use crate::gnome::NetworkSettings;
 pub use crate::gnome::PortAllocationRule;
 pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmTime;
 pub use message::{Header, Message, Payload};
+use std::net::IpAddr;
 mod manager;
 pub use manager::Manager;
 pub use message::BlockID;
@@ -25,7 +24,6 @@ mod proposal;
 use crate::next_state::NextState;
 use std::fmt;
 use std::sync::mpsc::Receiver;
-// use std::sync::mpsc::channel;
 use std::sync::mpsc::Sender;
 
 #[cfg(test)]
@@ -110,6 +108,13 @@ impl fmt::Debug for Response {
     }
 }
 
+pub struct NotificationBundle {
+    pub swarm_name: String,
+    pub request_sender: Sender<Request>,
+    pub token_sender: Sender<u32>,
+    pub network_settings_receiver: Receiver<NetworkSettings>,
+}
+
 // static mut GNOME_ID: GnomeId = GnomeId(0);
 
 // fn gnome_id_dispenser() -> GnomeId {
@@ -123,12 +128,7 @@ impl fmt::Debug for Response {
 pub fn start(
     gnome_id: GnomeId,
     network_settings: Option<NetworkSettings>,
-    sender: Sender<(
-        String,
-        Sender<Request>,
-        Sender<u32>,
-        Receiver<NetworkSettings>,
-    )>,
+    sender: Sender<NotificationBundle>,
 ) -> Manager {
     Manager::new(gnome_id, network_settings, sender)
 }
