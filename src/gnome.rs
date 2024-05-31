@@ -116,6 +116,14 @@ pub struct NetworkSettings {
 }
 
 impl NetworkSettings {
+    pub fn new_not_natted(pub_ip: IpAddr, pub_port: u16) -> Self {
+        Self {
+            pub_ip,
+            pub_port,
+            nat_type: Nat::None,
+            port_allocation: (PortAllocationRule::FullCone, 0),
+        }
+    }
     pub fn update(&mut self, other: Self) {
         self.pub_ip = other.pub_ip;
         self.pub_port = other.pub_port;
@@ -127,6 +135,15 @@ impl NetworkSettings {
         self.pub_port = port;
     }
 
+    pub fn get_predicted_addr(&self, mut iter: u8) -> (IpAddr, u16) {
+        let mut port = self.port_increment(self.pub_port);
+        while iter > 0 {
+            iter -= 1;
+            port = self.port_increment(port);
+        }
+        (self.pub_ip, port)
+    }
+
     pub fn refresh_required(&self) -> bool {
         self.port_allocation.0 != PortAllocationRule::FullCone
     }
@@ -134,6 +151,21 @@ impl NetworkSettings {
         self.nat_type == Nat::None
             || self.nat_type == Nat::FullCone
             || self.nat_type == Nat::AddressRestrictedCone
+    }
+    pub fn no_nat(&self) -> bool {
+        self.nat_type == Nat::None
+    }
+    pub fn nat_port_restricted(&self) -> bool {
+        self.nat_type == Nat::PortRestrictedCone
+    }
+    pub fn nat_symmetric(&self) -> bool {
+        self.nat_type == Nat::Symmetric
+    }
+    pub fn nat_symmetric_with_port_control(&self) -> bool {
+        self.nat_type == Nat::SymmetricWithPortControl
+    }
+    pub fn nat_unknown(&self) -> bool {
+        self.nat_type == Nat::Unknown
     }
     pub fn port_allocation_predictable(&self) -> bool {
         self.port_allocation.0 == PortAllocationRule::FullCone
@@ -517,9 +549,14 @@ impl Gnome {
                 }
             }
         }
+        let queried_neighbors = if queried_neighbor.is_none() {
+            vec![]
+        } else {
+            vec![queried_neighbor.unwrap()]
+        };
         let or = OngoingRequest {
             origin,
-            queried_neighbors: vec![queried_neighbor.unwrap()],
+            queried_neighbors,
             timestamp: self.swarm_time,
             response: None,
             network_settings,
