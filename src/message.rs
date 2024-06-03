@@ -58,14 +58,19 @@ impl Message {
     pub fn is_bye(&self) -> bool {
         self.payload == Payload::Bye
     }
+    pub fn is_request(&self) -> bool {
+        matches!(self.payload, Payload::Request(_))
+    }
+
+    pub fn is_response(&self) -> bool {
+        matches!(self.payload, Payload::Response(_))
+    }
 
     pub fn is_cast(&self) -> bool {
-        match self.payload {
-            Payload::Unicast(_, _) => true,
-            Payload::Multicast(_, _) => true,
-            Payload::Broadcast(_, _) => true,
-            _ => false,
-        }
+        matches!(
+            self.payload,
+            Payload::Unicast(_, _) | Payload::Multicast(_, _) | Payload::Broadcast(_, _)
+        )
     }
 }
 

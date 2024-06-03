@@ -152,10 +152,11 @@ impl Neighbor {
                 println!("Coś nie poszło {}", message);
                 // TODO: sanity might fail for casting messages, but we still
                 // need to put them throught for user to receive
-                if message.is_cast() {
-                    println!("Unserved casting 2");
+                if message.is_cast() || message.is_request() || message.is_response() {
+                    // println!("Unserved casting 2");
+                } else {
+                    continue;
                 }
-                continue;
             }
             // } else {
             //     message_recvd = true;
@@ -178,6 +179,7 @@ impl Neighbor {
                     self.neighborhood = neighborhood;
                 }
                 Header::Block(id) => {
+                    // println!("Neighbor proposal recv: {:?}", id);
                     if let Header::Block(current_id) = self.header {
                         if current_id == id {
                             self.prev_neighborhood = Some(self.neighborhood);
@@ -232,7 +234,7 @@ impl Neighbor {
                             .push_front(Response::Block(block_id, data));
                     }
                     NeighborResponse::Unicast(swarm_id, cast_id) => {
-                        // TODO: make channels async
+                        // TODO: make channels async - no, do not introduce deps!
                         let (sender, receiver) = channel();
                         self.active_unicasts.insert(cast_id, sender);
                         self.user_responses
@@ -365,7 +367,31 @@ impl Neighbor {
         self.requested_data.pop_back()
     }
 
-    // pub fn add_requested_data(&mut self, request: NeighborRequest, data: NeighborResponse) {
+    pub fn send_out_specialized_message(
+        &mut self,
+        message: &Message,
+        id: GnomeId,
+        send_default: bool,
+    ) {
+        if let Some(resp) = self.get_specialized_data() {
+            let payload = Payload::Response(resp);
+            let new_message = message.set_payload(payload);
+            println!("{} >S> {}", id, new_message);
+            self.send_out(new_message);
+        } else if let Some(request) = self.user_requests.pop_back() {
+            let new_message = message.include_request(request);
+            println!("{} >S> {}", id, new_message);
+            self.send_out(new_message);
+        } else if send_default {
+            // if !generic_info_printed {
+            //     // eprintln!("{} >>> {}", id, message);
+            //     generic_info_printed = true;
+            // }
+            // println!("snd {}", message);
+            self.send_out(message.to_owned());
+        }
+    }
+
     pub fn add_requested_data(&mut self, data: NeighborResponse) {
         // self.requested_data.push_front((request, data));
         self.requested_data.push_front(data);
