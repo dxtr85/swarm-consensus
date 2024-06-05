@@ -8,7 +8,7 @@ use std::fmt;
 use std::ops::Add;
 use std::ops::Sub;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::thread::{spawn, JoinHandle};
+use std::thread::spawn;
 
 #[derive(PartialEq, PartialOrd, Eq, Clone, Copy, Debug)]
 pub struct SwarmTime(pub u32);
@@ -40,8 +40,8 @@ pub struct Swarm {
     pub name: String,
     pub id: SwarmID,
     pub sender: Sender<Request>,
-    pub receiver: Option<Receiver<Response>>,
-    pub join_handle: Option<JoinHandle<()>>,
+    // pub receiver: Option<Receiver<Response>>,
+    // pub join_handle: Option<JoinHandle<()>>,
 }
 
 impl Swarm {
@@ -53,14 +53,21 @@ impl Swarm {
         band_receiver: Receiver<u32>,
         net_settings_send: Sender<NetworkSettings>,
         network_settings: NetworkSettings,
-    ) -> Swarm {
+    ) -> (Sender<Request>, Receiver<Response>) {
         let (sender, request_receiver) = channel::<Request>();
         let (response_sender, receiver) = channel::<Response>();
 
+        let swarm = Swarm {
+            name,
+            id,
+            sender: sender.clone(),
+            // receiver: None,
+            // join_handle: Some(join_handle),
+        };
         let gnome = if let Some(neighbors) = neighbors {
             Gnome::new_with_neighbors(
                 gnome_id,
-                id,
+                swarm,
                 response_sender,
                 request_receiver,
                 band_receiver,
@@ -71,7 +78,7 @@ impl Swarm {
         } else {
             Gnome::new(
                 gnome_id,
-                id,
+                swarm,
                 response_sender,
                 request_receiver,
                 band_receiver,
@@ -79,17 +86,11 @@ impl Swarm {
                 net_settings_send,
             )
         };
-        let join_handle = spawn(move || {
+        let _join_handle = spawn(move || {
             gnome.do_your_job();
         });
 
-        Swarm {
-            name,
-            id,
-            sender,
-            receiver: Some(receiver),
-            join_handle: Some(join_handle),
-        }
+        (sender, receiver)
     }
 }
 impl fmt::Display for SwarmTime {

@@ -8,7 +8,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub struct Manager {
     gnome_id: GnomeId,
-    swarms: HashMap<SwarmID, Swarm>,
+    swarms: HashMap<SwarmID, Sender<Request>>,
     network_settings: NetworkSettings,
     to_networking: Sender<NotificationBundle>,
 }
@@ -29,8 +29,8 @@ impl Manager {
     }
 
     pub fn add_neighbor_to_a_swarm(&mut self, id: SwarmID, neighbor: Neighbor) {
-        if let Some(swarm) = self.swarms.get_mut(&id) {
-            match swarm.sender.send(Request::AddNeighbor(neighbor)) {
+        if let Some(sender) = self.swarms.get_mut(&id) {
+            match sender.send(Request::AddNeighbor(neighbor)) {
                 Ok(()) => println!("Added neighbor to existing swarm"),
                 Err(e) => println!("Failed adding neighbor to existing swarm: {:?}", e),
             }
@@ -61,7 +61,7 @@ impl Manager {
             if let Some(neighbor_settings) = neighbor_network_settings {
                 let _ = net_settings_send.send(neighbor_settings);
             }
-            let mut swarm = Swarm::join(
+            let (sender, receiver) = Swarm::join(
                 name.clone(),
                 swarm_id,
                 self.gnome_id,
@@ -70,14 +70,14 @@ impl Manager {
                 net_settings_send,
                 self.network_settings,
             );
-            println!("swarm '{}' created ", name);
-            let sender = swarm.sender.clone();
-            let receiver = swarm.receiver.take();
-            println!("Joined `{}` swarm", swarm.name);
+            // println!("swarm '{}' created ", name);
+            // let sender = swarm.sender.clone();
+            // let receiver = swarm.receiver.take();
+            println!("Joined `{}` swarm", name);
             self.notify_networking(name.clone(), sender.clone(), band_send, net_settings_recv);
             println!("inserting swarm");
-            self.swarms.insert(swarm_id, swarm);
-            Ok((swarm_id, (sender, receiver.unwrap())))
+            self.swarms.insert(swarm_id, sender.clone());
+            Ok((swarm_id, (sender, receiver)))
         } else {
             Err("Could not connect to a swarm, all SwarmIDs taken".to_string())
         }
@@ -101,18 +101,18 @@ impl Manager {
     }
 
     pub fn print_status(&self, id: &SwarmID) {
-        if let Some(swarm) = self.swarms.get(id) {
-            let _ = swarm.sender.send(Request::Status);
+        if let Some(sender) = self.swarms.get(id) {
+            let _ = sender.send(Request::Status);
         }
     }
 
-    pub fn finish(mut self) {
-        for swarm in self.swarms.values_mut() {
-            let _ = swarm.sender.send(Request::Disconnect);
-            let jh = swarm.join_handle.take().unwrap();
-            let _ = jh.join();
-            println!("Leaving `{}` swarm", swarm.name);
+    pub fn finish(self) {
+        for (id, sender) in self.swarms.into_iter() {
+            let _ = sender.send(Request::Disconnect);
+            // let jh = swarm.join_handle.take().unwrap();
+            // let _ = jh.join();
+            println!("Leaving SwarmID:`{:?}`", id);
         }
-        drop(self)
+        // drop(self)
     }
 }

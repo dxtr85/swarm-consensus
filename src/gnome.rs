@@ -4,6 +4,7 @@ use crate::message::Header;
 use crate::message::Payload;
 use crate::neighbor::NeighborResponse;
 use crate::neighbor::Neighborhood;
+use crate::swarm::Swarm;
 use crate::CastID;
 use crate::Data;
 use crate::Message;
@@ -12,7 +13,6 @@ use crate::NeighborRequest;
 use crate::NextState;
 use crate::Request;
 use crate::Response;
-use crate::SwarmID;
 use crate::SwarmTime;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
@@ -214,7 +214,7 @@ enum Proposal {
 pub struct Gnome {
     pub id: GnomeId,
     pub neighborhood: Neighborhood,
-    swarm_id: SwarmID,
+    swarm: Swarm,
     swarm_time: SwarmTime,
     round_start: SwarmTime,
     swarm_diameter: SwarmTime,
@@ -244,7 +244,7 @@ pub struct Gnome {
 impl Gnome {
     pub fn new(
         id: GnomeId,
-        swarm_id: SwarmID,
+        swarm: Swarm,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
         band_receiver: Receiver<u32>,
@@ -254,7 +254,7 @@ impl Gnome {
         Gnome {
             id,
             neighborhood: Neighborhood(0),
-            swarm_id,
+            swarm,
             swarm_time: SwarmTime(0),
             round_start: SwarmTime(0),
             swarm_diameter: DEFAULT_SWARM_DIAMETER,
@@ -284,7 +284,7 @@ impl Gnome {
 
     pub fn new_with_neighbors(
         id: GnomeId,
-        swarm_id: SwarmID,
+        swarm: Swarm,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
         band_receiver: Receiver<u32>,
@@ -294,7 +294,7 @@ impl Gnome {
     ) -> Self {
         let mut gnome = Gnome::new(
             id,
-            swarm_id,
+            swarm,
             sender,
             receiver,
             band_receiver,
@@ -379,7 +379,7 @@ impl Gnome {
                         avail_ids[added_ids] = cast_id;
                         // added_ids += 1;
                     }
-                    let request = NeighborRequest::UnicastRequest(self.swarm_id, avail_ids);
+                    let request = NeighborRequest::UnicastRequest(self.swarm.id, avail_ids);
                     for neighbor in &mut self.fast_neighbors {
                         if neighbor.id == gnome_id {
                             println!("Sending UnicastRequest to neighbor");
@@ -814,7 +814,7 @@ impl Gnome {
                             if self.is_unicast_id_available(cast_id) {
                                 self.active_unicasts.insert(cast_id);
                                 neighbor.add_requested_data(NeighborResponse::Unicast(
-                                    self.swarm_id,
+                                    self.swarm.id,
                                     cast_id,
                                 ));
                                 break;
@@ -1014,7 +1014,10 @@ impl Gnome {
                     self.send_all();
                 }
                 self.send_immediate = false;
-                if self.check_if_new_round() && self.neighbor_discovery.tick_and_check() {
+                if self.check_if_new_round()
+                    && available_bandwith > 256 // TODO: figure out some better algo
+                    && self.neighbor_discovery.tick_and_check()
+                {
                     self.query_for_new_neighbors();
                 }
                 _guard =
