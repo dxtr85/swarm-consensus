@@ -13,6 +13,7 @@ use std::net::IpAddr;
 mod manager;
 pub use manager::Manager;
 pub use message::BlockID;
+pub use message::Configuration;
 pub use neighbor::NeighborRequest;
 pub use proposal::Data;
 mod neighbor;

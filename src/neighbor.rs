@@ -2,6 +2,7 @@ use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
 use crate::CastID;
+use crate::Configuration;
 use crate::Data;
 use crate::GnomeId;
 use crate::Message;
@@ -119,7 +120,11 @@ impl Neighbor {
     //     self.pending_unicasts.insert(cast_id, sender);
     // }
 
-    pub fn try_recv(&mut self, last_accepted_block: BlockID) -> (bool, bool, bool, bool) {
+    pub fn try_recv(
+        &mut self,
+        last_accepted_block: BlockID,
+        last_accepted_reconf: Option<Configuration>,
+    ) -> (bool, bool, bool, bool) {
         let mut message_recvd = false;
         let sanity_passed = true;
         let mut new_proposal = false;
@@ -140,6 +145,17 @@ impl Neighbor {
                     println!("Unserved casting 1");
                 }
                 continue;
+            }
+            if let Some(config) = last_accepted_reconf {
+                if message.header == Header::Reconfigure
+                    && message.payload == Payload::Reconfigure(config)
+                {
+                    // TODO: here we might be droping casting messages
+                    if message.is_cast() {
+                        println!("Unserved casting 2");
+                    }
+                    continue;
+                }
             }
             // eprintln!("{}  <  {}", self.id, message);
             if message.is_bye() {
@@ -175,6 +191,21 @@ impl Neighbor {
                     } else {
                         self.prev_neighborhood = None;
                         self.header = Header::Sync;
+                    }
+                    self.neighborhood = neighborhood;
+                }
+                Header::Reconfigure => {
+                    if self.header == Header::Reconfigure {
+                        if neighborhood.0 > 0 {
+                            self.prev_neighborhood = Some(self.neighborhood);
+                        } else {
+                            self.prev_neighborhood = None;
+                        }
+                    } else {
+                        new_proposal = true;
+                        self.prev_neighborhood = None;
+                        // println!("Neighbor got new reconfigure proposal");
+                        self.header = Header::Reconfigure;
                     }
                     self.neighborhood = neighborhood;
                 }
@@ -219,7 +250,19 @@ impl Neighbor {
                             self.user_responses
                                 .push_front(Response::Block(block_id, data));
                         }
+                        Header::Reconfigure => {
+                            println!("Sending Block in Reconfigure header is not allowed");
+                        }
                     };
+                }
+                Payload::Reconfigure(_config) => {
+                    //TODO: this can not be a Sync header, since we can not distinguish
+                    // two Sync messages
+                    // Probably we need to introduce new header, Reconfigure
+                    // Priority:  Block > Reconfigure > Sync
+                    // Reconfigure is when we have first bit in a message set to '1'
+                    // and three Payload bits also all ones: '111'
+                    self.payload = payload;
                 }
                 Payload::Request(request) => {
                     // println!("Pushing riquest");
@@ -346,6 +389,13 @@ impl Neighbor {
             if let Header::Block(id) = self.header {
                 match header {
                     Header::Block(new_id) => new_id >= &id && no_backdating && hood_inc_limited,
+                    Header::Reconfigure => false,
+                    Header::Sync => false,
+                }
+            } else if let Header::Reconfigure = self.header {
+                match header {
+                    Header::Block(_id) => no_backdating && hood_inc_limited,
+                    Header::Reconfigure => no_backdating && hood_inc_limited,
                     Header::Sync => false,
                 }
             } else {

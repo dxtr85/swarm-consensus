@@ -3,6 +3,7 @@ use crate::message::Header;
 use crate::message::Payload;
 use crate::neighbor::Neighborhood;
 use crate::proposal::Data;
+use crate::Configuration;
 use crate::Neighbor;
 use crate::SwarmTime;
 
@@ -13,6 +14,7 @@ pub struct NextState {
     pub swarm_time_max: SwarmTime,
     pub block_id: BlockID,
     pub last_accepted_block: BlockID,
+    pub last_accepted_reconf: Option<Configuration>,
     pub data: Data,
     all_neighbors_same_header: bool,
 }
@@ -25,6 +27,7 @@ impl NextState {
             swarm_time_max: SwarmTime(std::u32::MAX),
             block_id: BlockID(0),
             last_accepted_block: BlockID(0),
+            last_accepted_reconf: None,
             data: Data(0),
             all_neighbors_same_header: true,
         }
@@ -40,10 +43,12 @@ impl NextState {
 
         let block_id_received = match neighbor.header {
             Header::Sync => BlockID(0),
+            Header::Reconfigure => BlockID(0),
             Header::Block(b_id) => b_id,
         };
         let data_received = match neighbor.payload {
             Payload::Block(_b_id, data) => data,
+            Payload::Reconfigure(config) => Data(config.as_u32()),
             _ => Data(0),
         };
         // println!("id, data: {} {}", block_id_received, data_received);
@@ -54,7 +59,9 @@ impl NextState {
         }
 
         // println!("{} > {}", block_id_received, self.block_id);
-        if block_id_received > self.block_id {
+        if block_id_received > self.block_id
+            || (block_id_received == self.block_id && data_received.0 > self.data.0)
+        {
             self.block_id = block_id_received;
             self.data = data_received;
             self.neighborhood = Neighborhood(0);

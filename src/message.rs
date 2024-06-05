@@ -17,6 +17,8 @@ pub struct Message {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Header {
     Block(BlockID),
+    // Reconfigure(Configuration),
+    Reconfigure,
     Sync,
 }
 
@@ -24,13 +26,60 @@ pub enum Header {
 pub enum Payload {
     KeepAlive,
     Bye,
+    Reconfigure(Configuration),
     Block(BlockID, Data),
     Request(NeighborRequest),
     Response(NeighborResponse),
-    // Listing(u8, [BlockID; 128]),
     Unicast(CastID, Data),
     Multicast(CastID, Data),
     Broadcast(CastID, Data),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Configuration {
+    StartBroadcast,
+    ChangeBroadcastSource,
+    EndBroadcast,
+    StartMulticast,
+    ChangeMulticastSource,
+    EndMulticast,
+    CreateGroup,
+    DeleteGroup,
+    ModifyGroup,
+    UserDefined(u8),
+}
+impl Configuration {
+    pub fn as_u8(&self) -> u8 {
+        match *self {
+            Self::StartBroadcast => 254,
+            Self::ChangeBroadcastSource => 253,
+            Self::EndBroadcast => 252,
+            Self::StartMulticast => 251,
+            Self::ChangeMulticastSource => 250,
+            Self::EndMulticast => 249,
+            Self::CreateGroup => 248,
+            Self::DeleteGroup => 247,
+            Self::ModifyGroup => 246,
+            Self::UserDefined(other) => other,
+        }
+    }
+    pub fn as_u32(&self) -> u32 {
+        (self.as_u8() as u32) << 24
+    }
+    pub fn from_u32(value: u32) -> Configuration {
+        match (value >> 24) as u8 {
+            254 => Self::StartBroadcast,
+            253 => Self::ChangeBroadcastSource,
+            252 => Self::EndBroadcast,
+            251 => Self::StartMulticast,
+            250 => Self::ChangeMulticastSource,
+            249 => Self::EndMulticast,
+            248 => Self::CreateGroup,
+            247 => Self::DeleteGroup,
+            246 => Self::ModifyGroup,
+            other => Self::UserDefined(other),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -89,6 +138,7 @@ impl Display for Header {
         match *self {
             Header::Sync => write!(f, "Sync"),
             Header::Block(b_id) => write!(f, "{}", b_id),
+            Header::Reconfigure => write!(f, "Reconf"),
         }
     }
 }
@@ -102,6 +152,7 @@ impl Display for Payload {
         match self {
             Self::KeepAlive => write!(f, "",),
             Self::Bye => write!(f, "Bye",),
+            Self::Reconfigure(_) => write!(f, "Reconfigure",),
             Self::Request(_) => write!(f, "Request"),
             Self::Response(_nresp) => write!(f, "Response"),
             Self::Block(block_id, data) => {
