@@ -19,7 +19,6 @@ use crate::DEFAULT_SWARM_DIAMETER;
 
 // use std::cmp::{max, min};
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::IpAddr;
@@ -231,7 +230,6 @@ pub struct Gnome {
     proposals: VecDeque<Proposal>,
     next_state: NextState,
     timeout_duration: Duration,
-    active_unicasts: HashSet<CastID>,
     send_immediate: bool,
     network_settings: NetworkSettings, //TODO: do we really need those here anymore?
     net_settings_send: Sender<NetworkSettings>,
@@ -271,7 +269,6 @@ impl Gnome {
             proposals: VecDeque::new(),
             next_state: NextState::new(),
             timeout_duration: Duration::from_millis(500),
-            active_unicasts: HashSet::new(),
             send_immediate: false,
             network_settings,
             net_settings_send,
@@ -375,7 +372,9 @@ impl Gnome {
                     let mut request_sent = false;
                     let mut avail_ids: [CastID; 256] = [CastID(0); 256];
                     // let mut added_ids = 0;
-                    for (added_ids, cast_id) in self.avail_unicast_ids().into_iter().enumerate() {
+                    for (added_ids, cast_id) in
+                        self.swarm.avail_unicast_ids().into_iter().enumerate()
+                    {
                         avail_ids[added_ids] = cast_id;
                         // added_ids += 1;
                     }
@@ -470,27 +469,6 @@ impl Gnome {
             }
         }
         (exit_app, new_user_proposal)
-    }
-
-    fn is_unicast_id_available(&self, cast_id: CastID) -> bool {
-        !self.active_unicasts.contains(&cast_id)
-    }
-
-    fn all_possible_unicast_ids(&self) -> HashSet<CastID> {
-        let mut ids = HashSet::new();
-        for i in 0..=255 {
-            let cast_id = CastID(i);
-            ids.insert(cast_id);
-        }
-        ids
-    }
-
-    fn avail_unicast_ids(&self) -> HashSet<CastID> {
-        let mut available = self.all_possible_unicast_ids();
-        for occupied in &self.active_unicasts {
-            available.remove(occupied);
-        }
-        available
     }
 
     // ongoing requests should be used to track which neighbor is currently selected for
@@ -811,8 +789,8 @@ impl Gnome {
                 match request {
                     NeighborRequest::UnicastRequest(_swarm_id, cast_ids) => {
                         for cast_id in cast_ids {
-                            if self.is_unicast_id_available(cast_id) {
-                                self.active_unicasts.insert(cast_id);
+                            if self.swarm.is_unicast_id_available(cast_id) {
+                                self.swarm.insert_unicast(cast_id, neighbor.id);
                                 neighbor.add_requested_data(NeighborResponse::Unicast(
                                     self.swarm.id,
                                     cast_id,
@@ -1015,8 +993,9 @@ impl Gnome {
                 }
                 self.send_immediate = false;
                 if self.check_if_new_round()
-                    && available_bandwith > 256 // TODO: figure out some better algo
                     && self.neighbor_discovery.tick_and_check()
+                    // TODO: figure out some better algo
+                    && available_bandwith > 256
                 {
                     self.query_for_new_neighbors();
                 }
@@ -1181,6 +1160,12 @@ impl Gnome {
     }
 
     fn update_state(&mut self) {
+        // TODO: before we modify current params, we need to check if
+        // we are inside an reconfigure round.
+        // If that is the case, we need to modify self.pending_casting
+        // with proper data.
+        // Pending casting should be moved to active one at the end of round
+        // if it is the same data we are accepting
         let (n_st, n_neigh, n_bid, n_data) = self.next_state.next_params();
         // println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
         if let Some(sub) = n_st.0.checked_sub(self.swarm_time.0) {

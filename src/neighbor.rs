@@ -260,8 +260,8 @@ impl Neighbor {
                     // two Sync messages
                     // Probably we need to introduce new header, Reconfigure
                     // Priority:  Block > Reconfigure > Sync
-                    // Reconfigure is when we have first bit in a message set to '1'
-                    // and three Payload bits also all ones: '111'
+                    // Reconfigure is when we have first bit in a Header set to '0'
+                    // and three Payload bits are all ones: '111'
                     self.payload = payload;
                 }
                 Payload::Request(request) => {
@@ -277,7 +277,6 @@ impl Neighbor {
                             .push_front(Response::Block(block_id, data));
                     }
                     NeighborResponse::Unicast(swarm_id, cast_id) => {
-                        // TODO: make channels async - no, do not introduce deps!
                         let (sender, receiver) = channel();
                         self.active_unicasts.insert(cast_id, sender);
                         self.user_responses
