@@ -16,10 +16,17 @@ pub struct Message {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Header {
-    Block(BlockID),
-    // Reconfigure(Configuration),
-    Reconfigure,
     Sync,
+    Reconfigure,
+    Block(BlockID),
+}
+impl Header {
+    pub fn non_zero_block(&self) -> bool {
+        match *self {
+            Self::Block(b_id) => b_id.0 > 0,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +108,22 @@ impl Message {
             neighborhood: Neighborhood(0),
             header: Header::Sync,
             payload: Payload::Bye,
+        }
+    }
+    pub fn block() -> Message {
+        Message {
+            swarm_time: SwarmTime(0),
+            neighborhood: Neighborhood(0),
+            header: Header::Block(BlockID(0)),
+            payload: Payload::Block(BlockID(0), Data(0)),
+        }
+    }
+    pub fn reconfigure() -> Message {
+        Message {
+            swarm_time: SwarmTime(0),
+            neighborhood: Neighborhood(0),
+            header: Header::Reconfigure,
+            payload: Payload::Reconfigure(Configuration::StartBroadcast),
         }
     }
 

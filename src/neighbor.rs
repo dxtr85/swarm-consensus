@@ -108,7 +108,7 @@ impl Neighbor {
 
     pub fn start_new_round(&mut self, swarm_time: SwarmTime) {
         // println!("\n\nStarting new round!");
-        self.swarm_time = swarm_time;
+        // self.swarm_time = swarm_time;
         self.round_start = swarm_time;
         self.header = Header::Sync;
         self.payload = Payload::KeepAlive;
@@ -122,8 +122,9 @@ impl Neighbor {
 
     pub fn try_recv(
         &mut self,
-        last_accepted_block: BlockID,
-        last_accepted_reconf: Option<Configuration>,
+        last_accepted_message: Message,
+        // last_accepted_block: BlockID,
+        // last_accepted_reconf: Option<Configuration>,
     ) -> (bool, bool, bool, bool) {
         let mut message_recvd = false;
         let sanity_passed = true;
@@ -139,24 +140,26 @@ impl Neighbor {
         ) = self.receiver.try_recv()
         {
             message_recvd = true;
-            if message.header == Header::Block(last_accepted_block) {
+            if message.header == last_accepted_message.header
+                && message.payload == last_accepted_message.payload
+            {
                 // TODO: here we might be droping casting messages
                 if message.is_cast() {
                     println!("Unserved casting 1");
                 }
                 continue;
             }
-            if let Some(config) = last_accepted_reconf {
-                if message.header == Header::Reconfigure
-                    && message.payload == Payload::Reconfigure(config)
-                {
-                    // TODO: here we might be droping casting messages
-                    if message.is_cast() {
-                        println!("Unserved casting 2");
-                    }
-                    continue;
-                }
-            }
+            // if let Some(config) = last_accepted_reconf {
+            //     if message.header == Header::Reconfigure
+            //         && message.payload == Payload::Reconfigure(config)
+            //     {
+            //         // TODO: here we might be droping casting messages
+            //         if message.is_cast() {
+            //             println!("Unserved casting 2");
+            //         }
+            //         continue;
+            //     }
+            // }
             // eprintln!("{}  <  {}", self.id, message);
             if message.is_bye() {
                 drop_me = true;
@@ -165,7 +168,7 @@ impl Neighbor {
             if !self.sanity_check(&swarm_time, &neighborhood, &header) {
                 //     message_recvd = true;
                 // } else {
-                println!("Coś nie poszło {}", message);
+                // println!("Coś nie poszło {}", message);
                 // TODO: sanity might fail for casting messages, but we still
                 // need to put them throught for user to receive
                 if message.is_cast() || message.is_request() || message.is_response() {
@@ -341,8 +344,6 @@ impl Neighbor {
         } else {
             true
         };
-        // println!("hood_inc_limited: {}", hood_inc_limited);
-
         if self.header == *header {
             // println!("same header");
             // A gnome can not stay at the same neighborhood number for more than
@@ -383,8 +384,15 @@ impl Neighbor {
             }
             hood_increased && hood_inc_limited
         } else {
-            let no_backdating = self.swarm_time - self.round_start < self.swarm_diameter;
-            // println!("no_backdating: {}", no_backdating);
+            // TODO: Need to think this through
+            let no_backdating =
+                *swarm_time - self.round_start < (self.swarm_diameter + self.swarm_diameter);
+            if !no_backdating {
+                println!(
+                    "backdating: {}-{}<{}",
+                    swarm_time, self.round_start, self.swarm_diameter
+                );
+            }
             if let Header::Block(id) = self.header {
                 match header {
                     Header::Block(new_id) => new_id >= &id && no_backdating && hood_inc_limited,
@@ -433,7 +441,7 @@ impl Neighbor {
             self.send_out(new_message);
         } else if send_default {
             // if !generic_info_printed {
-            //     // eprintln!("{} >>> {}", id, message);
+            // eprintln!("{} >>> {}", id, message);
             //     generic_info_printed = true;
             // }
             // println!("snd {}", message);

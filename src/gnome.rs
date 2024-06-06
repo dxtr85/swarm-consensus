@@ -206,8 +206,16 @@ struct ConnRequest {
 }
 #[derive(Clone, Copy)]
 enum Proposal {
-    Block(Data),
+    Block(BlockID, Data),
     Config(Configuration),
+}
+impl Proposal {
+    pub fn into_header_payload(&self) -> (Header, Payload) {
+        match *self {
+            Self::Block(b_id, data) => (Header::Block(b_id), Payload::Block(b_id, data)),
+            Self::Config(config) => (Header::Reconfigure, Payload::Reconfigure(config)),
+        }
+    }
 }
 
 pub struct Gnome {
@@ -224,8 +232,10 @@ pub struct Gnome {
     slow_neighbors: Vec<Neighbor>,
     new_neighbors: Vec<Neighbor>,
     refreshed_neighbors: Vec<Neighbor>,
-    block_id: BlockID,
-    data: Data,
+    // block_id: BlockID,
+    // data: Data,
+    header: Header,
+    payload: Payload,
     my_proposal: Option<Proposal>,
     proposals: VecDeque<Proposal>,
     next_state: NextState,
@@ -263,8 +273,10 @@ impl Gnome {
             slow_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
             new_neighbors: vec![],
             refreshed_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
-            block_id: BlockID(0),
-            data: Data(0),
+            // block_id: BlockID(0),
+            // data: Data(0),
+            header: Header::Block(BlockID(0)),
+            payload: Payload::Block(BlockID(0), Data(0)),
             my_proposal: None,
             proposals: VecDeque::new(),
             next_state: NextState::new(),
@@ -312,13 +324,14 @@ impl Gnome {
                     println!(
                         "Status: {} {} {}\t\t neighbors: {}",
                         self.swarm_time,
-                        self.block_id,
+                        self.header,
                         self.neighborhood,
                         self.fast_neighbors.len()
                     );
                 }
                 Request::AddData(data) => {
-                    self.proposals.push_front(Proposal::Block(data));
+                    let b_id = data.get_block_id();
+                    self.proposals.push_front(Proposal::Block(b_id, data));
                     new_user_proposal = true;
                     println!("vvv USER vvv REQ {}", data);
                 }
@@ -1012,7 +1025,7 @@ impl Gnome {
                 break;
             };
             // TODO: remove this once chill_out logic is implemented
-            // thread::sleep(Duration::from_millis(250));
+            thread::sleep(Duration::from_millis(5));
         }
     }
 
@@ -1093,45 +1106,45 @@ impl Gnome {
     }
 
     pub fn prepare_message(&self) -> Message {
-        let (header, payload) = if self.block_id.0 == 0 {
-            if self.data == Data(0) {
-                (Header::Sync, Payload::KeepAlive)
-            } else {
-                let data_bytes = Vec::from(self.data.0.to_be_bytes());
-                let first_byte = data_bytes.iter().next().unwrap();
-                if *first_byte == 255 {
-                    (Header::Sync, Payload::Bye)
-                } else {
-                    let config = match *first_byte {
-                        // TODO: cover more cases, redefine Data as Vec<u8>
-                        // first byte defines config type, following bytes define payload
-                        // may also include first byte
-                        254 => Configuration::StartBroadcast,
-                        253 => Configuration::ChangeBroadcastSource,
-                        252 => Configuration::EndBroadcast,
-                        251 => Configuration::StartMulticast,
-                        250 => Configuration::ChangeMulticastSource,
-                        249 => Configuration::EndMulticast,
-                        248 => Configuration::CreateGroup,
-                        247 => Configuration::DeleteGroup,
-                        246 => Configuration::ModifyGroup,
-                        other => Configuration::UserDefined(other),
-                    };
-                    (Header::Reconfigure, Payload::Reconfigure(config))
-                }
-            }
-        } else {
-            (
-                Header::Block(self.block_id),
-                Payload::Block(self.block_id, self.data),
-            )
-        };
+        // let (header, payload) = if self.block_id.0 == 0 {
+        //     if self.data == Data(0) {
+        //         (Header::Sync, Payload::KeepAlive)
+        //     } else {
+        //         let data_bytes = Vec::from(self.data.0.to_be_bytes());
+        //         let first_byte = data_bytes.iter().next().unwrap();
+        //         if *first_byte == 255 {
+        //             (Header::Sync, Payload::Bye)
+        //         } else {
+        //             let config = match *first_byte {
+        //                 // TODO: cover more cases, redefine Data as Vec<u8>
+        //                 // first byte defines config type, following bytes define payload
+        //                 // may also include first byte
+        //                 254 => Configuration::StartBroadcast,
+        //                 253 => Configuration::ChangeBroadcastSource,
+        //                 252 => Configuration::EndBroadcast,
+        //                 251 => Configuration::StartMulticast,
+        //                 250 => Configuration::ChangeMulticastSource,
+        //                 249 => Configuration::EndMulticast,
+        //                 248 => Configuration::CreateGroup,
+        //                 247 => Configuration::DeleteGroup,
+        //                 246 => Configuration::ModifyGroup,
+        //                 other => Configuration::UserDefined(other),
+        //             };
+        //             (Header::Reconfigure, Payload::Reconfigure(config))
+        //         }
+        //     }
+        // } else {
+        //     (
+        //         Header::Block(self.block_id),
+        //         Payload::Block(self.block_id, self.data),
+        //     )
+        // };
         // println!("prep msg nhood: {}", self.neighborhood);
         Message {
             swarm_time: self.swarm_time,
             neighborhood: self.neighborhood,
-            header,
-            payload,
+            header: self.header,
+            payload: self.payload,
         }
     }
 
@@ -1166,8 +1179,8 @@ impl Gnome {
         // with proper data.
         // Pending casting should be moved to active one at the end of round
         // if it is the same data we are accepting
-        let (n_st, n_neigh, n_bid, n_data) = self.next_state.next_params();
-        // println!("Next params: {} {} {} {}", n_st, n_neigh, n_bid, n_data);
+        let (n_st, n_neigh, n_head, n_payload) = self.next_state.next_params();
+        // println!("Next params: {} {} {} {}", n_st, n_neigh, n_head, n_payload);
         if let Some(sub) = n_st.0.checked_sub(self.swarm_time.0) {
             if sub >= self.swarm_diameter.0 + self.swarm_diameter.0 {
                 println!("Not updating neighborhood when catching up with swarm");
@@ -1178,21 +1191,31 @@ impl Gnome {
             self.neighborhood = n_neigh;
         }
         self.swarm_time = n_st;
-        self.block_id = n_bid;
-        self.data = n_data;
-        if n_bid == BlockID(0) && n_data == Data(0) {
+        // self.block_id = n_bid;
+        // self.data = n_data;
+        self.header = n_head;
+        self.payload = n_payload;
+        // if n_bid == BlockID(0) && n_data == Data(0) {
+        if self.header == Header::Sync {
             if let Some(proposal) = self.proposals.pop_back() {
+                let (head, payload) = proposal.into_header_payload();
+                self.header = head;
+                self.payload = payload;
                 // println!("some");
-                match proposal {
-                    Proposal::Block(data) => {
-                        self.block_id = BlockID(data.0);
-                        self.data = data;
-                    }
-                    Proposal::Config(config) => {
-                        self.block_id = BlockID(0);
-                        self.data = Data(config.as_u32())
-                    }
-                }
+                // match proposal {
+                //     Proposal::Block(b_id, data) => {
+                //         // self.block_id = BlockID(data.0);
+                //         // self.data = data;
+                //         self.header = Header::Block(b_id);
+                //         self.payload = Payload::Block(b_id, data);
+                //     }
+                //     Proposal::Config(config) => {
+                //         // self.block_id = BlockID(0);
+                //         // self.data = Data(config.as_u32())
+                //         self.header = Header::Reconfigure;
+                //         self.payload = Payload::Reconfigure(config);
+                //     }
+                // }
                 self.my_proposal = Some(proposal);
                 self.send_immediate = true;
             }
@@ -1204,67 +1227,84 @@ impl Gnome {
         let finish_round =
             self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
         if all_gnomes_aware || finish_round {
-            let block_non_zero = self.block_id > BlockID(0);
-            let reconfig = !block_non_zero && self.data.0 > 0;
-            if block_non_zero || reconfig {
+            // let block_non_zero = self.block_id > BlockID(0);
+            let block_proposed = self.header.non_zero_block();
+            let reconfig = self.header == Header::Reconfigure;
+            if block_proposed || reconfig {
                 self.send_immediate = true;
                 if all_gnomes_aware {
-                    if block_non_zero {
-                        let res = self.sender.send(Response::Block(self.block_id, self.data));
-                        println!(
-                            "^^^ USER ^^^ {:?} NEW {} {:075}",
-                            res, self.block_id, self.data.0
-                        );
-                        self.next_state.last_accepted_reconf = None;
+                    self.next_state.last_accepted_message = self.prepare_message();
+                    if block_proposed {
+                        if let Payload::Block(block_id, data) = self.payload {
+                            let res = self.sender.send(Response::Block(block_id, data));
+                            println!("^^^ USER ^^^ NEW {} {:075}", block_id, data.0);
+                        } else {
+                            println!("Can not send to user, payload not matching");
+                        }
                     } else {
                         println!("We have got a Reconfig to parse");
-                        self.next_state.last_accepted_reconf =
-                            Some(Configuration::from_u32(self.data.0));
+                        // self.next_state.last_accepted_reconf =
+                        //     Some(Configuration::from_u32(self.data.0));
                     }
                     if let Some(my_proposed_data) = self.my_proposal {
                         // TODO: here we need to distinguish between Block and Reconfig
-                        match my_proposed_data {
-                            Proposal::Block(data) => {
-                                if data.0 != self.block_id.0 {
-                                    self.proposals.push_back(my_proposed_data);
-                                }
-                            }
-                            Proposal::Config(config) => {
-                                if self.block_id.0 != 0 || self.data.0 != config.as_u32() {
-                                    self.proposals.push_back(my_proposed_data);
-                                }
-                            }
+                        let (head, payload) = my_proposed_data.into_header_payload();
+                        if (head, payload)
+                            != (
+                                self.next_state.last_accepted_message.header,
+                                self.next_state.last_accepted_message.payload,
+                            )
+                        {
+                            self.proposals.push_back(my_proposed_data);
                         }
+                        // match my_proposed_data {
+                        //     Proposal::Block(b_id, data) => {
+                        //         // if data.0 != self.block_id.0 {
+                        //         if data.0 != self.block_id.0 {
+                        //             self.proposals.push_back(my_proposed_data);
+                        //         }
+                        //     }
+                        //     Proposal::Config(config) => {
+                        //         if self.block_id.0 != 0 || self.data.0 != config.as_u32() {
+                        //             self.proposals.push_back(my_proposed_data);
+                        //         }
+                        //     }
+                        // }
                     }
                     self.my_proposal = None;
 
                     self.round_start = self.swarm_time;
                     // println!("New round start: {}", self.round_start);
-                    self.next_state.last_accepted_block = self.block_id;
+                    // self.next_state.last_accepted_block = self.block_id;
                 } else {
                     println!(
                         "ERROR: Swarm diameter too small or {} was backdated!",
-                        self.block_id
+                        self.header
                     );
                 }
                 if let Some(proposal) = self.proposals.pop_back() {
                     // println!("some");
-                    match proposal {
-                        Proposal::Block(data) => {
-                            self.block_id = BlockID(data.0);
-                            self.data = data;
-                        }
-                        Proposal::Config(config) => {
-                            self.block_id = BlockID(0);
-                            self.data = Data(config.as_u32());
-                        }
-                    }
+                    // match proposal {
+                    //     Proposal::Block(data) => {
+                    //         self.block_id = BlockID(data.0);
+                    //         self.data = data;
+                    //     }
+                    //     Proposal::Config(config) => {
+                    //         self.block_id = BlockID(0);
+                    //         self.data = Data(config.as_u32());
+                    //     }
+                    // }
+                    let (head, payload) = proposal.into_header_payload();
+                    self.header = head;
+                    self.payload = payload;
                     self.my_proposal = Some(proposal);
                     self.send_immediate = true;
                 } else {
                     // println!("none");
-                    self.block_id = BlockID(0);
-                    self.data = Data(0);
+                    // self.block_id = BlockID(0);
+                    // self.data = Data(0);
+                    self.header = Header::Sync;
+                    self.payload = Payload::KeepAlive;
                     self.chill_out.0 = true;
                     self.chill_out.1 = 250;
                 }
@@ -1283,16 +1323,19 @@ impl Gnome {
                 // self.next_state.all_neighbors_same_header = false;
                 // println!("--------round start to: {}", self.swarm_time);
                 if let Some(proposal) = self.proposals.pop_back() {
-                    match proposal {
-                        Proposal::Block(data) => {
-                            self.block_id = BlockID(data.0);
-                            self.data = data;
-                        }
-                        Proposal::Config(config) => {
-                            self.block_id = BlockID(0);
-                            self.data = Data(config.as_u32());
-                        }
-                    }
+                    // match proposal {
+                    //     Proposal::Block(data) => {
+                    //         self.block_id = BlockID(data.0);
+                    //         self.data = data;
+                    //     }
+                    //     Proposal::Config(config) => {
+                    //         self.block_id = BlockID(0);
+                    //         self.data = Data(config.as_u32());
+                    //     }
+                    // }
+                    let (head, payload) = proposal.into_header_payload();
+                    self.header = head;
+                    self.payload = payload;
                     self.my_proposal = Some(proposal);
                     self.send_immediate = true;
                 } else {
@@ -1312,8 +1355,8 @@ impl Gnome {
                     let msg = self.prepare_message();
                     for mut neighbor in new_neighbors {
                         let _ = neighbor.try_recv(
-                            self.next_state.last_accepted_block,
-                            self.next_state.last_accepted_reconf,
+                            self.next_state.last_accepted_message,
+                            // self.next_state.last_accepted_reconf,
                         );
                         // println!("snd2 {}", msg);
                         neighbor.send_out(msg);
@@ -1323,7 +1366,7 @@ impl Gnome {
             }
 
             self.next_state
-                .reset_for_next_turn(true, self.block_id, self.data);
+                .reset_for_next_turn(true, self.header, self.payload);
             for neighbor in &mut self.fast_neighbors {
                 // println!("fast");
                 neighbor.start_new_round(self.swarm_time);
@@ -1335,7 +1378,7 @@ impl Gnome {
             true
         } else {
             self.next_state
-                .reset_for_next_turn(false, self.block_id, self.data);
+                .reset_for_next_turn(false, self.header, self.payload);
             false
         }
     }
@@ -1380,8 +1423,8 @@ impl Gnome {
                 }
             }
             let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv(
-                self.next_state.last_accepted_block,
-                self.next_state.last_accepted_reconf,
+                self.next_state.last_accepted_message,
+                // self.next_state.last_accepted_reconf,
             );
             if !new_proposal_received {
                 new_proposal_received = new_proposal;
@@ -1460,8 +1503,8 @@ impl Gnome {
                 }
             }
             let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv(
-                self.next_state.last_accepted_block,
-                self.next_state.last_accepted_reconf,
+                self.next_state.last_accepted_message,
+                // self.next_state.last_accepted_reconf,
             );
             // println!(
             // println!("snd {}", pass);
