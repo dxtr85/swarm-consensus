@@ -3,6 +3,7 @@ use crate::multicast::Multicast;
 use crate::CastID;
 use crate::Gnome;
 use crate::GnomeId;
+use crate::Message;
 use crate::Neighbor;
 use crate::Request;
 use crate::Response;
@@ -143,6 +144,15 @@ impl Swarm {
     pub fn is_broadcast_id_available(&self, cast_id: CastID) -> bool {
         !self.active_broadcasts.contains_key(&cast_id)
     }
+    pub fn next_broadcast_id(&self) -> Option<CastID> {
+        for id in 0..=255 {
+            let cid = CastID(id);
+            if self.is_broadcast_id_available(cid) {
+                return Some(cid);
+            }
+        }
+        None
+    }
     pub fn insert_unicast(&mut self, cast_id: CastID, gnome_id: GnomeId) {
         self.active_unicasts.insert(cast_id, gnome_id);
     }
@@ -151,6 +161,15 @@ impl Swarm {
     }
     pub fn insert_broadcast(&mut self, cast_id: CastID, broadcast: Multicast) {
         self.active_broadcasts.insert(cast_id, broadcast);
+    }
+
+    pub fn serve_casts(&mut self) {
+        self.serve_broadcasts();
+    }
+    fn serve_broadcasts(&mut self) {
+        for bcast in self.active_broadcasts.values_mut() {
+            bcast.serve();
+        }
     }
 
     fn all_possible_cast_ids(&self) -> HashSet<CastID> {
@@ -183,17 +202,17 @@ impl Swarm {
         }
         available
     }
-    pub fn get_subscribers(&self, cast_id: &CastID, is_broadcast: bool) -> Vec<GnomeId> {
-        let mut subscribers = vec![];
-        if is_broadcast {
-            if let Some(bcast) = self.active_broadcasts.get(cast_id) {
-                subscribers = bcast.subscribers()
-            }
-        } else if let Some(mcast) = self.active_multicasts.get(cast_id) {
-            subscribers = mcast.subscribers()
-        }
-        subscribers
-    }
+    // pub fn get_subscribers(&self, cast_id: &CastID, is_broadcast: bool) -> Vec<GnomeId> {
+    //     let mut subscribers = vec![];
+    //     if is_broadcast {
+    //         if let Some(bcast) = self.active_broadcasts.get(cast_id) {
+    //             subscribers = bcast.subscribers()
+    //         }
+    //     } else if let Some(mcast) = self.active_multicasts.get(cast_id) {
+    //         subscribers = mcast.subscribers()
+    //     }
+    //     subscribers
+    // }
     pub fn get_source(&self, cast_id: &CastID, is_broadcast: bool) -> Option<GnomeId> {
         let mut source = None;
         if is_broadcast {
@@ -205,7 +224,12 @@ impl Swarm {
         }
         source
     }
-    pub fn set_source(&mut self, cast_id: &CastID, is_broadcast: bool, source: GnomeId) {
+    pub fn set_source(
+        &mut self,
+        cast_id: &CastID,
+        is_broadcast: bool,
+        source: (GnomeId, Receiver<Message>),
+    ) {
         if is_broadcast {
             if let Some(bcast) = self.active_broadcasts.get_mut(cast_id) {
                 bcast.set_source(source);

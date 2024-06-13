@@ -57,7 +57,7 @@ pub enum Request {
     // SetNat(Nat),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub struct CastID(pub u8);
 
 pub enum Response {
@@ -65,9 +65,9 @@ pub enum Response {
     DataInquiry(GnomeId, NeighborRequest),
     Listing(u8, [BlockID; 128]),
     Unicast(SwarmID, CastID, Receiver<Data>),
-    MulticastSource(SwarmID, CastID, Sender<Data>),
+    MulticastOrigin(SwarmID, CastID, Sender<Data>),
     Multicast(SwarmID, CastID, Receiver<Data>),
-    BroadcastSource(SwarmID, CastID, Sender<Data>),
+    BroadcastOrigin(SwarmID, CastID, Sender<Data>),
     Broadcast(SwarmID, CastID, Receiver<Data>),
     ToGnome(NeighborResponse),
     Custom(u8, Data),
@@ -91,13 +91,13 @@ impl fmt::Debug for Response {
             Response::Multicast(_sid, _cid, _rdata) => {
                 write!(f, "Multicast {:?}", _cid)
             }
-            Response::MulticastSource(_sid, _cid, _sdata) => {
+            Response::MulticastOrigin(_sid, _cid, _sdata) => {
                 write!(f, "Multicast source {:?}", _cid)
             }
             Response::Broadcast(_sid, _cid, _rdata) => {
                 write!(f, "Broadcast {:?}", _cid)
             }
-            Response::BroadcastSource(_sid, _cid, _sdata) => {
+            Response::BroadcastOrigin(_sid, _cid, _sdata) => {
                 write!(f, "Broadcast source {:?}", _cid)
             }
             Response::ToGnome(neighbor_response) => {

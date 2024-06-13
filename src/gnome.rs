@@ -2,8 +2,10 @@ use crate::message::BlockID;
 use crate::message::Configuration;
 use crate::message::Header;
 use crate::message::Payload;
+use crate::multicast::Multicast;
 use crate::neighbor::NeighborResponse;
 use crate::neighbor::Neighborhood;
+use crate::next_state::ChangeConfig;
 use crate::swarm::Swarm;
 use crate::CastID;
 use crate::Data;
@@ -26,7 +28,7 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::Duration;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Debug, Hash)]
 pub struct GnomeId(pub u64);
 impl fmt::Display for GnomeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -213,7 +215,10 @@ impl Proposal {
     pub fn into_header_payload(&self) -> (Header, Payload) {
         match *self {
             Self::Block(b_id, data) => (Header::Block(b_id), Payload::Block(b_id, data)),
-            Self::Config(config) => (Header::Reconfigure, Payload::Reconfigure(config)),
+            Self::Config(config) => (
+                Header::Reconfigure(config.as_ct(), config.as_gid()),
+                Payload::Reconfigure(config),
+            ),
         }
     }
 }
@@ -247,6 +252,7 @@ pub struct Gnome {
     ongoing_requests: HashMap<u8, OngoingRequest>,
     neighbor_discovery: NeighborDiscovery,
     chill_out: (bool, u8, Duration),
+    data_converters: HashMap<(bool, CastID), (Receiver<Data>, Sender<Message>)>,
 }
 
 impl Gnome {
@@ -288,6 +294,7 @@ impl Gnome {
             ongoing_requests: HashMap::new(),
             neighbor_discovery: NeighborDiscovery::default(),
             chill_out: (false, 250, Duration::from_millis(59)), // chill time is 250*59ms = just under 15sec
+            data_converters: HashMap::new(),
         }
     }
 
@@ -314,6 +321,25 @@ impl Gnome {
         gnome
     }
 
+    fn serve_user_data(&self) {
+        for ((is_bcast, c_id), (recv_d, send_m)) in &self.data_converters {
+            while let Ok(data) = recv_d.try_recv() {
+                let payload = if *is_bcast {
+                    Payload::Broadcast(*c_id, data)
+                } else {
+                    Payload::Multicast(*c_id, data)
+                };
+                let message = Message {
+                    swarm_time: self.swarm_time,
+                    neighborhood: self.neighborhood,
+                    header: self.header,
+                    payload,
+                };
+                let r = send_m.send(message);
+                // println!("Converted data send result: {:?}", r);
+            }
+        }
+    }
     fn serve_user_requests(&mut self) -> (bool, bool) {
         let mut new_user_proposal = false;
         let mut exit_app = false;
@@ -333,7 +359,7 @@ impl Gnome {
                     let b_id = data.get_block_id();
                     self.proposals.push_front(Proposal::Block(b_id, data));
                     new_user_proposal = true;
-                    println!("vvv USER vvv REQ {}", data);
+                    // println!("vvv USER vvv REQ {}", data);
                 }
                 Request::AddNeighbor(neighbor) => {
                     println!("{} ADD\tadd a new neighbor", neighbor.id);
@@ -421,9 +447,15 @@ impl Gnome {
                 }
                 Request::StartBroadcast => {
                     println!("Received StartBroadcast user request");
-                    self.proposals
-                        .push_front(Proposal::Config(Configuration::StartBroadcast));
-                    new_user_proposal = true;
+                    let cast_id_opt = self.swarm.next_broadcast_id();
+                    if cast_id_opt.is_some() {
+                        self.proposals
+                            .push_front(Proposal::Config(Configuration::StartBroadcast(
+                                self.id,
+                                cast_id_opt.unwrap().to_owned(),
+                            )));
+                        new_user_proposal = true;
+                    }
                     // println!("vvv USER vvv REQ {}", data);
                 }
                 Request::StartMulticast(_) => {
@@ -910,9 +942,11 @@ impl Gnome {
 
         loop {
             let (exit_app, new_user_proposal) = self.serve_user_requests();
+            self.serve_user_data();
             self.serve_neighbors_requests(true);
             self.serve_neighbors_requests(false);
             self.serve_ongoing_requests();
+            self.swarm.serve_casts();
             let refr_new_proposal = self.try_recv_refreshed();
             let (fast_advance_to_next_turn, fast_new_proposal) = self.try_recv(true);
             let (slow_advance_to_next_turn, slow_new_proposal) = self.try_recv(false);
@@ -949,7 +983,7 @@ impl Gnome {
             // }
             if new_proposal {
                 if self.chill_out.0 {
-                    println!("Chill out is over");
+                    println!("Chill out is terminated abruptly");
                     self.send_immediate = true;
                 }
                 self.chill_out.0 = false;
@@ -1179,6 +1213,17 @@ impl Gnome {
         // with proper data.
         // Pending casting should be moved to active one at the end of round
         // if it is the same data we are accepting
+        // Once active, a gnome will send broadcast messages to all his
+        // neighbors except the source gnome.
+        // Other neighbors will send direct Unsubscribe message to his
+        // neighbors in order to filter out all gnomes but the one selected to
+        // be it's source.
+        // Gnome receiving Unsubscribe message will remove requesting neighbor from
+        // broadcasting subscribers list.
+        // If a gnome wishes to change a broadcasting source he should send
+        // a direct Subscribe message to selected neighbor, with optional
+        // Unsubscribe message to current source. Source gnome should
+        // respond with Subscribed message.
         let (n_st, n_neigh, n_head, n_payload) = self.next_state.next_params();
         // println!("Next params: {} {} {} {}", n_st, n_neigh, n_head, n_payload);
         if let Some(sub) = n_st.0.checked_sub(self.swarm_time.0) {
@@ -1201,6 +1246,19 @@ impl Gnome {
                 let (head, payload) = proposal.into_header_payload();
                 self.header = head;
                 self.payload = payload;
+                if self.header.is_reconfigure() {
+                    if let Payload::Reconfigure(config) = self.payload {
+                        if let Configuration::StartBroadcast(g_id, c_id) = config {
+                            self.next_state.change_config = ChangeConfig::AddBroadcast {
+                                id: c_id,
+                                origin: g_id,
+                                source: g_id,
+                                filtered_neighbors: vec![],
+                                turn_ended: false,
+                            };
+                        }
+                    }
+                }
                 // println!("some");
                 // match proposal {
                 //     Proposal::Block(b_id, data) => {
@@ -1219,6 +1277,20 @@ impl Gnome {
                 self.my_proposal = Some(proposal);
                 self.send_immediate = true;
             }
+        } else if self.header.is_reconfigure() {
+            match self.payload {
+                Payload::Reconfigure(config) => match config {
+                    Configuration::StartBroadcast(_gid, _cid) => {
+                        // if self.pending_casting.
+                    }
+                    _ => {
+                        println!("Unhandled config payload");
+                    }
+                },
+                _ => {
+                    println!("Unexpected payload while for Reconfigure header");
+                }
+            }
         }
     }
 
@@ -1229,20 +1301,80 @@ impl Gnome {
         if all_gnomes_aware || finish_round {
             // let block_non_zero = self.block_id > BlockID(0);
             let block_proposed = self.header.non_zero_block();
-            let reconfig = self.header == Header::Reconfigure;
+            let reconfig = self.header.is_reconfigure();
             if block_proposed || reconfig {
                 self.send_immediate = true;
                 if all_gnomes_aware {
                     self.next_state.last_accepted_message = self.prepare_message();
                     if block_proposed {
                         if let Payload::Block(block_id, data) = self.payload {
-                            let res = self.sender.send(Response::Block(block_id, data));
-                            println!("^^^ USER ^^^ NEW {} {:075}", block_id, data.0);
+                            let _res = self.sender.send(Response::Block(block_id, data));
+                            // println!("^^^ USER ^^^ NEW {} {:075}", block_id, data.0);
                         } else {
                             println!("Can not send to user, payload not matching");
                         }
                     } else {
                         println!("We have got a Reconfig to parse");
+                        let change_config = std::mem::replace(
+                            &mut self.next_state.change_config,
+                            ChangeConfig::None,
+                        );
+                        println!("Me: {}, c-k: {:?}", self.id, change_config);
+                        match change_config {
+                            ChangeConfig::AddBroadcast {
+                                id,
+                                origin,
+                                source,
+                                filtered_neighbors,
+                                ..
+                            } => {
+                                let mut subscribers: HashMap<GnomeId, Sender<Message>> =
+                                    self.get_neighbor_ids_and_senders();
+                                subscribers.retain(|&gid, _s| !filtered_neighbors.contains(&gid));
+                                let (send_n, recv_n) = channel();
+                                let (send_d, recv_d) = channel();
+                                if self.id == origin {
+                                    println!("I am origin!");
+                                    // TODO: need to handle Data from recv_d and
+                                    //       push it into send_n
+                                    let b_cast = Multicast::new(
+                                        origin,
+                                        (source, recv_n),
+                                        filtered_neighbors,
+                                        subscribers,
+                                        None,
+                                    );
+
+                                    self.insert_originating_broadcast(id, recv_d, send_n);
+                                    self.swarm.insert_broadcast(id, b_cast);
+                                    let _res = self.sender.send(Response::BroadcastOrigin(
+                                        self.swarm.id,
+                                        id,
+                                        send_d,
+                                    ));
+                                } else if self.activate_broadcast_at_neighbor(source, id, send_n) {
+                                    // TODO: we need to create channel to actually pass messages
+                                    //       to user
+                                    //       and to subscribers
+                                    let b_cast = Multicast::new(
+                                        origin,
+                                        (source, recv_n),
+                                        filtered_neighbors,
+                                        subscribers,
+                                        Some(send_d),
+                                    );
+                                    self.swarm.insert_broadcast(id, b_cast);
+                                    let _res = self.sender.send(Response::Broadcast(
+                                        self.swarm.id,
+                                        id,
+                                        recv_d,
+                                    ));
+                                } else {
+                                    println!("Unable to activate broadcast");
+                                }
+                            }
+                            ChangeConfig::None => {}
+                        }
                         // self.next_state.last_accepted_reconf =
                         //     Some(Configuration::from_u32(self.data.0));
                     }
@@ -1593,5 +1725,64 @@ impl Gnome {
             //     }
             // }
         }
+    }
+    fn get_neighbor_ids_and_senders(&self) -> HashMap<GnomeId, Sender<Message>> {
+        let mut ids = HashMap::new();
+        for neighbor in &self.fast_neighbors {
+            ids.insert(neighbor.id, neighbor.sender.clone());
+        }
+        for neighbor in &self.slow_neighbors {
+            ids.insert(neighbor.id, neighbor.sender.clone());
+        }
+        for neighbor in &self.refreshed_neighbors {
+            ids.insert(neighbor.id, neighbor.sender.clone());
+        }
+        for neighbor in &self.new_neighbors {
+            ids.insert(neighbor.id, neighbor.sender.clone());
+        }
+        ids
+    }
+
+    fn insert_originating_broadcast(
+        &mut self,
+        id: CastID,
+        // b_cast: Multicast,
+        recv_d: Receiver<Data>,
+        send_n: Sender<Message>,
+    ) {
+        self.data_converters.insert((true, id), (recv_d, send_n));
+    }
+
+    fn activate_broadcast_at_neighbor(
+        &mut self,
+        id: GnomeId,
+        cast_id: CastID,
+        sender: Sender<Message>,
+    ) -> bool {
+        for neighbor in &mut self.fast_neighbors {
+            if neighbor.id == id {
+                neighbor.activate_broadcast(cast_id, sender);
+                return true;
+            }
+        }
+        for neighbor in &mut self.refreshed_neighbors {
+            if neighbor.id == id {
+                neighbor.activate_broadcast(cast_id, sender);
+                return true;
+            }
+        }
+        for neighbor in &mut self.slow_neighbors {
+            if neighbor.id == id {
+                neighbor.activate_broadcast(cast_id, sender);
+                return true;
+            }
+        }
+        for neighbor in &mut self.new_neighbors {
+            if neighbor.id == id {
+                neighbor.activate_broadcast(cast_id, sender);
+                return true;
+            }
+        }
+        false
     }
 }

@@ -2,6 +2,7 @@ use crate::neighbor::NeighborRequest;
 use crate::neighbor::Neighborhood;
 use crate::proposal::Data;
 use crate::CastID;
+use crate::GnomeId;
 use crate::NeighborResponse;
 use crate::SwarmTime;
 use std::fmt::Display;
@@ -17,7 +18,7 @@ pub struct Message {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Header {
     Sync,
-    Reconfigure,
+    Reconfigure(ConfigType, GnomeId),
     Block(BlockID),
 }
 impl Header {
@@ -27,7 +28,11 @@ impl Header {
             _ => false,
         }
     }
+    pub fn is_reconfigure(&self) -> bool {
+        matches!(self, Header::Reconfigure(_t, _g))
+    }
 }
+pub type ConfigType = u8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Payload {
@@ -42,14 +47,26 @@ pub enum Payload {
     Broadcast(CastID, Data),
 }
 
+impl Payload {
+    pub fn data(&self) -> Option<Data> {
+        match *self {
+            Payload::Block(_id, data) => Some(data),
+            Payload::Unicast(_id, data) => Some(data),
+            Payload::Broadcast(_id, data) => Some(data),
+            Payload::Multicast(_id, data) => Some(data),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Configuration {
-    StartBroadcast,
-    ChangeBroadcastSource,
-    EndBroadcast,
-    StartMulticast,
-    ChangeMulticastSource,
-    EndMulticast,
+    StartBroadcast(GnomeId, CastID),
+    ChangeBroadcastOrigin(GnomeId, CastID),
+    EndBroadcast(CastID),
+    StartMulticast(GnomeId, CastID),
+    ChangeMulticastOrigin(GnomeId, CastID),
+    EndMulticast(CastID),
     CreateGroup,
     DeleteGroup,
     ModifyGroup,
@@ -58,29 +75,47 @@ pub enum Configuration {
 impl Configuration {
     pub fn as_u8(&self) -> u8 {
         match *self {
-            Self::StartBroadcast => 254,
-            Self::ChangeBroadcastSource => 253,
-            Self::EndBroadcast => 252,
-            Self::StartMulticast => 251,
-            Self::ChangeMulticastSource => 250,
-            Self::EndMulticast => 249,
+            Self::StartBroadcast(_gid, _cid) => 254,
+            Self::ChangeBroadcastOrigin(_gid, _cid) => 253,
+            Self::EndBroadcast(_cid) => 252,
+            Self::StartMulticast(_gid, _cid) => 251,
+            Self::ChangeMulticastOrigin(_gid, _cid) => 250,
+            Self::EndMulticast(_cid) => 249,
             Self::CreateGroup => 248,
             Self::DeleteGroup => 247,
             Self::ModifyGroup => 246,
             Self::UserDefined(other) => other,
         }
     }
+    pub fn as_ct(&self) -> ConfigType {
+        self.as_u8() as ConfigType
+    }
+    pub fn as_gid(&self) -> GnomeId {
+        match *self {
+            Self::StartBroadcast(gid, _cid) => gid,
+            Self::ChangeBroadcastOrigin(gid, _cid) => gid,
+            Self::EndBroadcast(_cid) => GnomeId(0),
+            Self::StartMulticast(gid, _cid) => gid,
+            Self::ChangeMulticastOrigin(gid, _cid) => gid,
+            Self::EndMulticast(_cid) => GnomeId(0),
+            Self::CreateGroup => GnomeId(0),
+            Self::DeleteGroup => GnomeId(0),
+            Self::ModifyGroup => GnomeId(0),
+            Self::UserDefined(_other) => GnomeId(0),
+        }
+    }
+
     pub fn as_u32(&self) -> u32 {
         (self.as_u8() as u32) << 24
     }
     pub fn from_u32(value: u32) -> Configuration {
         match (value >> 24) as u8 {
-            254 => Self::StartBroadcast,
-            253 => Self::ChangeBroadcastSource,
-            252 => Self::EndBroadcast,
-            251 => Self::StartMulticast,
-            250 => Self::ChangeMulticastSource,
-            249 => Self::EndMulticast,
+            254 => Self::StartBroadcast(GnomeId(0), CastID(0)), //TODO: need source for this
+            253 => Self::ChangeBroadcastOrigin(GnomeId(0), CastID(0)),
+            252 => Self::EndBroadcast(CastID(0)),
+            251 => Self::StartMulticast(GnomeId(0), CastID(0)),
+            250 => Self::ChangeMulticastOrigin(GnomeId(0), CastID(0)),
+            249 => Self::EndMulticast(CastID(0)),
             248 => Self::CreateGroup,
             247 => Self::DeleteGroup,
             246 => Self::ModifyGroup,
@@ -122,8 +157,8 @@ impl Message {
         Message {
             swarm_time: SwarmTime(0),
             neighborhood: Neighborhood(0),
-            header: Header::Reconfigure,
-            payload: Payload::Reconfigure(Configuration::StartBroadcast),
+            header: Header::Reconfigure(255 as ConfigType, GnomeId(0)),
+            payload: Payload::Reconfigure(Configuration::StartBroadcast(GnomeId(0), CastID(0))),
         }
     }
 
@@ -161,7 +196,7 @@ impl Display for Header {
         match *self {
             Header::Sync => write!(f, "Sync"),
             Header::Block(b_id) => write!(f, "{}", b_id),
-            Header::Reconfigure => write!(f, "Reconf"),
+            Header::Reconfigure(ct, gid) => write!(f, "Reconf-{}-{}", ct, gid),
         }
     }
 }

@@ -2,7 +2,6 @@ use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
 use crate::CastID;
-use crate::Configuration;
 use crate::Data;
 use crate::GnomeId;
 use crate::Message;
@@ -36,7 +35,7 @@ impl Display for Neighborhood {
 pub struct Neighbor {
     pub id: GnomeId,
     receiver: Receiver<Message>,
-    sender: Sender<Message>,
+    pub sender: Sender<Message>,
     round_start: SwarmTime,
     pub swarm_time: SwarmTime,
     pub swarm_diameter: SwarmTime,
@@ -51,6 +50,7 @@ pub struct Neighbor {
     gnome_header: Header,
     gnome_neighborhood: Neighborhood,
     active_unicasts: HashMap<CastID, Sender<Data>>,
+    active_broadcasts: HashMap<CastID, Sender<Message>>,
     // pending_unicasts: HashMap<CastID, Sender<Data>>,
 }
 
@@ -102,6 +102,7 @@ impl Neighbor {
             gnome_header: Header::Sync,
             gnome_neighborhood: Neighborhood(0),
             active_unicasts: HashMap::new(),
+            active_broadcasts: HashMap::new(),
             // pending_unicasts: HashMap::new(),
         }
     }
@@ -139,14 +140,16 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
+            // println!("M: {:?}", message);
+            if message.is_cast() {
+                // println!("Unserved casting 1");
+                self.send_casting(message);
+                continue;
+            }
             message_recvd = true;
             if message.header == last_accepted_message.header
                 && message.payload == last_accepted_message.payload
             {
-                // TODO: here we might be droping casting messages
-                if message.is_cast() {
-                    println!("Unserved casting 1");
-                }
                 continue;
             }
             // if let Some(config) = last_accepted_reconf {
@@ -171,8 +174,10 @@ impl Neighbor {
                 // println!("Coś nie poszło {}", message);
                 // TODO: sanity might fail for casting messages, but we still
                 // need to put them throught for user to receive
-                if message.is_cast() || message.is_request() || message.is_response() {
-                    // println!("Unserved casting 2");
+                if message.is_cast() {
+                    self.send_casting(message);
+                } else if message.is_request() || message.is_response() {
+                    // println!("Unserved requests");
                 } else {
                     continue;
                 }
@@ -197,9 +202,20 @@ impl Neighbor {
                     }
                     self.neighborhood = neighborhood;
                 }
-                Header::Reconfigure => {
-                    if self.header == Header::Reconfigure {
-                        if neighborhood.0 > 0 {
+                Header::Reconfigure(new_ct, new_gid) => {
+                    if let Header::Reconfigure(ct, gid) = self.header {
+                        if new_ct > ct ||
+                        // {
+                        //     new_proposal = true;
+                        //     self.prev_neighborhood = None;
+                        //     self.header = header;
+                        // } else if
+                         new_gid > gid
+                        {
+                            new_proposal = true;
+                            self.prev_neighborhood = None;
+                            self.header = header;
+                        } else if neighborhood.0 > 0 {
                             self.prev_neighborhood = Some(self.neighborhood);
                         } else {
                             self.prev_neighborhood = None;
@@ -208,7 +224,7 @@ impl Neighbor {
                         new_proposal = true;
                         self.prev_neighborhood = None;
                         // println!("Neighbor got new reconfigure proposal");
-                        self.header = Header::Reconfigure;
+                        self.header = header;
                     }
                     self.neighborhood = neighborhood;
                 }
@@ -253,7 +269,7 @@ impl Neighbor {
                             self.user_responses
                                 .push_front(Response::Block(block_id, data));
                         }
-                        Header::Reconfigure => {
+                        Header::Reconfigure(_ct, _gid) => {
                             println!("Sending Block in Reconfigure header is not allowed");
                         }
                     };
@@ -313,14 +329,38 @@ impl Neighbor {
                 }
                 Payload::Multicast(_mid, _data) => {
                     // TODO: serve this
+                    // self.send_casting(message);
                 }
                 Payload::Broadcast(_bid, _data) => {
                     // TODO: serve this
+                    self.send_casting(message);
                 }
             }
             // println!("returning: {} {:?}", new_proposal, self.neighborhood);
         }
         (message_recvd, sanity_passed, new_proposal, drop_me)
+    }
+
+    pub fn activate_broadcast(&mut self, cast_id: CastID, sender: Sender<Message>) {
+        self.active_broadcasts.insert(cast_id, sender);
+    }
+
+    fn send_casting(&self, message: Message) {
+        match message.payload {
+            Payload::Broadcast(cast_id, _data) => {
+                if let Some(sender) = self.active_broadcasts.get(&cast_id) {
+                    let _ = sender.send(message);
+                }
+            }
+            // Payload::Multicast(cast_id, _data) => {
+            //     if let Some(sender) = self.active_multicasts.get(&cast_id) {
+            //         let _ = sender.send(message);
+            //     }
+            // }
+            _ => {
+                println!("send_casting: unexpected message: {:?}", message);
+            }
+        }
     }
 
     fn sanity_check(
@@ -396,13 +436,24 @@ impl Neighbor {
             if let Header::Block(id) = self.header {
                 match header {
                     Header::Block(new_id) => new_id >= &id && no_backdating && hood_inc_limited,
-                    Header::Reconfigure => false,
+                    Header::Reconfigure(_ct, _gid) => false,
                     Header::Sync => false,
                 }
-            } else if let Header::Reconfigure = self.header {
+            } else if let Header::Reconfigure(ct, gid) = self.header {
                 match header {
                     Header::Block(_id) => no_backdating && hood_inc_limited,
-                    Header::Reconfigure => no_backdating && hood_inc_limited,
+                    Header::Reconfigure(new_ct, new_gid) => {
+                        //TODO: not sure if this is ok
+                        if *new_ct > ct ||
+                            // no_backdating
+                        // } else if 
+                            *new_gid > gid
+                        {
+                            no_backdating
+                        } else {
+                            no_backdating && hood_inc_limited
+                        }
+                    }
                     Header::Sync => false,
                 }
             } else {
