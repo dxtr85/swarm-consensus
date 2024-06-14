@@ -115,7 +115,7 @@ impl NextState {
             // self.block_id = block_id_received;
             self.header = neighbor.header;
             // self.data = data_received;
-            self.payload = neighbor.payload;
+            self.payload = neighbor.payload.clone();
             self.neighborhood = Neighborhood(0);
             // } else if block_id_received == self.block_id
             if self.header.is_reconfigure() {
@@ -172,7 +172,7 @@ impl NextState {
                 self.swarm_time.inc(),
                 self.neighborhood.inc(),
                 self.header,
-                self.payload,
+                self.payload.clone(),
             )
         } else {
             // println!("next_params 2 {}", self.swarm_time);
@@ -180,7 +180,7 @@ impl NextState {
                 self.swarm_time.inc(),
                 self.neighborhood,
                 self.header,
-                self.payload,
+                self.payload.clone(),
             )
         }
     }
@@ -192,7 +192,7 @@ impl NextState {
         // self.block_id = block_id;
         // self.data = data;
         self.header = header;
-        self.payload = payload;
+        self.payload = payload.clone();
         self.all_neighbors_same_header = true;
         self.change_config.end_turn();
         self.neighborhood = if new_round {

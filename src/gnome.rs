@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::IpAddr;
+use std::ops::Deref;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::Duration;
@@ -335,7 +336,7 @@ impl Gnome {
                     header: self.header,
                     payload,
                 };
-                let r = send_m.send(message);
+                let _r = send_m.send(message);
                 // println!("Converted data send result: {:?}", r);
             }
         }
@@ -374,7 +375,7 @@ impl Gnome {
                     let mut data_sent = false;
                     for neighbor in &mut self.fast_neighbors {
                         if neighbor.id == gnome_id {
-                            neighbor.add_requested_data(data);
+                            neighbor.add_requested_data(data.clone());
                             data_sent = true;
                             break;
                         }
@@ -382,7 +383,7 @@ impl Gnome {
                     if !data_sent {
                         for neighbor in &mut self.slow_neighbors {
                             if neighbor.id == gnome_id {
-                                neighbor.add_requested_data(data);
+                                neighbor.add_requested_data(data.clone());
                                 break;
                             }
                         }
@@ -392,7 +393,7 @@ impl Gnome {
                     let mut data_asked = false;
                     for neighbor in &mut self.fast_neighbors {
                         if neighbor.id == gnome_id {
-                            neighbor.request_data(request);
+                            neighbor.request_data(request.clone());
                             data_asked = true;
                             break;
                         }
@@ -400,7 +401,7 @@ impl Gnome {
                     if !data_asked {
                         for neighbor in &mut self.slow_neighbors {
                             if neighbor.id == gnome_id {
-                                neighbor.request_data(request);
+                                neighbor.request_data(request.clone());
                                 break;
                             }
                         }
@@ -417,11 +418,12 @@ impl Gnome {
                         avail_ids[added_ids] = cast_id;
                         // added_ids += 1;
                     }
-                    let request = NeighborRequest::UnicastRequest(self.swarm.id, avail_ids);
+                    let request =
+                        NeighborRequest::UnicastRequest(self.swarm.id, Box::new(avail_ids));
                     for neighbor in &mut self.fast_neighbors {
                         if neighbor.id == gnome_id {
                             println!("Sending UnicastRequest to neighbor");
-                            neighbor.request_data(request);
+                            neighbor.request_data(request.clone());
                             // let (sender, receiver) = channel();
                             // neighbor.add_unicast(cast_id, sender);
                             // self.pending_unicasts.insert(gnome_id, (cast_id, receiver));
@@ -433,7 +435,7 @@ impl Gnome {
                         for neighbor in &mut self.slow_neighbors {
                             if neighbor.id == gnome_id {
                                 request_sent = true;
-                                neighbor.request_data(request);
+                                neighbor.request_data(request.clone());
                                 // let (sender, receiver) = channel();
                                 // neighbor.add_unicast(cast_id, sender);
                                 // self.pending_unicasts.insert(gnome_id, (cast_id, receiver));
@@ -833,12 +835,12 @@ impl Gnome {
                 println!("Some neighbor request!");
                 match request {
                     NeighborRequest::UnicastRequest(_swarm_id, cast_ids) => {
-                        for cast_id in cast_ids {
-                            if self.swarm.is_unicast_id_available(cast_id) {
-                                self.swarm.insert_unicast(cast_id, neighbor.id);
+                        for cast_id in cast_ids.deref() {
+                            if self.swarm.is_unicast_id_available(*cast_id) {
+                                self.swarm.insert_unicast(*cast_id, neighbor.id);
                                 neighbor.add_requested_data(NeighborResponse::Unicast(
                                     self.swarm.id,
-                                    cast_id,
+                                    *cast_id,
                                 ));
                                 break;
                             }
@@ -1095,11 +1097,11 @@ impl Gnome {
         // eprintln!("{} >>> {}", self.id, message);
         for neighbor in &mut self.fast_neighbors {
             // println!("f");
-            neighbor.send_out(message);
+            neighbor.send_out(message.clone());
         }
         for neighbor in &mut self.slow_neighbors {
             // println!("s");
-            neighbor.send_out(message);
+            neighbor.send_out(message.clone());
         }
         // for neighbor in &mut self.new_neighbors {
         //     neighbor.send_out(message);
@@ -1178,7 +1180,7 @@ impl Gnome {
             swarm_time: self.swarm_time,
             neighborhood: self.neighborhood,
             header: self.header,
-            payload: self.payload,
+            payload: self.payload.clone(),
         }
     }
 
@@ -1384,7 +1386,7 @@ impl Gnome {
                         if (head, payload)
                             != (
                                 self.next_state.last_accepted_message.header,
-                                self.next_state.last_accepted_message.payload,
+                                self.next_state.last_accepted_message.payload.clone(),
                             )
                         {
                             self.proposals.push_back(my_proposed_data);
@@ -1487,18 +1489,18 @@ impl Gnome {
                     let msg = self.prepare_message();
                     for mut neighbor in new_neighbors {
                         let _ = neighbor.try_recv(
-                            self.next_state.last_accepted_message,
+                            self.next_state.last_accepted_message.clone(),
                             // self.next_state.last_accepted_reconf,
                         );
                         // println!("snd2 {}", msg);
-                        neighbor.send_out(msg);
+                        neighbor.send_out(msg.clone());
                         self.fast_neighbors.push(neighbor);
                     }
                 }
             }
 
             self.next_state
-                .reset_for_next_turn(true, self.header, self.payload);
+                .reset_for_next_turn(true, self.header, self.payload.clone());
             for neighbor in &mut self.fast_neighbors {
                 // println!("fast");
                 neighbor.start_new_round(self.swarm_time);
@@ -1510,7 +1512,7 @@ impl Gnome {
             true
         } else {
             self.next_state
-                .reset_for_next_turn(false, self.header, self.payload);
+                .reset_for_next_turn(false, self.header, self.payload.clone());
             false
         }
     }
@@ -1555,7 +1557,7 @@ impl Gnome {
                 }
             }
             let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv(
-                self.next_state.last_accepted_message,
+                self.next_state.last_accepted_message.clone(),
                 // self.next_state.last_accepted_reconf,
             );
             if !new_proposal_received {
@@ -1635,7 +1637,7 @@ impl Gnome {
                 }
             }
             let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv(
-                self.next_state.last_accepted_message,
+                self.next_state.last_accepted_message.clone(),
                 // self.next_state.last_accepted_reconf,
             );
             // println!(
@@ -1691,7 +1693,7 @@ impl Gnome {
                 .queried_neighbors
                 .contains(&neighbor.id)
             {
-                neighbor.request_data(request);
+                neighbor.request_data(request.clone());
                 request_sent = true;
                 self.neighbor_discovery.queried_neighbors.push(neighbor.id);
                 break;

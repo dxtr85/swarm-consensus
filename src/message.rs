@@ -7,7 +7,7 @@ use crate::NeighborResponse;
 use crate::SwarmTime;
 use std::fmt::Display;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Message {
     pub swarm_time: SwarmTime,
     pub neighborhood: Neighborhood,
@@ -34,7 +34,7 @@ impl Header {
 }
 pub type ConfigType = u8;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Payload {
     KeepAlive,
     Bye,

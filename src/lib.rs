@@ -63,7 +63,7 @@ pub struct CastID(pub u8);
 pub enum Response {
     Block(BlockID, Data),
     DataInquiry(GnomeId, NeighborRequest),
-    Listing(u8, [BlockID; 128]),
+    Listing(Vec<BlockID>),
     Unicast(SwarmID, CastID, Receiver<Data>),
     MulticastOrigin(SwarmID, CastID, Sender<Data>),
     Multicast(SwarmID, CastID, Receiver<Data>),
@@ -82,8 +82,8 @@ impl fmt::Debug for Response {
             Response::DataInquiry(gnome_id, data_id) => {
                 write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)
             }
-            Response::Listing(count, _data) => {
-                write!(f, "Listing with {:?} entries", count)
+            Response::Listing(data) => {
+                write!(f, "Listing with {:?} entries", data.len())
             }
             Response::Unicast(_sid, _cid, _rdata) => {
                 write!(f, "Unicast {:?}", _cid)

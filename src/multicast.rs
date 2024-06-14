@@ -51,7 +51,7 @@ impl Multicast {
             }
             for sender in self.subscribers.values() {
                 // println!("Send: {:?}", msg);
-                let _ = sender.send(msg);
+                let _ = sender.send(msg.clone());
             }
         }
     }

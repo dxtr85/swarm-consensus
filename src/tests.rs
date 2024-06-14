@@ -29,11 +29,12 @@ impl TestManager {
             neighbors.push((GnomeId(i), sender));
         }
 
-        let (id, (req_sender, resp_receiver)) = manager
+        let (swarm_id, (req_sender, resp_receiver)) = manager
             .join_a_swarm(swarm_name.to_string(), None, Some(mgr_neighbors))
             .unwrap();
         let manager = TestManager {
             manager,
+            swarm_id,
             swarm_name: swarm_name.to_string(),
             neighbors,
         };
@@ -153,7 +154,7 @@ fn gnome_message_exchange() {
     let _ = req_sender.send(Request::SendData(
         g_id,
         n_request,
-        NeighborResponse::Listing(1, [BlockID(1); 128]),
+        NeighborResponse::Listing(1, Box::new([BlockID(1); 128])),
     ));
 
     thread::sleep(Duration::from_millis(100));
