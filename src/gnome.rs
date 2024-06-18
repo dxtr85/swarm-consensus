@@ -184,7 +184,7 @@ impl NetworkSettings {
                 if value > 0 {
                     port + (value as u16)
                 } else {
-                    port - (value.abs() as u16)
+                    port - (value.unsigned_abs() as u16)
                 }
             }
             _ => port,
@@ -213,7 +213,7 @@ enum Proposal {
     Config(Configuration),
 }
 impl Proposal {
-    pub fn into_header_payload(&self) -> (Header, Payload) {
+    pub fn as_header_payload(&self) -> (Header, Payload) {
         match *self {
             Self::Block(b_id, data) => (Header::Block(b_id), Payload::Block(b_id, data)),
             Self::Config(config) => (
@@ -232,7 +232,7 @@ pub struct Gnome {
     round_start: SwarmTime,
     swarm_diameter: SwarmTime,
     receiver: Receiver<Request>,
-    band_receiver: Receiver<u32>,
+    band_receiver: Receiver<u64>,
     sender: Sender<Response>,
     fast_neighbors: Vec<Neighbor>,
     slow_neighbors: Vec<Neighbor>,
@@ -262,7 +262,7 @@ impl Gnome {
         swarm: Swarm,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
-        band_receiver: Receiver<u32>,
+        band_receiver: Receiver<u64>,
         network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
     ) -> Self {
@@ -282,8 +282,10 @@ impl Gnome {
             refreshed_neighbors: Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
             // block_id: BlockID(0),
             // data: Data(0),
-            header: Header::Block(BlockID(0)),
-            payload: Payload::Block(BlockID(0), Data(0)),
+            // header: Header::Block(BlockID(0)),
+            header: Header::Sync,
+            // payload: Payload::Block(BlockID(0), Data(0)),
+            payload: Payload::KeepAlive(1024),
             my_proposal: None,
             proposals: VecDeque::new(),
             next_state: NextState::new(),
@@ -304,7 +306,7 @@ impl Gnome {
         swarm: Swarm,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
-        band_receiver: Receiver<u32>,
+        band_receiver: Receiver<u64>,
         neighbors: Vec<Neighbor>,
         network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
@@ -858,6 +860,38 @@ impl Gnome {
                             neighbor.add_requested_data(response);
                         }
                     }
+                    NeighborRequest::SwarmSyncRequest => {
+                        let b_count = self.swarm.broadcasts_count();
+                        let m_count = self.swarm.multicasts_count();
+                        let b_casts = if b_count == 0 {
+                            vec![]
+                        } else {
+                            self.swarm.broadcast_ids()
+                        };
+
+                        let m_casts = if m_count == 0 {
+                            vec![]
+                        } else {
+                            self.swarm.multicast_ids()
+                        };
+
+                        let response = NeighborResponse::SwarmSync(b_casts, m_casts);
+                        neighbor.add_requested_data(response);
+                    }
+                    NeighborRequest::SubscribeRequest(is_bcast, cast_id) => {
+                        if let Some(origin) = self.swarm.add_subscriber(
+                            is_bcast,
+                            &cast_id,
+                            neighbor.id,
+                            neighbor.sender.clone(),
+                        ) {
+                            neighbor.add_requested_data(NeighborResponse::Subscribed(
+                                is_bcast, cast_id, origin, None,
+                            ));
+                        } else {
+                            // TODO: send response with failure indication
+                        }
+                    }
                     _ => {
                         let _ = self
                             .sender
@@ -930,6 +964,7 @@ impl Gnome {
             // println!("in while");
             let _ = self.serve_user_requests();
         }
+        self.send_sync_request();
         println!("Have neighbors!");
         let (timer_sender, timeout_receiver) = channel();
         let mut available_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
@@ -983,7 +1018,10 @@ impl Gnome {
             // if slow_new_proposal {
             //     println!("slow new proposal");
             // }
-            if new_proposal {
+            if new_proposal
+                || advance_to_next_turn
+                    && self.next_state.last_accepted_message.swarm_time == SwarmTime(0)
+            {
                 if self.chill_out.0 {
                     println!("Chill out is terminated abruptly");
                     self.send_immediate = true;
@@ -1041,7 +1079,7 @@ impl Gnome {
                     self.send_all();
                 }
                 self.send_immediate = false;
-                if self.check_if_new_round()
+                if self.check_if_new_round(available_bandwith)
                     && self.neighbor_discovery.tick_and_check()
                     // TODO: figure out some better algo
                     && available_bandwith > 256
@@ -1094,7 +1132,7 @@ impl Gnome {
 
     pub fn send_all(&mut self) {
         let message = self.prepare_message();
-        // eprintln!("{} >>> {}", self.id, message);
+        eprintln!("{} >>> {}", self.id, message);
         for neighbor in &mut self.fast_neighbors {
             // println!("f");
             neighbor.send_out(message.clone());
@@ -1184,6 +1222,15 @@ impl Gnome {
         }
     }
 
+    fn send_sync_request(&mut self) {
+        let request = NeighborRequest::SwarmSyncRequest;
+        if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
+            neighbor.request_data(request);
+        } else if let Some(neighbor) = self.slow_neighbors.iter_mut().next() {
+            neighbor.request_data(request);
+        }
+    }
+
     fn swap_neighbors(&mut self) {
         while let Some(neighbor) = self.slow_neighbors.pop() {
             println!(
@@ -1245,7 +1292,7 @@ impl Gnome {
         // if n_bid == BlockID(0) && n_data == Data(0) {
         if self.header == Header::Sync {
             if let Some(proposal) = self.proposals.pop_back() {
-                let (head, payload) = proposal.into_header_payload();
+                let (head, payload) = proposal.as_header_payload();
                 self.header = head;
                 self.payload = payload;
                 if self.header.is_reconfigure() {
@@ -1296,7 +1343,7 @@ impl Gnome {
         }
     }
 
-    fn check_if_new_round(&mut self) -> bool {
+    fn check_if_new_round(&mut self, available_bandwith: u64) -> bool {
         let all_gnomes_aware = self.neighborhood.0 as u32 >= self.swarm_diameter.0;
         let finish_round =
             self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
@@ -1382,7 +1429,7 @@ impl Gnome {
                     }
                     if let Some(my_proposed_data) = self.my_proposal {
                         // TODO: here we need to distinguish between Block and Reconfig
-                        let (head, payload) = my_proposed_data.into_header_payload();
+                        let (head, payload) = my_proposed_data.as_header_payload();
                         if (head, payload)
                             != (
                                 self.next_state.last_accepted_message.header,
@@ -1428,7 +1475,7 @@ impl Gnome {
                     //         self.data = Data(config.as_u32());
                     //     }
                     // }
-                    let (head, payload) = proposal.into_header_payload();
+                    let (head, payload) = proposal.as_header_payload();
                     self.header = head;
                     self.payload = payload;
                     self.my_proposal = Some(proposal);
@@ -1438,7 +1485,7 @@ impl Gnome {
                     // self.block_id = BlockID(0);
                     // self.data = Data(0);
                     self.header = Header::Sync;
-                    self.payload = Payload::KeepAlive;
+                    self.payload = Payload::KeepAlive(available_bandwith);
                     self.chill_out.0 = true;
                     self.chill_out.1 = 250;
                 }
@@ -1450,6 +1497,7 @@ impl Gnome {
                 // println!("Sync swarm time {}", self.swarm_time);
                 // self.next_state.swarm_time = self.swarm_time;
                 self.round_start = self.swarm_time;
+                self.next_state.last_accepted_message = self.prepare_message();
                 // if self.neighborhood.0 as u32 >= self.swarm_diameter.0 {
                 // println!("set N-0");
                 self.neighborhood = Neighborhood(0);
@@ -1467,7 +1515,7 @@ impl Gnome {
                     //         self.data = Data(config.as_u32());
                     //     }
                     // }
-                    let (head, payload) = proposal.into_header_payload();
+                    let (head, payload) = proposal.as_header_payload();
                     self.header = head;
                     self.payload = payload;
                     self.my_proposal = Some(proposal);
@@ -1546,12 +1594,36 @@ impl Gnome {
                             // TODO build querying mechanism
                             // TODO inform gnome's mechanism to ask another neighbor
                         }
+                        NeighborResponse::SwarmSync(b_casts, m_casts) => {
+                            // TODO serve this
+                            println!("Received SwarmSync response");
+                            if let Some(neighbor) = self
+                                .fast_neighbors
+                                .iter_mut()
+                                .max_by(|n, m| n.available_bandwith.cmp(&m.available_bandwith))
+                            {
+                                println!("Do something");
+                                for b_cast_id in b_casts {
+                                    neighbor.request_data(NeighborRequest::SubscribeRequest(
+                                        true, b_cast_id,
+                                    ))
+                                }
+                                for m_cast_id in m_casts {
+                                    neighbor.request_data(NeighborRequest::SubscribeRequest(
+                                        false, m_cast_id,
+                                    ))
+                                }
+                            }
+                        }
+                        NeighborResponse::Subscribed(is_bcast, cast_id, origin_id, source_opt) => {
+                            // TODO: handle this
+                        }
                         other => {
-                            println!("Uncovered NeighborResponse: {:?}", other);
+                            println!("Uncovered NeighborResponse: {:?}\nuncovered", other);
                         }
                     },
                     _ => {
-                        println!("Got response: {:?}", response);
+                        println!("Got response: {:?}\nunderscore", response);
                         let _ = self.sender.send(response);
                     }
                 }
@@ -1626,12 +1698,54 @@ impl Gnome {
                             // TODO build querying mechanism
                             // TODO inform gnome's mechanism to ask another neighbor
                         }
+                        NeighborResponse::SwarmSync(b_casts, m_casts) => {
+                            println!(
+                                "Got SwarmSync response with {} bcasts and {} mcasts",
+                                b_casts.len(),
+                                m_casts.len()
+                            );
+                        }
+                        NeighborResponse::Subscribed(is_bcast, cast_id, origin, source) => {
+                            let source = source.unwrap();
+                            let (send_d, recv_d) = channel();
+                            let (send_m, recv_m) = channel();
+                            let activated = if is_bcast {
+                                self.activate_broadcast_at_neighbor(source, cast_id, send_m)
+                            } else {
+                                //     self.activate_multicast(cast_id, send);
+                                false
+                            };
+                            if activated {
+                                let m_cast = Multicast::new(
+                                    origin,
+                                    (source, recv_m),
+                                    vec![],
+                                    HashMap::new(),
+                                    Some(send_d),
+                                );
+                                if is_bcast {
+                                    self.swarm.insert_broadcast(cast_id, m_cast);
+                                    let _res = self.sender.send(Response::Broadcast(
+                                        self.swarm.id,
+                                        cast_id,
+                                        recv_d,
+                                    ));
+                                } else {
+                                    self.swarm.insert_multicast(cast_id, m_cast);
+                                    let _res = self.sender.send(Response::Multicast(
+                                        self.swarm.id,
+                                        cast_id,
+                                        recv_d,
+                                    ));
+                                }
+                            }
+                        }
                         other => {
-                            println!("Uncovered NeighborResponse: {:?}", other);
+                            println!("Uncovered NeighborResponse: {:?}\nother", other);
                         }
                     },
                     _ => {
-                        println!("Got response: {:?}", response);
+                        println!("Got response: {:?}\nunderscore", response);
                         let _ = self.sender.send(response);
                     }
                 }

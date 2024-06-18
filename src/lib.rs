@@ -113,7 +113,7 @@ impl fmt::Debug for Response {
 pub struct NotificationBundle {
     pub swarm_name: String,
     pub request_sender: Sender<Request>,
-    pub token_sender: Sender<u32>,
+    pub token_sender: Sender<u64>,
     pub network_settings_receiver: Receiver<NetworkSettings>,
 }
 

@@ -42,6 +42,10 @@ impl Multicast {
         self.source = source;
     }
 
+    pub fn add_subscriber(&mut self, subscriber: (GnomeId, Sender<Message>)) {
+        self.subscribers.insert(subscriber.0, subscriber.1);
+    }
+
     pub fn serve(&mut self) {
         while let Ok(msg) = self.source.1.try_recv() {
             if let Some(sender) = &self.to_user {

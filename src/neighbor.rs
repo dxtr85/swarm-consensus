@@ -51,6 +51,7 @@ pub struct Neighbor {
     gnome_neighborhood: Neighborhood,
     active_unicasts: HashMap<CastID, Sender<Data>>,
     active_broadcasts: HashMap<CastID, Sender<Message>>,
+    pub available_bandwith: u64,
     // pending_unicasts: HashMap<CastID, Sender<Data>>,
 }
 
@@ -62,19 +63,21 @@ pub enum NeighborRequest {
     ForwardConnectRequest(NetworkSettings),
     ConnectRequest(u8, GnomeId, NetworkSettings),
     SwarmSyncRequest,
+    SubscribeRequest(bool, CastID),
     CustomRequest(u8, Data),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NeighborResponse {
-    Listing(u8, Box<[BlockID; 128]>),
+    Listing(u8, Vec<BlockID>),
     Block(BlockID, Data),
     Unicast(SwarmID, CastID),
     ForwardConnectResponse(NetworkSettings),
     ForwardConnectFailed,
     ConnectResponse(u8, NetworkSettings),
     AlreadyConnected(u8),
-    SwarmSync(u8, u8, Box<[CastID; 256]>, Box<[CastID; 256]>),
+    SwarmSync(Vec<CastID>, Vec<CastID>),
+    Subscribed(bool, CastID, GnomeId, Option<GnomeId>),
     CustomResponse(u8, Data),
 }
 
@@ -96,7 +99,7 @@ impl Neighbor {
             neighborhood: Neighborhood(0),
             prev_neighborhood: None,
             header: Header::Sync,
-            payload: Payload::KeepAlive,
+            payload: Payload::KeepAlive(0),
             user_requests: VecDeque::new(),
             user_responses: VecDeque::new(),
             requests: VecDeque::new(),
@@ -105,6 +108,7 @@ impl Neighbor {
             gnome_neighborhood: Neighborhood(0),
             active_unicasts: HashMap::new(),
             active_broadcasts: HashMap::new(),
+            available_bandwith: 1024,
             // pending_unicasts: HashMap::new(),
         }
     }
@@ -114,7 +118,7 @@ impl Neighbor {
         // self.swarm_time = swarm_time;
         self.round_start = swarm_time;
         self.header = Header::Sync;
-        self.payload = Payload::KeepAlive;
+        self.payload = Payload::KeepAlive(self.available_bandwith);
         self.prev_neighborhood = None;
         self.neighborhood = Neighborhood(0);
     }
@@ -142,7 +146,7 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
-            // println!("M: {:?}", message);
+            println!("{} < {}", self.id, message);
             if message.is_cast() {
                 // println!("Unserved casting 1");
                 self.send_casting(message.clone());
@@ -250,7 +254,8 @@ impl Neighbor {
                 }
             };
             match payload {
-                Payload::KeepAlive => {
+                Payload::KeepAlive(bandwith) => {
+                    self.available_bandwith = *bandwith;
                     // println!("KeepAlive");
                 }
                 Payload::Bye => {
@@ -290,16 +295,16 @@ impl Neighbor {
                     self.requests.push_front(request.clone());
                 }
                 Payload::Response(response) => match response {
-                    NeighborResponse::Listing(count, listing) => {
-                        let mut list_ver = vec![];
-                        let mut i: usize = 0;
-                        let count: usize = *count as usize;
-                        while i < count {
-                            i += 1;
-                            list_ver.push(listing[i]);
-                        }
+                    NeighborResponse::Listing(_count, listing) => {
+                        // let mut list_ver = vec![];
+                        // let mut i: usize = 0;
+                        // let count: usize = *count as usize;
+                        // while i < count {
+                        //     i += 1;
+                        //     list_ver.push(listing[i]);
+                        // }
                         self.user_responses
-                            .push_front(Response::Listing(Vec::from(list_ver)))
+                            .push_front(Response::Listing(listing.clone()))
                     }
                     NeighborResponse::Block(block_id, data) => {
                         self.user_responses
@@ -331,10 +336,19 @@ impl Neighbor {
                             .push_front(Response::ToGnome(resp.clone()));
                         //TODO send this to gnome.ongoing_requests
                     }
-                    resp @ NeighborResponse::SwarmSync(_bct, _mct, _bcasts, _mcasts) => {
+                    resp @ NeighborResponse::SwarmSync(_bcasts, _mcasts) => {
                         self.user_responses
                             .push_front(Response::ToGnome(resp.clone()));
-                        //TODO send this to gnome.ongoing_requests
+                    }
+                    NeighborResponse::Subscribed(is_bcast, cast_id, origin_id, _none) => {
+                        self.user_responses.push_front(Response::ToGnome(
+                            NeighborResponse::Subscribed(
+                                *is_bcast,
+                                *cast_id,
+                                *origin_id,
+                                Some(self.id),
+                            ),
+                        ));
                     }
                     NeighborResponse::CustomResponse(id, data) => {
                         self.user_responses.push_front(Response::Custom(*id, *data))

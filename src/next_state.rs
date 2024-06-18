@@ -74,7 +74,7 @@ impl NextState {
             header: Header::Sync,
             all_neighbors_same_header: true,
             last_accepted_message: Message::block(),
-            payload: Payload::KeepAlive,
+            payload: Payload::KeepAlive(1024),
         }
     }
 
@@ -82,6 +82,9 @@ impl NextState {
         // println!("Update {:?}", neighbor);
         let neighbor_st = neighbor.swarm_time;
 
+        if neighbor_st < self.last_accepted_message.swarm_time {
+            return;
+        }
         if neighbor_st < self.swarm_time_max && neighbor_st < self.swarm_time {
             self.swarm_time = neighbor_st;
         }
@@ -137,7 +140,9 @@ impl NextState {
                 }
             }
         } else if neighbor.header == self.header && self.neighborhood.0 > neighbor.neighborhood.0 {
+            println!("nhood downgraded from {}", self.neighborhood);
             self.neighborhood = neighbor.neighborhood;
+            println!("nhood downgraded to {}", self.neighborhood);
             if neighbor.header.is_reconfigure() {
                 if let Payload::Reconfigure(config) = neighbor.payload {
                     match config {

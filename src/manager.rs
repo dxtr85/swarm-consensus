@@ -87,7 +87,7 @@ impl Manager {
         &mut self,
         swarm_name: String,
         sender: Sender<Request>,
-        avail_bandwith_sender: Sender<u32>,
+        avail_bandwith_sender: Sender<u64>,
         network_settings_receiver: Receiver<NetworkSettings>,
     ) {
         // println!("About to send notification");

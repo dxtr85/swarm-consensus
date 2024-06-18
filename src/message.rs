@@ -36,7 +36,7 @@ pub type ConfigType = u8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Payload {
-    KeepAlive,
+    KeepAlive(u64),
     Bye,
     Reconfigure(Configuration),
     Block(BlockID, Data),
@@ -208,7 +208,7 @@ impl Display for BlockID {
 impl Display for Payload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::KeepAlive => write!(f, "",),
+            Self::KeepAlive(_bandwith) => write!(f, "",),
             Self::Bye => write!(f, "Bye",),
             Self::Reconfigure(_) => write!(f, "Reconfigure",),
             Self::Request(_) => write!(f, "Request"),

@@ -19,7 +19,7 @@ impl TestManager {
         swarm_name: &str,
         neighbors_count: u64,
     ) -> (TestManager, Sender<Request>, Receiver<Response>) {
-        let (send, recv) = channel();
+        let (send, _recv) = channel();
         let mut manager = Manager::new(GnomeId(0), None, send);
         let mut neighbors = Vec::with_capacity(neighbors_count as usize);
         let mut mgr_neighbors: Vec<Neighbor> = Vec::with_capacity(neighbors_count as usize);
@@ -154,7 +154,7 @@ fn gnome_message_exchange() {
     let _ = req_sender.send(Request::SendData(
         g_id,
         n_request,
-        NeighborResponse::Listing(1, Box::new([BlockID(1); 128])),
+        NeighborResponse::Listing(1, vec![BlockID(1)]),
     ));
 
     thread::sleep(Duration::from_millis(100));

@@ -91,7 +91,7 @@ impl Swarm {
         id: SwarmID,
         gnome_id: GnomeId,
         neighbors: Option<Vec<Neighbor>>,
-        band_receiver: Receiver<u32>,
+        band_receiver: Receiver<u64>,
         net_settings_send: Sender<NetworkSettings>,
         network_settings: NetworkSettings,
     ) -> (Sender<Request>, Receiver<Response>) {
@@ -166,6 +166,51 @@ impl Swarm {
     pub fn serve_casts(&mut self) {
         self.serve_broadcasts();
     }
+
+    pub fn broadcasts_count(&self) -> u8 {
+        self.active_broadcasts.len() as u8
+    }
+    pub fn multicasts_count(&self) -> u8 {
+        self.active_multicasts.len() as u8
+    }
+    pub fn broadcast_ids(&self) -> Vec<CastID> {
+        let mut ids = vec![];
+        for id in self.active_broadcasts.keys() {
+            ids.push(*id);
+        }
+        ids
+    }
+
+    pub fn multicast_ids(&self) -> Vec<CastID> {
+        let mut ids = vec![];
+        for id in self.active_multicasts.keys() {
+            ids.push(*id);
+        }
+        ids
+    }
+
+    pub fn add_subscriber(
+        &mut self,
+        is_bcast: bool,
+        cast_id: &CastID,
+        sub_id: GnomeId,
+        send: Sender<Message>,
+    ) -> Option<GnomeId> {
+        if is_bcast {
+            if let Some(bcast) = self.active_broadcasts.get_mut(cast_id) {
+                bcast.add_subscriber((sub_id, send));
+                Some(bcast.origin())
+            } else {
+                None
+            }
+        } else if let Some(mcast) = self.active_multicasts.get_mut(cast_id) {
+            mcast.add_subscriber((sub_id, send));
+            Some(mcast.origin())
+        } else {
+            None
+        }
+    }
+
     fn serve_broadcasts(&mut self) {
         for bcast in self.active_broadcasts.values_mut() {
             bcast.serve();
