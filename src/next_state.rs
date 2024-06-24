@@ -140,9 +140,9 @@ impl NextState {
                 }
             }
         } else if neighbor.header == self.header && self.neighborhood.0 > neighbor.neighborhood.0 {
-            println!("nhood downgraded from {}", self.neighborhood);
+            // println!("nhood downgraded from {}", self.neighborhood);
             self.neighborhood = neighbor.neighborhood;
-            println!("nhood downgraded to {}", self.neighborhood);
+            // println!("nhood downgraded to {}", self.neighborhood);
             if neighbor.header.is_reconfigure() {
                 if let Payload::Reconfigure(config) = neighbor.payload {
                     match config {
@@ -156,6 +156,8 @@ impl NextState {
                 }
             }
             // TODO: handle reconfig
+            // } else {
+            //     println!("Unhandled next_state {:?} update: {:?}", self, neighbor);
         }
         // println!("Po wszystkim: {} {}", self.block_id, self.data);
     }

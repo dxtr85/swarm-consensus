@@ -15,8 +15,9 @@ use std::fmt::Display;
 use std::collections::VecDeque;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::Duration;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Neighborhood(pub u8);
 
 impl Neighborhood {
@@ -76,7 +77,7 @@ pub enum NeighborResponse {
     ForwardConnectFailed,
     ConnectResponse(u8, NetworkSettings),
     AlreadyConnected(u8),
-    SwarmSync(Vec<CastID>, Vec<CastID>),
+    SwarmSync(u8, Vec<CastID>, Vec<CastID>),
     Subscribed(bool, CastID, GnomeId, Option<GnomeId>),
     CustomResponse(u8, Data),
 }
@@ -126,6 +127,19 @@ impl Neighbor {
     // pub fn add_unicast(&mut self, cast_id: CastID, sender: Sender<Data>) {
     //     self.pending_unicasts.insert(cast_id, sender);
     // }
+    pub fn recv(&mut self, timeout: Duration) -> Option<Message> {
+        let recv_result = self.receiver.recv_timeout(timeout);
+        if let Ok(response) = recv_result {
+            // TODO: we should update Neighbor state according to
+            self.header = response.header;
+            self.payload = response.payload.clone();
+            self.neighborhood = response.neighborhood;
+            self.swarm_time = response.swarm_time;
+
+            return Some(response);
+        }
+        None
+    }
 
     pub fn try_recv(
         &mut self,
@@ -137,6 +151,7 @@ impl Neighbor {
         let sanity_passed = true;
         let mut new_proposal = false;
         let mut drop_me = false;
+        let mut force_break = false;
         while let Ok(
             ref message @ Message {
                 swarm_time,
@@ -152,12 +167,14 @@ impl Neighbor {
                 self.send_casting(message.clone());
                 continue;
             }
-            message_recvd = true;
             if message.header == last_accepted_message.header
+                && message.neighborhood == Neighborhood(7)
                 && message.payload == last_accepted_message.payload
             {
+                println!("Ignoring: {}", message);
                 continue;
             }
+            message_recvd = true;
             // if let Some(config) = last_accepted_reconf {
             //     if message.header == Header::Reconfigure
             //         && message.payload == Payload::Reconfigure(config)
@@ -237,14 +254,17 @@ impl Neighbor {
                 Header::Block(id) => {
                     // println!("Neighbor proposal recv: {:?}", id);
                     if let Header::Block(current_id) = self.header {
+                        force_break = true;
+                        self.neighborhood = neighborhood;
                         if current_id == id {
                             self.prev_neighborhood = Some(self.neighborhood);
+                            // if neighborhood.0 as u32 >= self.swarm_diameter.0 {
+                            // }
                         } else {
                             new_proposal = true;
                             self.prev_neighborhood = None;
                             self.header = header;
                         }
-                        self.neighborhood = neighborhood;
                     } else {
                         self.header = header;
                         new_proposal = true;
@@ -336,7 +356,7 @@ impl Neighbor {
                             .push_front(Response::ToGnome(resp.clone()));
                         //TODO send this to gnome.ongoing_requests
                     }
-                    resp @ NeighborResponse::SwarmSync(_bcasts, _mcasts) => {
+                    resp @ NeighborResponse::SwarmSync(_chill_phase, _bcasts, _mcasts) => {
                         self.user_responses
                             .push_front(Response::ToGnome(resp.clone()));
                     }
@@ -370,6 +390,9 @@ impl Neighbor {
                 }
             }
             // println!("returning: {} {:?}", new_proposal, self.neighborhood);
+            if force_break {
+                break;
+            }
         }
         (message_recvd, sanity_passed, new_proposal, drop_me)
     }

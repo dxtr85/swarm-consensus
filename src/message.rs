@@ -128,12 +128,30 @@ impl Configuration {
 pub struct BlockID(pub u32);
 
 impl Message {
+    pub fn new(
+        swarm_time: SwarmTime,
+        header: Header,
+        payload: Payload,
+        neighborhood: Neighborhood,
+    ) -> Message {
+        Message {
+            swarm_time,
+            neighborhood,
+            header,
+            payload,
+        }
+    }
     pub fn set_payload(&self, payload: Payload) -> Message {
         Message { payload, ..*self }
     }
 
     pub fn include_request(&self, request: NeighborRequest) -> Message {
         let payload = Payload::Request(request);
+        Message { payload, ..*self }
+    }
+
+    pub fn include_response(&self, response: NeighborResponse) -> Message {
+        let payload = Payload::Response(response);
         Message { payload, ..*self }
     }
 
