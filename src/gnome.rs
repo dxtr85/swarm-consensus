@@ -1446,20 +1446,20 @@ impl Gnome {
         // if n_bid == BlockID(0) && n_data == Data(0) {
         if self.header == Header::Sync {
             if let Some(proposal) = self.proposals.pop_back() {
-                let (head, payload) = proposal.as_header_payload();
-                self.header = head;
-                self.payload = payload;
+                (self.header, self.payload) = proposal.as_header_payload();
                 if self.header.is_reconfigure() {
-                    if let Payload::Reconfigure(config) = self.payload {
-                        if let Configuration::StartBroadcast(g_id, c_id) = config {
-                            self.next_state.change_config = ChangeConfig::AddBroadcast {
-                                id: c_id,
-                                origin: g_id,
-                                source: g_id,
-                                filtered_neighbors: vec![],
-                                turn_ended: false,
-                            };
-                        }
+                    if let Payload::Reconfigure(Configuration::StartBroadcast(g_id, c_id)) =
+                        self.payload
+                    {
+                        // if let Configuration::StartBroadcast(g_id, c_id) = config {
+                        self.next_state.change_config = ChangeConfig::AddBroadcast {
+                            id: c_id,
+                            origin: g_id,
+                            source: g_id,
+                            filtered_neighbors: vec![],
+                            turn_ended: false,
+                        };
+                        // }
                     }
                 }
                 // println!("some");
@@ -1480,20 +1480,20 @@ impl Gnome {
                 self.my_proposal = Some(proposal);
                 self.send_immediate = true;
             }
-        } else if self.header.is_reconfigure() {
-            match self.payload {
-                Payload::Reconfigure(config) => match config {
-                    Configuration::StartBroadcast(_gid, _cid) => {
-                        // if self.pending_casting.
-                    }
-                    _ => {
-                        println!("Unhandled config payload");
-                    }
-                },
-                _ => {
-                    println!("Unexpected payload while for Reconfigure header");
-                }
-            }
+            // } else if self.header.is_reconfigure() {
+            //     match self.payload {
+            //         Payload::Reconfigure(config) => match config {
+            //             Configuration::StartBroadcast(_gid, _cid) => {
+            //                 // if self.pending_casting.
+            //             }
+            //             _ => {
+            //                 println!("Unhandled config payload");
+            //             }
+            //         },
+            //         _ => {
+            //             println!("Unexpected payload while for Reconfigure header");
+            //         }
+            //     }
         }
     }
 
@@ -1593,19 +1593,6 @@ impl Gnome {
                         {
                             self.proposals.push_back(my_proposed_data);
                         }
-                        // match my_proposed_data {
-                        //     Proposal::Block(b_id, data) => {
-                        //         // if data.0 != self.block_id.0 {
-                        //         if data.0 != self.block_id.0 {
-                        //             self.proposals.push_back(my_proposed_data);
-                        //         }
-                        //     }
-                        //     Proposal::Config(config) => {
-                        //         if self.block_id.0 != 0 || self.data.0 != config.as_u32() {
-                        //             self.proposals.push_back(my_proposed_data);
-                        //         }
-                        //     }
-                        // }
                         self.my_proposal = None;
                     }
 
@@ -1619,26 +1606,10 @@ impl Gnome {
                     );
                 }
                 if let Some(proposal) = self.proposals.pop_back() {
-                    // println!("some");
-                    // match proposal {
-                    //     Proposal::Block(data) => {
-                    //         self.block_id = BlockID(data.0);
-                    //         self.data = data;
-                    //     }
-                    //     Proposal::Config(config) => {
-                    //         self.block_id = BlockID(0);
-                    //         self.data = Data(config.as_u32());
-                    //     }
-                    // }
-                    let (head, payload) = proposal.as_header_payload();
-                    self.header = head;
-                    self.payload = payload;
+                    (self.header, self.payload) = proposal.as_header_payload();
                     self.my_proposal = Some(proposal);
                     self.send_immediate = true;
                 } else {
-                    // println!("none");
-                    // self.block_id = BlockID(0);
-                    // self.data = Data(0);
                     self.header = Header::Sync;
                     self.payload = Payload::KeepAlive(available_bandwith);
                     self.chill_out.0 = true;
@@ -1670,9 +1641,7 @@ impl Gnome {
                     //         self.data = Data(config.as_u32());
                     //     }
                     // }
-                    let (head, payload) = proposal.as_header_payload();
-                    self.header = head;
-                    self.payload = payload;
+                    (self.header, self.payload) = proposal.as_header_payload();
                     self.my_proposal = Some(proposal);
                     self.send_immediate = true;
                 } else {
