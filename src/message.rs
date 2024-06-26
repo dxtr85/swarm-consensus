@@ -197,6 +197,15 @@ impl Message {
             Payload::Unicast(_, _) | Payload::Multicast(_, _) | Payload::Broadcast(_, _)
         )
     }
+    pub fn is_unicast(&self) -> bool {
+        matches!(self.payload, Payload::Unicast(_, _))
+    }
+    pub fn is_multicast(&self) -> bool {
+        matches!(self.payload, Payload::Multicast(_, _))
+    }
+    pub fn is_broadcast(&self) -> bool {
+        matches!(self.payload, Payload::Broadcast(_, _))
+    }
 }
 
 impl Display for Message {
