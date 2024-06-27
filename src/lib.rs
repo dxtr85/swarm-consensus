@@ -9,7 +9,7 @@ pub use crate::gnome::NetworkSettings;
 pub use crate::gnome::PortAllocationRule;
 pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmTime;
-pub use message::{Header, Message, Payload};
+pub use message::{Header, Message, Payload, WrappedMessage};
 use std::net::IpAddr;
 mod manager;
 pub use manager::Manager;
@@ -21,6 +21,7 @@ mod neighbor;
 pub use crate::neighbor::Neighbor;
 pub use crate::neighbor::NeighborResponse;
 pub use crate::neighbor::Neighborhood;
+pub use multicast::CastMessage;
 mod next_state;
 mod proposal;
 use crate::next_state::NextState;
@@ -64,7 +65,7 @@ pub enum Response {
     Block(BlockID, Data),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(Vec<BlockID>),
-    Unicast(SwarmID, CastID, Receiver<Data>),
+    Unicast(SwarmID, CastID, Receiver<CastMessage>),
     MulticastOrigin(SwarmID, CastID, Sender<Data>),
     Multicast(SwarmID, CastID, Receiver<Data>),
     BroadcastOrigin(SwarmID, CastID, Sender<Data>),

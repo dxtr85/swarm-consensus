@@ -2,11 +2,17 @@ use crate::neighbor::NeighborRequest;
 use crate::neighbor::Neighborhood;
 use crate::proposal::Data;
 use crate::CastID;
+use crate::CastMessage;
 use crate::GnomeId;
 use crate::NeighborResponse;
 use crate::SwarmTime;
 use std::fmt::Display;
 
+#[derive(Clone, Debug)]
+pub enum WrappedMessage {
+    Cast(CastMessage),
+    Regular(Message),
+}
 #[derive(Clone, Debug)]
 pub struct Message {
     pub swarm_time: SwarmTime,

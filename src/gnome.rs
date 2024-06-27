@@ -2,7 +2,7 @@ use crate::message::BlockID;
 use crate::message::Configuration;
 use crate::message::Header;
 use crate::message::Payload;
-use crate::multicast::Multicast;
+use crate::multicast::{CastMessage, Multicast};
 use crate::neighbor::NeighborResponse;
 use crate::neighbor::Neighborhood;
 use crate::next_state::ChangeConfig;
@@ -16,6 +16,7 @@ use crate::NextState;
 use crate::Request;
 use crate::Response;
 use crate::SwarmTime;
+use crate::WrappedMessage;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
 
@@ -253,7 +254,7 @@ pub struct Gnome {
     ongoing_requests: HashMap<u8, OngoingRequest>,
     neighbor_discovery: NeighborDiscovery,
     chill_out: (bool, u8, Duration),
-    data_converters: HashMap<(bool, CastID), (Receiver<Data>, Sender<Message>)>,
+    data_converters: HashMap<(bool, CastID), (Receiver<Data>, Sender<CastMessage>)>,
 }
 
 impl Gnome {
@@ -327,17 +328,17 @@ impl Gnome {
     fn serve_user_data(&self) {
         for ((is_bcast, c_id), (recv_d, send_m)) in &self.data_converters {
             while let Ok(data) = recv_d.try_recv() {
-                let payload = if *is_bcast {
-                    Payload::Broadcast(*c_id, data)
+                let message = if *is_bcast {
+                    CastMessage::new_broadcast(*c_id, data)
                 } else {
-                    Payload::Multicast(*c_id, data)
+                    CastMessage::new_multicast(*c_id, data)
                 };
-                let message = Message {
-                    swarm_time: self.swarm_time,
-                    neighborhood: self.neighborhood,
-                    header: self.header,
-                    payload,
-                };
+                // let message = Message {
+                //     swarm_time: self.swarm_time,
+                //     neighborhood: self.neighborhood,
+                //     header: self.header,
+                //     payload,
+                // };
                 let _r = send_m.send(message);
                 // println!("Converted data send result: {:?}", r);
             }
@@ -823,6 +824,17 @@ impl Gnome {
         }
     }
 
+    fn serve_neighbors_casts(&self) {
+        for neighbor in &self.fast_neighbors {
+            neighbor.try_recv_cast();
+        }
+        for neighbor in &self.slow_neighbors {
+            neighbor.try_recv_cast();
+        }
+        for neighbor in &self.refreshed_neighbors {
+            neighbor.try_recv_cast();
+        }
+    }
     fn serve_sync_requests(&mut self) {
         if self.new_neighbors.is_empty() {
             return;
@@ -1047,6 +1059,7 @@ impl Gnome {
             self.serve_neighbors_requests(true);
             self.serve_neighbors_requests(false);
             self.serve_ongoing_requests();
+            self.serve_neighbors_casts();
             self.swarm.serve_casts();
             // let refr_new_proposal = self.try_recv_refreshed();
             // print!(
@@ -1532,7 +1545,7 @@ impl Gnome {
                                 filtered_neighbors,
                                 ..
                             } => {
-                                let mut subscribers: HashMap<GnomeId, Sender<Message>> =
+                                let mut subscribers: HashMap<GnomeId, Sender<WrappedMessage>> =
                                     self.get_neighbor_ids_and_senders();
                                 subscribers.retain(|&gid, _s| !filtered_neighbors.contains(&gid));
                                 let (send_n, recv_n) = channel();
@@ -1970,7 +1983,7 @@ impl Gnome {
             // }
         }
     }
-    fn get_neighbor_ids_and_senders(&self) -> HashMap<GnomeId, Sender<Message>> {
+    fn get_neighbor_ids_and_senders(&self) -> HashMap<GnomeId, Sender<WrappedMessage>> {
         let mut ids = HashMap::new();
         for neighbor in &self.fast_neighbors {
             ids.insert(neighbor.id, neighbor.sender.clone());
@@ -1992,7 +2005,7 @@ impl Gnome {
         id: CastID,
         // b_cast: Multicast,
         recv_d: Receiver<Data>,
-        send_n: Sender<Message>,
+        send_n: Sender<CastMessage>,
     ) {
         self.data_converters.insert((true, id), (recv_d, send_n));
     }
@@ -2001,7 +2014,7 @@ impl Gnome {
         &mut self,
         id: GnomeId,
         cast_id: CastID,
-        sender: Sender<Message>,
+        sender: Sender<CastMessage>,
     ) -> bool {
         for neighbor in &mut self.fast_neighbors {
             if neighbor.id == id {

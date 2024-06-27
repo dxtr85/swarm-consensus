@@ -58,12 +58,28 @@ impl TestManager {
     }
 }
 
-fn build_a_neighbor(id: GnomeId) -> (Neighbor, Sender<Message>, Receiver<Message>) {
+fn build_a_neighbor(
+    id: GnomeId,
+) -> (
+    Neighbor,
+    Sender<Message>,
+    Sender<CastMessage>,
+    Receiver<WrappedMessage>,
+) {
     let (mocked_remote_sender, receiver) = channel::<Message>();
-    let (sender, mocked_remote_receiver) = channel::<Message>();
+    let (sender, mocked_remote_receiver) = channel::<WrappedMessage>();
+    let (mocked_cast_sender, cast_remote_receiver) = channel::<CastMessage>();
     (
-        Neighbor::from_id_channel_time(id, receiver, sender, SwarmTime(0), DEFAULT_SWARM_DIAMETER),
+        Neighbor::from_id_channel_time(
+            id,
+            receiver,
+            cast_remote_receiver,
+            sender,
+            SwarmTime(0),
+            DEFAULT_SWARM_DIAMETER,
+        ),
         mocked_remote_sender,
+        mocked_cast_sender,
         mocked_remote_receiver,
     )
 }

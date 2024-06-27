@@ -1,6 +1,9 @@
 use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
+use crate::message::WrappedMessage;
+use crate::multicast::CastMessage;
+use crate::multicast::CastType;
 use crate::CastID;
 use crate::Data;
 use crate::GnomeId;
@@ -36,7 +39,8 @@ impl Display for Neighborhood {
 pub struct Neighbor {
     pub id: GnomeId,
     receiver: Receiver<Message>,
-    pub sender: Sender<Message>,
+    cast_receiver: Receiver<CastMessage>,
+    pub sender: Sender<WrappedMessage>,
     round_start: SwarmTime,
     pub swarm_time: SwarmTime,
     pub swarm_diameter: SwarmTime,
@@ -50,8 +54,8 @@ pub struct Neighbor {
     pub requested_data: VecDeque<NeighborResponse>,
     gnome_header: Header,
     gnome_neighborhood: Neighborhood,
-    active_unicasts: HashMap<CastID, Sender<Data>>,
-    active_broadcasts: HashMap<CastID, Sender<Message>>,
+    active_unicasts: HashMap<CastID, Sender<CastMessage>>,
+    active_broadcasts: HashMap<CastID, Sender<CastMessage>>,
     pub available_bandwith: u64,
     // pending_unicasts: HashMap<CastID, Sender<Data>>,
 }
@@ -86,7 +90,8 @@ impl Neighbor {
     pub fn from_id_channel_time(
         id: GnomeId,
         receiver: Receiver<Message>,
-        sender: Sender<Message>,
+        cast_receiver: Receiver<CastMessage>,
+        sender: Sender<WrappedMessage>,
         swarm_time: SwarmTime,
         swarm_diameter: SwarmTime,
     ) -> Self {
@@ -94,6 +99,7 @@ impl Neighbor {
             id,
             receiver,
             round_start: SwarmTime(0),
+            cast_receiver,
             sender,
             swarm_time,
             swarm_diameter,
@@ -141,6 +147,29 @@ impl Neighbor {
         None
     }
 
+    pub fn try_recv_cast(&self) {
+        while let Ok(c_msg @ CastMessage { c_type, id, .. }) = self.cast_receiver.try_recv() {
+            match c_type {
+                CastType::Broadcast => {
+                    if let Some(sender) = self.active_broadcasts.get(&id) {
+                        let _ = sender.send(c_msg);
+                    }
+                }
+                CastType::Multicast => {
+                    // TODO
+                    // if let Some(sender) = self.active_multicasts.get(&id) {
+                    //     let _ = sender.send(c_msg);
+                    // }
+                }
+                CastType::Unicast => {
+                    if let Some(sender) = self.active_unicasts.get(&id) {
+                        let _ = sender.send(c_msg);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn try_recv(
         &mut self,
         last_accepted_message: Message,
@@ -163,8 +192,8 @@ impl Neighbor {
         {
             println!("{} < {}", self.id, message);
             if message.is_cast() {
-                // println!("Unserved casting 1");
-                self.send_casting(message.clone());
+                println!("Unserved casting 1");
+                // self.send_casting(message.clone());
                 continue;
             }
             if message.header == last_accepted_message.header
@@ -198,7 +227,8 @@ impl Neighbor {
                 // TODO: sanity might fail for casting messages, but we still
                 // need to put them throught for user to receive
                 if message.is_cast() {
-                    self.send_casting(message.clone());
+                    println!("Unserved casting!");
+                    // self.send_casting(message.clone());
                 } else if message.is_request() || message.is_response() {
                     // println!("Unserved requests");
                 } else {
@@ -377,7 +407,7 @@ impl Neighbor {
                 Payload::Unicast(cid, data) => {
                     // println!("Served casting 3");
                     if let Some(sender) = self.active_unicasts.get(&cid) {
-                        let _ = sender.send(*data);
+                        let _ = sender.send(CastMessage::new_unicast(*cid, *data));
                     }
                 }
                 Payload::Multicast(_mid, _data) => {
@@ -386,7 +416,8 @@ impl Neighbor {
                 }
                 Payload::Broadcast(_bid, _data) => {
                     // TODO: serve this
-                    self.send_casting(message.clone());
+                    println!("Unserved casting n!");
+                    // self.send_casting(message.clone());
                 }
             }
             // println!("returning: {} {:?}", new_proposal, self.neighborhood);
@@ -397,25 +428,25 @@ impl Neighbor {
         (message_recvd, sanity_passed, new_proposal, drop_me)
     }
 
-    pub fn activate_broadcast(&mut self, cast_id: CastID, sender: Sender<Message>) {
+    pub fn activate_broadcast(&mut self, cast_id: CastID, sender: Sender<CastMessage>) {
         self.active_broadcasts.insert(cast_id, sender);
     }
 
-    fn send_casting(&self, message: Message) {
-        match message.payload {
-            Payload::Broadcast(cast_id, _data) => {
-                if let Some(sender) = self.active_broadcasts.get(&cast_id) {
-                    let _ = sender.send(message);
-                }
+    fn send_casting(&self, message: CastMessage) {
+        if message.is_broadcast() {
+            // Payload::Broadcast(cast_id, _data) => {
+            if let Some(sender) = self.active_broadcasts.get(&message.id()) {
+                let _ = sender.send(message);
+                // }
             }
             // Payload::Multicast(cast_id, _data) => {
             //     if let Some(sender) = self.active_multicasts.get(&cast_id) {
             //         let _ = sender.send(message);
             //     }
             // }
-            _ => {
-                println!("send_casting: unexpected message: {:?}", message);
-            }
+            // _ => {
+            //     println!("send_casting: unexpected message: {:?}", message);
+            // }
         }
     }
 
@@ -519,11 +550,15 @@ impl Neighbor {
         }
     }
 
+    pub fn send_out_cast(&mut self, message: CastMessage) {
+        let _ = self.sender.send(WrappedMessage::Cast(message));
+    }
+
     pub fn send_out(&mut self, message: Message) {
-        let _ = self.sender.send(message.clone());
         self.gnome_header = message.header;
         // println!("new gn: {}", message.neighborhood.0);
         self.gnome_neighborhood = message.neighborhood;
+        let _ = self.sender.send(WrappedMessage::Regular(message));
     }
 
     pub fn get_specialized_data(&mut self) -> Option<NeighborResponse> {

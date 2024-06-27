@@ -1,12 +1,11 @@
 use crate::gnome::NetworkSettings;
-use crate::multicast::Multicast;
-use crate::CastID;
+use crate::multicast::{CastMessage, Multicast};
 use crate::Gnome;
 use crate::GnomeId;
-use crate::Message;
 use crate::Neighbor;
 use crate::Request;
 use crate::Response;
+use crate::{CastID, WrappedMessage};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
@@ -194,7 +193,7 @@ impl Swarm {
         is_bcast: bool,
         cast_id: &CastID,
         sub_id: GnomeId,
-        send: Sender<Message>,
+        send: Sender<WrappedMessage>,
     ) -> Option<GnomeId> {
         if is_bcast {
             if let Some(bcast) = self.active_broadcasts.get_mut(cast_id) {
@@ -273,7 +272,7 @@ impl Swarm {
         &mut self,
         cast_id: &CastID,
         is_broadcast: bool,
-        source: (GnomeId, Receiver<Message>),
+        source: (GnomeId, Receiver<CastMessage>),
     ) {
         if is_broadcast {
             if let Some(bcast) = self.active_broadcasts.get_mut(cast_id) {
