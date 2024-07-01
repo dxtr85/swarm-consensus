@@ -21,6 +21,7 @@ mod neighbor;
 pub use crate::neighbor::Neighbor;
 pub use crate::neighbor::NeighborResponse;
 pub use crate::neighbor::Neighborhood;
+pub use multicast::CastContent;
 pub use multicast::CastMessage;
 mod next_state;
 mod proposal;
@@ -44,6 +45,7 @@ pub enum Request {
     AddData(Data),
     AddNeighbor(Neighbor),
     DropNeighbor(GnomeId),
+    ListNeighbors,
     AskData(GnomeId, NeighborRequest),
     SendData(GnomeId, NeighborRequest, NeighborResponse),
     Disconnect,
@@ -65,11 +67,13 @@ pub enum Response {
     Block(BlockID, Data),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(Vec<BlockID>),
-    Unicast(SwarmID, CastID, Receiver<CastMessage>),
+    UnicastOrigin(SwarmID, CastID, Sender<Data>),
+    Unicast(SwarmID, CastID, Receiver<Data>),
     MulticastOrigin(SwarmID, CastID, Sender<Data>),
     Multicast(SwarmID, CastID, Receiver<Data>),
     BroadcastOrigin(SwarmID, CastID, Sender<Data>),
     Broadcast(SwarmID, CastID, Receiver<Data>),
+    Neighbors(Vec<GnomeId>),
     ToGnome(NeighborResponse),
     Custom(u8, Data),
 }
@@ -89,11 +93,17 @@ impl fmt::Debug for Response {
             Response::Unicast(_sid, _cid, _rdata) => {
                 write!(f, "Unicast {:?}", _cid)
             }
+            Response::UnicastOrigin(_sid, _cid, _sdata) => {
+                write!(f, "Unicast source {:?}", _cid)
+            }
             Response::Multicast(_sid, _cid, _rdata) => {
                 write!(f, "Multicast {:?}", _cid)
             }
             Response::MulticastOrigin(_sid, _cid, _sdata) => {
                 write!(f, "Multicast source {:?}", _cid)
+            }
+            Response::Neighbors(_nid) => {
+                write!(f, "Neighbors: {:?}", _nid)
             }
             Response::Broadcast(_sid, _cid, _rdata) => {
                 write!(f, "Broadcast {:?}", _cid)

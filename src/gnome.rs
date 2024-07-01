@@ -2,6 +2,7 @@ use crate::message::BlockID;
 use crate::message::Configuration;
 use crate::message::Header;
 use crate::message::Payload;
+use crate::multicast::CastType;
 use crate::multicast::{CastMessage, Multicast};
 use crate::neighbor::NeighborResponse;
 use crate::neighbor::Neighborhood;
@@ -254,7 +255,7 @@ pub struct Gnome {
     ongoing_requests: HashMap<u8, OngoingRequest>,
     neighbor_discovery: NeighborDiscovery,
     chill_out: (bool, u8, Duration),
-    data_converters: HashMap<(bool, CastID), (Receiver<Data>, Sender<CastMessage>)>,
+    data_converters: HashMap<(CastType, CastID), (Receiver<Data>, Sender<WrappedMessage>)>,
 }
 
 impl Gnome {
@@ -326,12 +327,18 @@ impl Gnome {
     }
 
     fn serve_user_data(&self) {
-        for ((is_bcast, c_id), (recv_d, send_m)) in &self.data_converters {
+        for ((c_type, c_id), (recv_d, send_m)) in &self.data_converters {
             while let Ok(data) = recv_d.try_recv() {
-                let message = if *is_bcast {
-                    CastMessage::new_broadcast(*c_id, data)
-                } else {
-                    CastMessage::new_multicast(*c_id, data)
+                let message = match c_type {
+                    CastType::Broadcast => {
+                        WrappedMessage::Cast(CastMessage::new_broadcast(*c_id, data))
+                    }
+                    CastType::Multicast => {
+                        WrappedMessage::Cast(CastMessage::new_multicast(*c_id, data))
+                    }
+                    CastType::Unicast => {
+                        WrappedMessage::Cast(CastMessage::new_unicast(*c_id, data))
+                    }
                 };
                 // let message = Message {
                 //     swarm_time: self.swarm_time,
@@ -372,6 +379,20 @@ impl Gnome {
                 Request::DropNeighbor(n_id) => {
                     println!("{} DROP\ta neighbor on user request", n_id);
                     self.drop_neighbor(n_id);
+                }
+                Request::ListNeighbors => {
+                    println!("List neighbors request");
+                    let mut n_ids = vec![];
+                    for n in &self.fast_neighbors {
+                        n_ids.push(n.id);
+                    }
+                    for n in &self.slow_neighbors {
+                        n_ids.push(n.id);
+                    }
+                    for n in &self.refreshed_neighbors {
+                        n_ids.push(n.id);
+                    }
+                    let _ = self.sender.send(Response::Neighbors(n_ids));
                 }
                 Request::SendData(gnome_id, _request, data) => {
                     println!("Trying to inform neighbor {} about data", gnome_id);
@@ -824,14 +845,14 @@ impl Gnome {
         }
     }
 
-    fn serve_neighbors_casts(&self) {
-        for neighbor in &self.fast_neighbors {
+    fn serve_neighbors_casts(&mut self) {
+        for neighbor in &mut self.fast_neighbors {
             neighbor.try_recv_cast();
         }
-        for neighbor in &self.slow_neighbors {
+        for neighbor in &mut self.slow_neighbors {
             neighbor.try_recv_cast();
         }
-        for neighbor in &self.refreshed_neighbors {
+        for neighbor in &mut self.refreshed_neighbors {
             neighbor.try_recv_cast();
         }
     }
@@ -899,12 +920,25 @@ impl Gnome {
                 // println!("Some neighbor request!");
                 match request {
                     NeighborRequest::UnicastRequest(_swarm_id, cast_ids) => {
+                        // let (send_n, recv_n) = channel();
+                        let (send_d, recv_d) = channel();
                         for cast_id in cast_ids.deref() {
                             if self.swarm.is_unicast_id_available(*cast_id) {
-                                self.swarm.insert_unicast(*cast_id, neighbor.id);
+                                self.swarm.insert_unicast(*cast_id);
+                                self.insert_originating_unicast(
+                                    *cast_id,
+                                    recv_d,
+                                    neighbor.sender.clone(),
+                                );
+                                // self.swarm.insert_unicast(*cast_id, neighbor.id, recv_n);
                                 neighbor.add_requested_data(NeighborResponse::Unicast(
                                     self.swarm.id,
                                     *cast_id,
+                                ));
+                                let _res = self.sender.send(Response::UnicastOrigin(
+                                    self.swarm.id,
+                                    *cast_id,
+                                    send_d,
                                 ));
                                 break;
                             }
@@ -2000,21 +2034,33 @@ impl Gnome {
         ids
     }
 
+    fn insert_originating_unicast(
+        &mut self,
+        id: CastID,
+        // b_cast: Multicast,
+        recv_d: Receiver<Data>,
+        send_n: Sender<WrappedMessage>,
+    ) {
+        self.data_converters
+            .insert((CastType::Unicast, id), (recv_d, send_n));
+    }
+
     fn insert_originating_broadcast(
         &mut self,
         id: CastID,
         // b_cast: Multicast,
         recv_d: Receiver<Data>,
-        send_n: Sender<CastMessage>,
+        send_n: Sender<WrappedMessage>,
     ) {
-        self.data_converters.insert((true, id), (recv_d, send_n));
+        self.data_converters
+            .insert((CastType::Broadcast, id), (recv_d, send_n));
     }
 
     fn activate_broadcast_at_neighbor(
         &mut self,
         id: GnomeId,
         cast_id: CastID,
-        sender: Sender<CastMessage>,
+        sender: Sender<WrappedMessage>,
     ) -> bool {
         for neighbor in &mut self.fast_neighbors {
             if neighbor.id == id {

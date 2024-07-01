@@ -54,8 +54,8 @@ pub struct Neighbor {
     pub requested_data: VecDeque<NeighborResponse>,
     gnome_header: Header,
     gnome_neighborhood: Neighborhood,
-    active_unicasts: HashMap<CastID, Sender<CastMessage>>,
-    active_broadcasts: HashMap<CastID, Sender<CastMessage>>,
+    active_unicasts: HashMap<CastID, Sender<Data>>,
+    active_broadcasts: HashMap<CastID, Sender<WrappedMessage>>,
     pub available_bandwith: u64,
     // pending_unicasts: HashMap<CastID, Sender<Data>>,
 }
@@ -147,12 +147,12 @@ impl Neighbor {
         None
     }
 
-    pub fn try_recv_cast(&self) {
+    pub fn try_recv_cast(&mut self) {
         while let Ok(c_msg @ CastMessage { c_type, id, .. }) = self.cast_receiver.try_recv() {
             match c_type {
                 CastType::Broadcast => {
                     if let Some(sender) = self.active_broadcasts.get(&id) {
-                        let _ = sender.send(c_msg);
+                        let _ = sender.send(WrappedMessage::Cast(c_msg));
                     }
                 }
                 CastType::Multicast => {
@@ -162,8 +162,27 @@ impl Neighbor {
                     // }
                 }
                 CastType::Unicast => {
-                    if let Some(sender) = self.active_unicasts.get(&id) {
-                        let _ = sender.send(c_msg);
+                    match id {
+                        CastID(255) => {
+                            //Request
+                            println!("Some NReq received: {:?}", c_type);
+                            if let Some(request) = c_msg.get_request() {
+                                self.requests.push_front(request.clone());
+                                // TODO
+                            }
+                        }
+                        CastID(254) => {
+                            //Response
+                            if let Some(response) = c_msg.get_response() {
+                                // TODO
+                                self.serve_neighbor_response(response);
+                            }
+                        }
+                        _ => {
+                            if let Some(sender) = self.active_unicasts.get(&id) {
+                                let _ = sender.send(c_msg.get_data().unwrap());
+                            }
+                        }
                     }
                 }
             }
@@ -344,71 +363,13 @@ impl Neighbor {
                     // println!("Pushing riquest");
                     self.requests.push_front(request.clone());
                 }
-                Payload::Response(response) => match response {
-                    NeighborResponse::Listing(_count, listing) => {
-                        // let mut list_ver = vec![];
-                        // let mut i: usize = 0;
-                        // let count: usize = *count as usize;
-                        // while i < count {
-                        //     i += 1;
-                        //     list_ver.push(listing[i]);
-                        // }
-                        self.user_responses
-                            .push_front(Response::Listing(listing.clone()))
-                    }
-                    NeighborResponse::Block(block_id, data) => {
-                        self.user_responses
-                            .push_front(Response::Block(*block_id, *data));
-                    }
-                    NeighborResponse::Unicast(swarm_id, cast_id) => {
-                        let (sender, receiver) = channel();
-                        self.active_unicasts.insert(*cast_id, sender);
-                        self.user_responses
-                            .push_front(Response::Unicast(*swarm_id, *cast_id, receiver));
-                    }
-                    resp @ NeighborResponse::ForwardConnectResponse(_network_settings) => {
-                        //TODO send this to networking
-                        self.user_responses
-                            .push_front(Response::ToGnome(resp.clone()));
-                    }
-                    resp @ NeighborResponse::ForwardConnectFailed => {
-                        self.user_responses
-                            .push_front(Response::ToGnome(resp.clone()));
-                        //TODO notify gnome
-                    }
-                    resp @ NeighborResponse::AlreadyConnected(_id) => {
-                        self.user_responses
-                            .push_front(Response::ToGnome(resp.clone()));
-                        //TODO notify gnome
-                    }
-                    resp @ NeighborResponse::ConnectResponse(_id, _network_settings) => {
-                        self.user_responses
-                            .push_front(Response::ToGnome(resp.clone()));
-                        //TODO send this to gnome.ongoing_requests
-                    }
-                    resp @ NeighborResponse::SwarmSync(_chill_phase, _bcasts, _mcasts) => {
-                        self.user_responses
-                            .push_front(Response::ToGnome(resp.clone()));
-                    }
-                    NeighborResponse::Subscribed(is_bcast, cast_id, origin_id, _none) => {
-                        self.user_responses.push_front(Response::ToGnome(
-                            NeighborResponse::Subscribed(
-                                *is_bcast,
-                                *cast_id,
-                                *origin_id,
-                                Some(self.id),
-                            ),
-                        ));
-                    }
-                    NeighborResponse::CustomResponse(id, data) => {
-                        self.user_responses.push_front(Response::Custom(*id, *data))
-                    }
-                },
-                Payload::Unicast(cid, data) => {
+                Payload::Response(response) => self.serve_neighbor_response(response.clone()),
+
+                Payload::Unicast(_cid, _data) => {
                     // println!("Served casting 3");
-                    if let Some(sender) = self.active_unicasts.get(&cid) {
-                        let _ = sender.send(CastMessage::new_unicast(*cid, *data));
-                    }
+                    // if let Some(sender) = self.active_unicasts.get(&cid) {
+                    //     let _ = sender.send(CastMessage::new_unicast(*cid, *data));
+                    // }
                 }
                 Payload::Multicast(_mid, _data) => {
                     // TODO: serve this
@@ -428,7 +389,69 @@ impl Neighbor {
         (message_recvd, sanity_passed, new_proposal, drop_me)
     }
 
-    pub fn activate_broadcast(&mut self, cast_id: CastID, sender: Sender<CastMessage>) {
+    fn serve_neighbor_response(&mut self, response: NeighborResponse) {
+        match response {
+            NeighborResponse::Listing(_count, listing) => {
+                // let mut list_ver = vec![];
+                // let mut i: usize = 0;
+                // let count: usize = *count as usize;
+                // while i < count {
+                //     i += 1;
+                //     list_ver.push(listing[i]);
+                // }
+                self.user_responses
+                    .push_front(Response::Listing(listing.clone()))
+            }
+            NeighborResponse::Block(block_id, data) => {
+                self.user_responses
+                    .push_front(Response::Block(block_id, data));
+            }
+            NeighborResponse::Unicast(swarm_id, cast_id) => {
+                let (sender, receiver) = channel();
+                self.active_unicasts.insert(cast_id, sender);
+                self.user_responses
+                    .push_front(Response::Unicast(swarm_id, cast_id, receiver));
+            }
+            NeighborResponse::ForwardConnectResponse(_network_settings) => {
+                //TODO send this to networking
+                self.user_responses.push_front(Response::ToGnome(response));
+            }
+            NeighborResponse::ForwardConnectFailed => {
+                self.user_responses.push_front(Response::ToGnome(response));
+                //TODO notify gnome
+            }
+            NeighborResponse::AlreadyConnected(_id) => {
+                self.user_responses.push_front(Response::ToGnome(response));
+                //TODO notify gnome
+            }
+            NeighborResponse::ConnectResponse(_id, _network_settings) => {
+                self.user_responses.push_front(Response::ToGnome(response));
+                //TODO send this to gnome.ongoing_requests
+            }
+            NeighborResponse::SwarmSync(chill_phase, bcasts, mcasts) => {
+                self.user_responses
+                    .push_front(Response::ToGnome(NeighborResponse::SwarmSync(
+                        chill_phase,
+                        bcasts,
+                        mcasts,
+                    )));
+            }
+            NeighborResponse::Subscribed(is_bcast, cast_id, origin_id, _none) => {
+                self.user_responses
+                    .push_front(Response::ToGnome(NeighborResponse::Subscribed(
+                        is_bcast,
+                        cast_id,
+                        origin_id,
+                        Some(self.id),
+                    )));
+            }
+            NeighborResponse::CustomResponse(id, data) => {
+                self.user_responses.push_front(Response::Custom(id, data))
+            }
+        }
+    }
+
+    pub fn activate_broadcast(&mut self, cast_id: CastID, sender: Sender<WrappedMessage>) {
         self.active_broadcasts.insert(cast_id, sender);
     }
 
@@ -436,7 +459,7 @@ impl Neighbor {
         if message.is_broadcast() {
             // Payload::Broadcast(cast_id, _data) => {
             if let Some(sender) = self.active_broadcasts.get(&message.id()) {
-                let _ = sender.send(message);
+                let _ = sender.send(WrappedMessage::Cast(message));
                 // }
             }
             // Payload::Multicast(cast_id, _data) => {
@@ -591,20 +614,22 @@ impl Neighbor {
         }
     }
 
-    pub fn add_requested_data(&mut self, data: NeighborResponse) {
+    pub fn add_requested_data(&mut self, response: NeighborResponse) {
         // self.requested_data.push_front((request, data));
-        self.requested_data.push_front(data.clone());
+        // self.requested_data.push_front(data.clone());
 
         // TODO: maybe move it somewhere else?
-        if let NeighborResponse::Unicast(swarm_id, cast_id) = data {
+        if let NeighborResponse::Unicast(swarm_id, cast_id) = response {
             let (sender, receiver) = channel();
             self.active_unicasts.insert(cast_id, sender);
             self.user_responses
                 .push_front(Response::Unicast(swarm_id, cast_id, receiver));
         }
+        self.send_out_cast(CastMessage::new_response(response));
     }
 
     pub fn request_data(&mut self, request: NeighborRequest) {
-        self.user_requests.push_front(request);
+        self.send_out_cast(CastMessage::new_request(request));
+        // self.user_requests.push_front(request);
     }
 }

@@ -44,7 +44,7 @@ pub struct Swarm {
     pub name: String,
     pub id: SwarmID,
     pub sender: Sender<Request>,
-    active_unicasts: HashMap<CastID, GnomeId>,
+    active_unicasts: HashSet<CastID>,
     active_broadcasts: HashMap<CastID, Multicast>,
     active_multicasts: HashMap<CastID, Multicast>,
     // TODO: This struct (or SwarmManifesto and/or attrs) should be provided by the user,
@@ -101,7 +101,7 @@ impl Swarm {
             name,
             id,
             sender: sender.clone(),
-            active_unicasts: HashMap::new(),
+            active_unicasts: HashSet::new(),
             active_broadcasts: HashMap::new(),
             active_multicasts: HashMap::new(),
         };
@@ -135,7 +135,7 @@ impl Swarm {
     }
 
     pub fn is_unicast_id_available(&self, cast_id: CastID) -> bool {
-        !self.active_unicasts.contains_key(&cast_id)
+        !self.active_unicasts.contains(&cast_id)
     }
     pub fn is_multicast_id_available(&self, cast_id: CastID) -> bool {
         !self.active_multicasts.contains_key(&cast_id)
@@ -152,8 +152,8 @@ impl Swarm {
         }
         None
     }
-    pub fn insert_unicast(&mut self, cast_id: CastID, gnome_id: GnomeId) {
-        self.active_unicasts.insert(cast_id, gnome_id);
+    pub fn insert_unicast(&mut self, cast_id: CastID) {
+        self.active_unicasts.insert(cast_id);
     }
     pub fn insert_multicast(&mut self, cast_id: CastID, multicast: Multicast) {
         self.active_multicasts.insert(cast_id, multicast);
@@ -164,6 +164,7 @@ impl Swarm {
 
     pub fn serve_casts(&mut self) {
         self.serve_broadcasts();
+        // self.serve_unicasts();
     }
 
     pub fn broadcasts_count(&self) -> u8 {
@@ -215,10 +216,18 @@ impl Swarm {
             bcast.serve();
         }
     }
+    // fn serve_unicasts(&mut self) {
+    //     for (c_id, c_recv) in self.active_unicasts.items() {
+    //         bcast.serve();
+    //     }
+    // }
 
-    fn all_possible_cast_ids(&self) -> HashSet<CastID> {
+    fn all_possible_cast_ids(&self, for_unicast: bool) -> HashSet<CastID> {
         let mut ids = HashSet::new();
-        for i in 0..=255 {
+        // Unicast ids 255 & 254 reserved for NeighborRequest NeighborResponse
+        // message exchange
+        let max: u8 = if for_unicast { 253 } else { 255 };
+        for i in 0..=max {
             let cast_id = CastID(i);
             ids.insert(cast_id);
         }
@@ -226,21 +235,21 @@ impl Swarm {
     }
 
     pub fn avail_unicast_ids(&self) -> HashSet<CastID> {
-        let mut available = self.all_possible_cast_ids();
-        for occupied in self.active_unicasts.keys() {
+        let mut available = self.all_possible_cast_ids(true);
+        for occupied in self.active_unicasts.iter() {
             available.remove(occupied);
         }
         available
     }
     pub fn avail_multicast_ids(&self) -> HashSet<CastID> {
-        let mut available = self.all_possible_cast_ids();
+        let mut available = self.all_possible_cast_ids(false);
         for occupied in self.active_multicasts.keys() {
             available.remove(occupied);
         }
         available
     }
     pub fn avail_broadcast_ids(&self) -> HashSet<CastID> {
-        let mut available = self.all_possible_cast_ids();
+        let mut available = self.all_possible_cast_ids(false);
         for occupied in self.active_broadcasts.keys() {
             available.remove(occupied);
         }
@@ -272,7 +281,7 @@ impl Swarm {
         &mut self,
         cast_id: &CastID,
         is_broadcast: bool,
-        source: (GnomeId, Receiver<CastMessage>),
+        source: (GnomeId, Receiver<WrappedMessage>),
     ) {
         if is_broadcast {
             if let Some(bcast) = self.active_broadcasts.get_mut(cast_id) {
