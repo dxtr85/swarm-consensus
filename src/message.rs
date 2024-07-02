@@ -1,10 +1,10 @@
-use crate::neighbor::NeighborRequest;
+// use crate::neighbor::NeighborRequest;
 use crate::neighbor::Neighborhood;
 use crate::proposal::Data;
 use crate::CastID;
 use crate::CastMessage;
 use crate::GnomeId;
-use crate::NeighborResponse;
+// use crate::NeighborResponse;
 use crate::SwarmTime;
 use std::fmt::Display;
 
@@ -46,20 +46,20 @@ pub enum Payload {
     Bye,
     Reconfigure(Configuration),
     Block(BlockID, Data),
-    Request(NeighborRequest),
-    Response(NeighborResponse),
-    Unicast(CastID, Data),
-    Multicast(CastID, Data),
-    Broadcast(CastID, Data),
+    // Request(NeighborRequest),
+    // Response(NeighborResponse),
+    // Unicast(CastID, Data),
+    // Multicast(CastID, Data),
+    // Broadcast(CastID, Data),
 }
 
 impl Payload {
     pub fn data(&self) -> Option<Data> {
         match *self {
             Payload::Block(_id, data) => Some(data),
-            Payload::Unicast(_id, data) => Some(data),
-            Payload::Broadcast(_id, data) => Some(data),
-            Payload::Multicast(_id, data) => Some(data),
+            // Payload::Unicast(_id, data) => Some(data),
+            // Payload::Broadcast(_id, data) => Some(data),
+            // Payload::Multicast(_id, data) => Some(data),
             _ => None,
         }
     }
@@ -151,15 +151,15 @@ impl Message {
         Message { payload, ..*self }
     }
 
-    pub fn include_request(&self, request: NeighborRequest) -> Message {
-        let payload = Payload::Request(request);
-        Message { payload, ..*self }
-    }
+    // pub fn include_request(&self, request: NeighborRequest) -> Message {
+    //     let payload = Payload::Request(request);
+    //     Message { payload, ..*self }
+    // }
 
-    pub fn include_response(&self, response: NeighborResponse) -> Message {
-        let payload = Payload::Response(response);
-        Message { payload, ..*self }
-    }
+    // pub fn include_response(&self, response: NeighborResponse) -> Message {
+    //     let payload = Payload::Response(response);
+    //     Message { payload, ..*self }
+    // }
 
     pub fn bye() -> Message {
         Message {
@@ -189,29 +189,29 @@ impl Message {
     pub fn is_bye(&self) -> bool {
         self.payload == Payload::Bye
     }
-    pub fn is_request(&self) -> bool {
-        matches!(self.payload, Payload::Request(_))
-    }
+    // pub fn is_request(&self) -> bool {
+    //     matches!(self.payload, Payload::Request(_))
+    // }
 
-    pub fn is_response(&self) -> bool {
-        matches!(self.payload, Payload::Response(_))
-    }
+    // pub fn is_response(&self) -> bool {
+    //     matches!(self.payload, Payload::Response(_))
+    // }
 
-    pub fn is_cast(&self) -> bool {
-        matches!(
-            self.payload,
-            Payload::Unicast(_, _) | Payload::Multicast(_, _) | Payload::Broadcast(_, _)
-        )
-    }
-    pub fn is_unicast(&self) -> bool {
-        matches!(self.payload, Payload::Unicast(_, _))
-    }
-    pub fn is_multicast(&self) -> bool {
-        matches!(self.payload, Payload::Multicast(_, _))
-    }
-    pub fn is_broadcast(&self) -> bool {
-        matches!(self.payload, Payload::Broadcast(_, _))
-    }
+    // pub fn is_cast(&self) -> bool {
+    //     matches!(
+    //         self.payload,
+    //         Payload::Unicast(_, _) | Payload::Multicast(_, _) | Payload::Broadcast(_, _)
+    //     )
+    // }
+    // pub fn is_unicast(&self) -> bool {
+    //     matches!(self.payload, Payload::Unicast(_, _))
+    // }
+    // pub fn is_multicast(&self) -> bool {
+    //     matches!(self.payload, Payload::Multicast(_, _))
+    // }
+    // pub fn is_broadcast(&self) -> bool {
+    //     matches!(self.payload, Payload::Broadcast(_, _))
+    // }
 }
 
 impl Display for Message {
@@ -244,14 +244,13 @@ impl Display for Payload {
             Self::KeepAlive(_bandwith) => write!(f, "",),
             Self::Bye => write!(f, "Bye",),
             Self::Reconfigure(_) => write!(f, "Reconfigure",),
-            Self::Request(_) => write!(f, "Request"),
-            Self::Response(_nresp) => write!(f, "Response"),
+            // Self::Request(_) => write!(f, "Request"),
+            // Self::Response(_nresp) => write!(f, "Response"),
             Self::Block(block_id, data) => {
                 write!(f, "{} {}", block_id, data)
-            }
-            Self::Unicast(_uid, _data) => write!(f, "Unicast",),
-            Self::Multicast(_mid, _data) => write!(f, "Multicast",),
-            Self::Broadcast(_bid, _data) => write!(f, "Broadcast",),
+            } // Self::Unicast(_uid, _data) => write!(f, "Unicast",),
+              // Self::Multicast(_mid, _data) => write!(f, "Multicast",),
+              // Self::Broadcast(_bid, _data) => write!(f, "Broadcast",),
         }
     }
 }

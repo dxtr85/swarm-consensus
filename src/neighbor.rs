@@ -4,6 +4,7 @@ use crate::message::Payload;
 use crate::message::WrappedMessage;
 use crate::multicast::CastMessage;
 use crate::multicast::CastType;
+use crate::CastContent;
 use crate::CastID;
 use crate::Data;
 use crate::GnomeId;
@@ -81,7 +82,12 @@ pub enum NeighborResponse {
     ForwardConnectFailed,
     ConnectResponse(u8, NetworkSettings),
     AlreadyConnected(u8),
-    SwarmSync(u8, Vec<CastID>, Vec<CastID>),
+    SwarmSync(
+        u8,
+        SwarmTime,
+        Vec<(CastID, GnomeId)>,
+        Vec<(CastID, GnomeId)>,
+    ),
     Subscribed(bool, CastID, GnomeId, Option<GnomeId>),
     CustomResponse(u8, Data),
 }
@@ -145,6 +151,41 @@ impl Neighbor {
             return Some(response);
         }
         None
+    }
+    pub fn recv_sync(&mut self, timeout: Duration) -> Result<Option<NeighborResponse>, String> {
+        let recv_result = self.cast_receiver.recv_timeout(timeout);
+        if let Ok(CastMessage {
+            c_type,
+            id,
+            content,
+        }) = recv_result
+        {
+            // if let  = response
+            // {
+            if c_type == CastType::Unicast && CastID(254) == id {
+                if let CastContent::Response(
+                    ref n_resp @ NeighborResponse::SwarmSync(_a, st, ref _b, ref _m),
+                ) = content
+                {
+                    self.swarm_time = st;
+                    self.start_new_round(st);
+                    return Ok(Some(n_resp.clone()));
+                }
+            } else if c_type == CastType::Unicast && CastID(255) == id {
+                if let CastContent::Request(NeighborRequest::SwarmSyncRequest) = content {}
+                return Ok(None);
+                // } else {
+            };
+            // }
+            // TODO: we should update Neighbor state according to
+            // self.header = response.header;
+            // self.payload = response.payload.clone();
+            // self.neighborhood = response.neighborhood;
+            // self.swarm_time = response.swarm_time;
+
+            // return Some(self.swarm_time);
+        }
+        return Err("Unexpected Cast message during SwarmSync".to_string());
     }
 
     pub fn try_recv_cast(&mut self) {
@@ -210,11 +251,11 @@ impl Neighbor {
         ) = self.receiver.try_recv()
         {
             println!("{} < {}", self.id, message);
-            if message.is_cast() {
-                println!("Unserved casting 1");
-                // self.send_casting(message.clone());
-                continue;
-            }
+            // if message.is_cast() {
+            //     println!("Unserved casting 1");
+            //     // self.send_casting(message.clone());
+            //     continue;
+            // }
             if message.header == last_accepted_message.header
                 && message.neighborhood == Neighborhood(7)
                 && message.payload == last_accepted_message.payload
@@ -245,14 +286,14 @@ impl Neighbor {
                 // println!("Coś nie poszło {}", message);
                 // TODO: sanity might fail for casting messages, but we still
                 // need to put them throught for user to receive
-                if message.is_cast() {
-                    println!("Unserved casting!");
-                    // self.send_casting(message.clone());
-                } else if message.is_request() || message.is_response() {
-                    // println!("Unserved requests");
-                } else {
-                    continue;
-                }
+                // if message.is_cast() {
+                //     println!("Unserved casting!");
+                //     // self.send_casting(message.clone());
+                // } else if message.is_request() || message.is_response() {
+                //     // println!("Unserved requests");
+                // } else {
+                continue;
+                // }
             }
             // } else {
             //     message_recvd = true;
@@ -358,28 +399,27 @@ impl Neighbor {
                     // Reconfigure is when we have first bit in a Header set to '0'
                     // and three Payload bits are all ones: '111'
                     self.payload = payload.clone();
-                }
-                Payload::Request(request) => {
-                    // println!("Pushing riquest");
-                    self.requests.push_front(request.clone());
-                }
-                Payload::Response(response) => self.serve_neighbor_response(response.clone()),
+                } // Payload::Request(request) => {
+                  //     // println!("Pushing riquest");
+                  //     self.requests.push_front(request.clone());
+                  // }
+                  // Payload::Response(response) => self.serve_neighbor_response(response.clone()),
 
-                Payload::Unicast(_cid, _data) => {
-                    // println!("Served casting 3");
-                    // if let Some(sender) = self.active_unicasts.get(&cid) {
-                    //     let _ = sender.send(CastMessage::new_unicast(*cid, *data));
-                    // }
-                }
-                Payload::Multicast(_mid, _data) => {
-                    // TODO: serve this
-                    // self.send_casting(message);
-                }
-                Payload::Broadcast(_bid, _data) => {
-                    // TODO: serve this
-                    println!("Unserved casting n!");
-                    // self.send_casting(message.clone());
-                }
+                  // Payload::Unicast(_cid, _data) => {
+                  // println!("Served casting 3");
+                  // if let Some(sender) = self.active_unicasts.get(&cid) {
+                  //     let _ = sender.send(CastMessage::new_unicast(*cid, *data));
+                  // }
+                  // }
+                  // Payload::Multicast(_mid, _data) => {
+                  // TODO: serve this
+                  // self.send_casting(message);
+                  // }
+                  // Payload::Broadcast(_bid, _data) => {
+                  // TODO: serve this
+                  // println!("Unserved casting n!");
+                  // self.send_casting(message.clone());
+                  // }
             }
             // println!("returning: {} {:?}", new_proposal, self.neighborhood);
             if force_break {
@@ -428,10 +468,11 @@ impl Neighbor {
                 self.user_responses.push_front(Response::ToGnome(response));
                 //TODO send this to gnome.ongoing_requests
             }
-            NeighborResponse::SwarmSync(chill_phase, bcasts, mcasts) => {
+            NeighborResponse::SwarmSync(chill_phase, swarm_time, bcasts, mcasts) => {
                 self.user_responses
                     .push_front(Response::ToGnome(NeighborResponse::SwarmSync(
                         chill_phase,
+                        swarm_time,
                         bcasts,
                         mcasts,
                     )));
@@ -589,30 +630,30 @@ impl Neighbor {
         self.requested_data.pop_back()
     }
 
-    pub fn send_out_specialized_message(
-        &mut self,
-        message: &Message,
-        id: GnomeId,
-        send_default: bool,
-    ) {
-        if let Some(resp) = self.get_specialized_data() {
-            let payload = Payload::Response(resp);
-            let new_message = message.set_payload(payload);
-            println!("{} >S> {}", id, new_message);
-            self.send_out(new_message);
-        } else if let Some(request) = self.user_requests.pop_back() {
-            let new_message = message.include_request(request);
-            println!("{} >S> {}", id, new_message);
-            self.send_out(new_message);
-        } else if send_default {
-            // if !generic_info_printed {
-            // eprintln!("{} >>> {}", id, message);
-            //     generic_info_printed = true;
-            // }
-            // println!("snd {}", message);
-            self.send_out(message.to_owned());
-        }
-    }
+    // pub fn send_out_specialized_message(
+    //     &mut self,
+    //     message: &Message,
+    //     id: GnomeId,
+    //     send_default: bool,
+    // ) {
+    //     if let Some(resp) = self.get_specialized_data() {
+    //         let payload = Payload::Response(resp);
+    //         let new_message = message.set_payload(payload);
+    //         println!("{} >S> {}", id, new_message);
+    //         self.send_out(new_message);
+    //     } else if let Some(request) = self.user_requests.pop_back() {
+    //         let new_message = message.include_request(request);
+    //         println!("{} >S> {}", id, new_message);
+    //         self.send_out(new_message);
+    //     } else if send_default {
+    //         // if !generic_info_printed {
+    //         // eprintln!("{} >>> {}", id, message);
+    //         //     generic_info_printed = true;
+    //         // }
+    //         // println!("snd {}", message);
+    //         self.send_out(message.to_owned());
+    //     }
+    // }
 
     pub fn add_requested_data(&mut self, response: NeighborResponse) {
         // self.requested_data.push_front((request, data));

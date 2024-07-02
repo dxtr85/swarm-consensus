@@ -173,18 +173,18 @@ impl Swarm {
     pub fn multicasts_count(&self) -> u8 {
         self.active_multicasts.len() as u8
     }
-    pub fn broadcast_ids(&self) -> Vec<CastID> {
+    pub fn broadcast_ids(&self) -> Vec<(CastID, GnomeId)> {
         let mut ids = vec![];
-        for id in self.active_broadcasts.keys() {
-            ids.push(*id);
+        for (id, b_cast) in &self.active_broadcasts {
+            ids.push((*id, b_cast.origin()));
         }
         ids
     }
 
-    pub fn multicast_ids(&self) -> Vec<CastID> {
+    pub fn multicast_ids(&self) -> Vec<(CastID, GnomeId)> {
         let mut ids = vec![];
-        for id in self.active_multicasts.keys() {
-            ids.push(*id);
+        for (id, m_cast) in &self.active_multicasts {
+            ids.push((*id, m_cast.origin()));
         }
         ids
     }
