@@ -254,7 +254,8 @@ pub struct Gnome {
     pending_conn_requests: VecDeque<ConnRequest>,
     ongoing_requests: HashMap<u8, OngoingRequest>,
     neighbor_discovery: NeighborDiscovery,
-    chill_out: (bool, u8, Duration),
+    chill_out: (bool, u16),
+    chill_out_max: u16,
     data_converters: HashMap<(CastType, CastID), (Receiver<Data>, Sender<WrappedMessage>)>,
 }
 
@@ -298,7 +299,8 @@ impl Gnome {
             pending_conn_requests: VecDeque::new(),
             ongoing_requests: HashMap::new(),
             neighbor_discovery: NeighborDiscovery::default(),
-            chill_out: (false, 250, Duration::from_millis(59)), // chill time is 250*59ms = just under 15sec
+            chill_out: (false, 14500),
+            chill_out_max: 14500,
             data_converters: HashMap::new(),
         }
     }
@@ -1154,10 +1156,10 @@ impl Gnome {
                     self.send_immediate = true;
                 }
                 self.chill_out.0 = false;
-                self.chill_out.1 = 250;
+                self.chill_out.1 = self.chill_out_max;
             }
             if self.chill_out.0 {
-                if self.chill_out.1 == 250 {
+                if self.chill_out.1 == self.chill_out_max {
                     // println!("Let's chill out");
                     // We need to communicate to the timeout mechanism to pause his countdown.
                     // We can do this by droping guard.
@@ -1182,11 +1184,12 @@ impl Gnome {
                     );
                     continue;
                 }
-                // in case we are in chill out mode we go to sleep for self.chill_out.2
+                // in case we are in chill out mode we go to sleep for 1ms
                 // and we decrese self.chill_out.1 by 1 and continue loop.
                 self.chill_out.1 -= 1;
-                // print!("c");
-                thread::sleep(self.chill_out.2);
+                // sleep only one millisec at a time
+                // This is to increase casting throughput
+                thread::sleep(Duration::from_millis(1));
                 continue;
             }
             // We still need a way to suspend chill_out when we have non-critical data to send
@@ -1751,7 +1754,7 @@ impl Gnome {
                     self.header = Header::Sync;
                     self.payload = Payload::KeepAlive(available_bandwith);
                     self.chill_out.0 = true;
-                    self.chill_out.1 = 250;
+                    self.chill_out.1 = self.chill_out_max;
                 }
             // } else if self.block_id == BlockID(0) && self.data.0 > 0 {
             // println!("We have got a Reconfig to parse");
@@ -1784,7 +1787,7 @@ impl Gnome {
                     self.send_immediate = true;
                 } else {
                     self.chill_out.0 = true;
-                    self.chill_out.1 = 250;
+                    self.chill_out.1 = self.chill_out_max;
                 }
                 // At start of new round
                 // Flush awaiting neighbors

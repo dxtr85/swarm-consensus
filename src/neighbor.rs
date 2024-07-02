@@ -83,7 +83,7 @@ pub enum NeighborResponse {
     ConnectResponse(u8, NetworkSettings),
     AlreadyConnected(u8),
     SwarmSync(
-        u8,
+        u16,
         SwarmTime,
         Vec<(CastID, GnomeId)>,
         Vec<(CastID, GnomeId)>,
