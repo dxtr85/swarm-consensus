@@ -30,6 +30,7 @@ use std::ops::Deref;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Debug, Hash)]
 pub struct GnomeId(pub u64);
@@ -378,6 +379,14 @@ impl Gnome {
                     println!("{} ADD\tadd a new neighbor", neighbor.id);
                     self.add_neighbor(neighbor);
                 }
+                Request::SwarmNeighbors(swarm_name) => {
+                    println!("Neighbors for swarm {} request", swarm_name);
+                    // TODO: we need to go trough all of our Neighbors
+                    // and ask them to instantiate a new Neighbor
+                    // for given swarm_name
+                    // Once collected we send back a response
+                    self.request_neighbors_for_swarm(swarm_name);
+                }
                 Request::DropNeighbor(n_id) => {
                     println!("{} DROP\ta neighbor on user request", n_id);
                     self.drop_neighbor(n_id);
@@ -394,7 +403,9 @@ impl Gnome {
                     for n in &self.refreshed_neighbors {
                         n_ids.push(n.id);
                     }
-                    let _ = self.sender.send(Response::Neighbors(n_ids));
+                    let _ = self
+                        .sender
+                        .send(Response::Neighbors(self.swarm.name.clone(), n_ids));
                 }
                 Request::SendData(gnome_id, _request, data) => {
                     println!("Trying to inform neighbor {} about data", gnome_id);
@@ -628,6 +639,19 @@ impl Gnome {
             network_settings,
         };
         self.ongoing_requests.insert(id, or);
+    }
+
+    fn request_neighbors_for_swarm(&mut self, swarm_name: String) {
+        let req = NeighborRequest::CreateNeighbor(self.id, swarm_name.clone());
+        for neighbor in &mut self.fast_neighbors {
+            neighbor.request_data(req.clone());
+        }
+        for neighbor in &mut self.slow_neighbors {
+            neighbor.request_data(req.clone());
+        }
+        for neighbor in &mut self.refreshed_neighbors {
+            neighbor.request_data(req.clone());
+        }
     }
 
     fn serve_connect_request(
@@ -1013,6 +1037,46 @@ impl Gnome {
                             // TODO: send response with failure indication
                         }
                     }
+                    NeighborRequest::CreateNeighbor(gnome_id, swarm_name) => {
+                        // Here we have received a request on existing channel
+                        // this request is from a remote neighbor that wants
+                        // to join another swarm
+                        // TODO: we need to check if we are actually
+                        // members of given swarm,
+                        // Only when that is the case we create a new communication
+                        // logic with remote
+                        //
+                        // In order to do so, we need to rework manager logic:
+                        // Manager should be run as a service with internal loop
+                        // Gnome should be able to communicate with Manager in both
+                        // directions
+                        // Given above we ask Manager to add a given Neighbor to
+                        // particular swarm
+                        // Manager should respond with either a Success or Failure
+                        // Maybe Manager should be a part of gnome crate, and not
+                        // swarm-consensus?
+
+                        let (s1, r1) = channel();
+                        let (s2, r2) = channel();
+                        let (s3, r3) = channel();
+                        let _ = s2.send(CastMessage::new_request(NeighborRequest::CreateNeighbor(
+                            self.id,
+                            swarm_name.clone(),
+                        )));
+                        neighbor.clone_to_swarm(swarm_name.clone(), s1, s2, r3);
+                        let new_neighbor = Neighbor::from_id_channel_time(
+                            gnome_id,
+                            r1,
+                            r2,
+                            s3,
+                            neighbor.get_shared_sender(),
+                            neighbor.swarm_time,
+                            self.swarm_diameter,
+                        );
+                        let _ = self
+                            .sender
+                            .send(Response::NewNeighbor(swarm_name, new_neighbor));
+                    }
                     _ => {
                         let _ = self
                             .sender
@@ -1192,11 +1256,7 @@ impl Gnome {
                 thread::sleep(Duration::from_millis(1));
                 continue;
             }
-            // We still need a way to suspend chill_out when we have non-critical data to send
-            // and later resume from suspension;
-            // We also need a place where we initialize chill mode.
 
-            // in other case we execute following code
             if advance_to_next_turn
                 || self.send_immediate
                 || timeout
@@ -1225,12 +1285,6 @@ impl Gnome {
                 }
                 _guard =
                     self.start_new_timer(self.timeout_duration, timer_sender.clone(), Some(_guard));
-            } else if self.chill_out.0 {
-                // If we have some specialized data to send to one or more of our neighbors
-                // we suspend chill mode, send data, then continue to chill -- needs analysis
-                // If we send specialized data to our neighbors, they receive it, but they
-                // do not end their chill_out mode, since no new proposal has been sent.
-                // self.send_specialized(false);
             }
             if exit_app {
                 break;

@@ -7,16 +7,15 @@ mod swarm;
 pub use crate::gnome::Nat;
 pub use crate::gnome::NetworkSettings;
 pub use crate::gnome::PortAllocationRule;
+pub use crate::swarm::Swarm;
 pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmTime;
-pub use message::{Header, Message, Payload, WrappedMessage};
-use std::net::IpAddr;
-mod manager;
-pub use manager::Manager;
 pub use message::BlockID;
 pub use message::Configuration;
+pub use message::{Header, Message, Payload, WrappedMessage};
 pub use neighbor::NeighborRequest;
 pub use proposal::Data;
+use std::net::IpAddr;
 mod neighbor;
 pub use crate::neighbor::Neighbor;
 pub use crate::neighbor::NeighborResponse;
@@ -55,6 +54,7 @@ pub enum Request {
     StartBroadcast,
     Custom(u8, Data),
     NetworkSettingsUpdate(bool, IpAddr, u16, Nat),
+    SwarmNeighbors(String),
     // SetAddress(IpAddr),
     // SetPort(u16),
     // SetNat(Nat),
@@ -73,7 +73,8 @@ pub enum Response {
     Multicast(SwarmID, CastID, Receiver<Data>),
     BroadcastOrigin(SwarmID, CastID, Sender<Data>),
     Broadcast(SwarmID, CastID, Receiver<Data>),
-    Neighbors(Vec<GnomeId>),
+    Neighbors(String, Vec<GnomeId>),
+    NewNeighbor(String, Neighbor),
     ToGnome(NeighborResponse),
     Custom(u8, Data),
 }
@@ -102,8 +103,11 @@ impl fmt::Debug for Response {
             Response::MulticastOrigin(_sid, _cid, _sdata) => {
                 write!(f, "Multicast source {:?}", _cid)
             }
-            Response::Neighbors(_nid) => {
+            Response::Neighbors(_sid, _nid) => {
                 write!(f, "Neighbors: {:?}", _nid)
+            }
+            Response::NewNeighbor(sname, n) => {
+                write!(f, "{} has a new neighbor: {:?}", sname, n.id)
             }
             Response::Broadcast(_sid, _cid, _rdata) => {
                 write!(f, "Broadcast {:?}", _cid)
@@ -138,10 +142,10 @@ pub struct NotificationBundle {
 //     }
 // }
 
-pub fn start(
-    gnome_id: GnomeId,
-    network_settings: Option<NetworkSettings>,
-    sender: Sender<NotificationBundle>,
-) -> Manager {
-    Manager::new(gnome_id, network_settings, sender)
-}
+// pub fn start(
+//     gnome_id: GnomeId,
+//     network_settings: Option<NetworkSettings>,
+//     sender: Sender<NotificationBundle>,
+// ) -> Manager {
+//     Manager::new(gnome_id, network_settings, sender)
+// }

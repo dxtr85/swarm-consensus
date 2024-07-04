@@ -42,6 +42,12 @@ pub struct Neighbor {
     receiver: Receiver<Message>,
     cast_receiver: Receiver<CastMessage>,
     pub sender: Sender<WrappedMessage>,
+    shared_sender: Sender<(
+        String,
+        Sender<Message>,
+        Sender<CastMessage>,
+        Receiver<WrappedMessage>,
+    )>,
     round_start: SwarmTime,
     pub swarm_time: SwarmTime,
     pub swarm_diameter: SwarmTime,
@@ -70,6 +76,7 @@ pub enum NeighborRequest {
     ConnectRequest(u8, GnomeId, NetworkSettings),
     SwarmSyncRequest,
     SubscribeRequest(bool, CastID),
+    CreateNeighbor(GnomeId, String),
     CustomRequest(u8, Data),
 }
 
@@ -98,6 +105,12 @@ impl Neighbor {
         receiver: Receiver<Message>,
         cast_receiver: Receiver<CastMessage>,
         sender: Sender<WrappedMessage>,
+        shared_sender: Sender<(
+            String,
+            Sender<Message>,
+            Sender<CastMessage>,
+            Receiver<WrappedMessage>,
+        )>,
         swarm_time: SwarmTime,
         swarm_diameter: SwarmTime,
     ) -> Self {
@@ -107,6 +120,7 @@ impl Neighbor {
             round_start: SwarmTime(0),
             cast_receiver,
             sender,
+            shared_sender,
             swarm_time,
             swarm_diameter,
             neighborhood: Neighborhood(0),
@@ -124,6 +138,28 @@ impl Neighbor {
             available_bandwith: 1024,
             // pending_unicasts: HashMap::new(),
         }
+    }
+    pub fn get_shared_sender(
+        &self,
+    ) -> Sender<(
+        String,
+        Sender<Message>,
+        Sender<CastMessage>,
+        Receiver<WrappedMessage>,
+    )> {
+        self.shared_sender.clone()
+    }
+
+    // clone_to_swarm is used to notify networking about
+    // new swarm that Gnome want's to share with Neighbor
+    pub fn clone_to_swarm(
+        &self,
+        swarm_name: String,
+        send: Sender<Message>,
+        c_send: Sender<CastMessage>,
+        recv: Receiver<WrappedMessage>,
+    ) {
+        let _ = self.shared_sender.send((swarm_name, send, c_send, recv));
     }
 
     pub fn start_new_round(&mut self, swarm_time: SwarmTime) {
@@ -250,7 +286,7 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
-            println!("{} < {}", self.id, message);
+            // println!("{} < {}", self.id, message);
             // if message.is_cast() {
             //     println!("Unserved casting 1");
             //     // self.send_casting(message.clone());
