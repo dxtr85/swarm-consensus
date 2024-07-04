@@ -292,6 +292,7 @@ impl Neighbor {
             //     // self.send_casting(message.clone());
             //     continue;
             // }
+            message_recvd = true;
             if message.header == last_accepted_message.header
                 && message.neighborhood == Neighborhood(7)
                 && message.payload == last_accepted_message.payload
@@ -299,7 +300,6 @@ impl Neighbor {
                 println!("Ignoring: {}", message);
                 continue;
             }
-            message_recvd = true;
             // if let Some(config) = last_accepted_reconf {
             //     if message.header == Header::Reconfigure
             //         && message.payload == Payload::Reconfigure(config)

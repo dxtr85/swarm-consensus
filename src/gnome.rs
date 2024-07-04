@@ -27,8 +27,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::net::IpAddr;
 use std::ops::Deref;
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
-use std::thread;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -255,8 +254,8 @@ pub struct Gnome {
     pending_conn_requests: VecDeque<ConnRequest>,
     ongoing_requests: HashMap<u8, OngoingRequest>,
     neighbor_discovery: NeighborDiscovery,
-    chill_out: (bool, u16),
-    chill_out_max: u16,
+    chill_out: (bool, Instant),
+    chill_out_max: Duration,
     data_converters: HashMap<(CastType, CastID), (Receiver<Data>, Sender<WrappedMessage>)>,
 }
 
@@ -300,8 +299,8 @@ impl Gnome {
             pending_conn_requests: VecDeque::new(),
             ongoing_requests: HashMap::new(),
             neighbor_discovery: NeighborDiscovery::default(),
-            chill_out: (false, 14500),
-            chill_out_max: 14500,
+            chill_out: (false, Instant::now()),
+            chill_out_max: Duration::from_millis(14500),
             data_converters: HashMap::new(),
         }
     }
@@ -911,7 +910,7 @@ impl Gnome {
                 };
 
                 let chill_phase = if self.chill_out.0 {
-                    self.chill_out.1
+                    (self.chill_out_max - self.chill_out.1.elapsed()).as_millis() as u16
                 } else {
                     0
                 };
@@ -1002,7 +1001,7 @@ impl Gnome {
                         };
 
                         let chill_phase = if self.chill_out.0 {
-                            self.chill_out.1
+                            (self.chill_out_max - self.chill_out.1.elapsed()).as_millis() as u16
                         } else {
                             0
                         };
@@ -1104,44 +1103,44 @@ impl Gnome {
         }
     }
 
-    fn start_new_timer(
-        &self,
-        duration: Duration,
-        sender: Sender<()>,
-        terminator: Option<Sender<()>>,
-        // old_handle: Option<JoinHandle<()>>,
-    ) -> Sender<()> {
-        if let Some(terminator) = terminator {
-            // println!("Droping old timeout handle, starting {:?}", duration);
-            drop(terminator);
-        }
-        // println!("droped");
-        let (tx, rx) = channel();
-        let mut send = true;
+    // fn start_new_timer(
+    //     &self,
+    //     duration: Duration,
+    //     sender: Sender<()>,
+    //     terminator: Option<Sender<()>>,
+    //     // old_handle: Option<JoinHandle<()>>,
+    // ) -> Sender<()> {
+    //     if let Some(terminator) = terminator {
+    //         // println!("Droping old timeout handle, starting {:?}", duration);
+    //         drop(terminator);
+    //     }
+    //     // println!("droped");
+    //     let (tx, rx) = channel();
+    //     let mut send = true;
 
-        thread::spawn(move || {
-            let dur10th = duration / 10;
-            for _i in 0..10 {
-                thread::yield_now();
-                thread::sleep(dur10th);
-                match rx.try_recv() {
-                    Ok(_) | Err(TryRecvError::Disconnected) => {
-                        // println!("Terminating. ");
-                        send = false;
-                        break;
-                    }
-                    Err(TryRecvError::Empty) => {
-                        // print!(".")
-                    }
-                }
-            }
+    //     thread::spawn(move || {
+    //         let dur10th = duration / 10;
+    //         for _i in 0..10 {
+    //             thread::yield_now();
+    //             thread::sleep(dur10th);
+    //             match rx.try_recv() {
+    //                 Ok(_) | Err(TryRecvError::Disconnected) => {
+    //                     // println!("Terminating. ");
+    //                     send = false;
+    //                     break;
+    //                 }
+    //                 Err(TryRecvError::Empty) => {
+    //                     // print!(".")
+    //                 }
+    //             }
+    //         }
 
-            if send {
-                let _ = sender.send(());
-            }
-        });
-        tx
-    }
+    //         if send {
+    //             let _ = sender.send(());
+    //         }
+    //     });
+    //     tx
+    // }
 
     pub fn do_your_job(mut self) {
         println!("Waiting for user/network to provide some Neighbors...");
@@ -1150,7 +1149,7 @@ impl Gnome {
             let _ = self.serve_user_requests();
         }
         println!("Have neighbors!");
-        let (timer_sender, timeout_receiver) = channel();
+        // let (timer_sender, timeout_receiver) = channel();
         let mut available_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
             band
         } else {
@@ -1159,7 +1158,9 @@ impl Gnome {
         println!("Avail bandwith: {}", available_bandwith);
         self.sync_with_swarm();
         // let mut _guard = self.start_new_timer(self.timeout_duration, timer_sender.clone(), None);
-        let mut _guard = self.start_new_timer(Duration::from_secs(16), timer_sender.clone(), None);
+        let mut timer = Instant::now();
+        self.timeout_duration = Duration::from_secs(16);
+        // let mut _guard = self.start_new_timer(Duration::from_secs(16), timer_sender.clone(), None);
 
         loop {
             let (exit_app, new_user_proposal) = self.serve_user_requests();
@@ -1188,7 +1189,7 @@ impl Gnome {
                 // println!("Avail bandwith: {}", available_bandwith);
                 //TODO make use of available_bandwith during multicasting setup
             }
-            let timeout = timeout_receiver.try_recv().is_ok();
+            // let timeout = timeout_receiver.try_recv().is_ok();
             let advance_to_next_turn = fast_advance_to_next_turn || slow_advance_to_next_turn;
             let new_proposal = new_user_proposal || fast_new_proposal || slow_new_proposal;
             // || refr_new_proposal;
@@ -1220,18 +1221,22 @@ impl Gnome {
                     self.send_immediate = true;
                 }
                 self.chill_out.0 = false;
-                self.chill_out.1 = self.chill_out_max;
+                // self.chill_out.1 = self.chill_out_max;
             }
             if self.chill_out.0 {
-                if self.chill_out.1 == self.chill_out_max {
-                    // println!("Let's chill out");
-                    // We need to communicate to the timeout mechanism to pause his countdown.
-                    // We can do this by droping guard.
-                    // TODO: most probably there is a better way...
-                    let (s, _r) = channel();
-                    _guard = s;
-                    drop(_r);
-                } else if self.chill_out.1 == 0 {
+                // if self.chill_out.1 == self.chill_out_max {
+                // TODO: fix this
+                // if self.chill_out.1.elapsed() == Duration::ZERO {
+                //     // println!("Let's chill out");
+                //     // We need to communicate to the timeout mechanism to pause his countdown.
+                //     // We can do this by droping guard.
+                //     // TODO: most probably there is a better way...
+                //     let (s, _r) = channel();
+                //     _guard = s;
+                //     drop(_r);
+                // // } else if self.chill_out.1 == 0 {
+                // } else
+                if self.chill_out.1.elapsed() >= self.chill_out_max {
                     // If self.chill_out.1 reaches 0 self._chill_out.0 =false and it's time to work.
                     println!(
                         "Chill out is over fast:{}, slow:{}, refr:{}",
@@ -1241,22 +1246,34 @@ impl Gnome {
                     );
                     self.chill_out.0 = false;
                     // When we end chill_out mode, we have to start new timer.
-                    _guard = self.start_new_timer(
-                        self.timeout_duration,
-                        timer_sender.clone(),
-                        Some(_guard),
-                    );
+                    // println!("Reset timer");
+                    self.send_immediate = true;
+                    timer = Instant::now();
+                    self.timeout_duration = Duration::from_millis(500);
+                    // _guard = self.start_new_timer(
+                    //     self.timeout_duration,
+                    //     timer_sender.clone(),
+                    //     Some(_guard),
+                    // );
+                    // continue;
+                    // println!("ela1 {:?}", timer.elapsed());
+                } else {
                     continue;
                 }
+                // println!("ela2 {:?}", timer.elapsed());
                 // in case we are in chill out mode we go to sleep for 1ms
                 // and we decrese self.chill_out.1 by 1 and continue loop.
-                self.chill_out.1 -= 1;
+                // self.chill_out.1 -= 1;
                 // sleep only one millisec at a time
                 // This is to increase casting throughput
-                thread::sleep(Duration::from_millis(1));
-                continue;
+                // thread::sleep(Duration::from_millis(1));
             }
+            // print!(" {:?}", timer.elapsed());
 
+            let timeout = timer.elapsed() >= self.timeout_duration;
+            if timeout {
+                println!("Timeout!!! {:?}", timer.elapsed());
+            }
             if advance_to_next_turn
                 || self.send_immediate
                 || timeout
@@ -1283,8 +1300,10 @@ impl Gnome {
                 {
                     self.query_for_new_neighbors();
                 }
-                _guard =
-                    self.start_new_timer(self.timeout_duration, timer_sender.clone(), Some(_guard));
+                timer = Instant::now();
+                self.timeout_duration = Duration::from_millis(500);
+                // _guard =
+                //     self.start_new_timer(self.timeout_duration, timer_sender.clone(), Some(_guard));
             }
             if exit_app {
                 break;
@@ -1486,11 +1505,13 @@ impl Gnome {
             if chill_phase > 0 {
                 println!("Into chill {}", chill_phase);
                 self.chill_out.0 = true;
-                self.chill_out.1 = chill_phase;
+                // self.chill_out.1 = chill_phase;
+                self.chill_out.1 =
+                    Instant::now() - self.chill_out_max + Duration::from_millis(chill_phase as u64);
             } else {
                 println!("no chill ");
                 self.chill_out.0 = false;
-                self.chill_out.1 = chill_phase;
+                // self.chill_out.1 = chill_phase;
             }
 
             for (b_id, origin) in b_casts {
@@ -1808,7 +1829,8 @@ impl Gnome {
                     self.header = Header::Sync;
                     self.payload = Payload::KeepAlive(available_bandwith);
                     self.chill_out.0 = true;
-                    self.chill_out.1 = self.chill_out_max;
+                    // self.chill_out.1 = self.chill_out_max;
+                    self.chill_out.1 = Instant::now();
                 }
             // } else if self.block_id == BlockID(0) && self.data.0 > 0 {
             // println!("We have got a Reconfig to parse");
@@ -1841,7 +1863,8 @@ impl Gnome {
                     self.send_immediate = true;
                 } else {
                     self.chill_out.0 = true;
-                    self.chill_out.1 = self.chill_out_max;
+                    // self.chill_out.1 = self.chill_out_max;
+                    self.chill_out.1 = Instant::now();
                 }
                 // At start of new round
                 // Flush awaiting neighbors
@@ -2044,11 +2067,13 @@ impl Gnome {
                             if chill_phase > 0 {
                                 println!("Into chill {}", chill_phase);
                                 self.chill_out.0 = true;
-                                self.chill_out.1 = chill_phase;
+                                // self.chill_out.1 = chill_phase;
+                                self.chill_out.1 = Instant::now() - self.chill_out_max
+                                    + Duration::from_millis(chill_phase as u64);
                             } else {
                                 println!("no chill ");
                                 self.chill_out.0 = false;
-                                self.chill_out.1 = chill_phase;
+                                // self.chill_out.1 = chill_phase;
                             }
                         }
                         NeighborResponse::Subscribed(is_bcast, cast_id, origin, source) => {
