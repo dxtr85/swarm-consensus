@@ -236,6 +236,7 @@ pub struct Gnome {
     receiver: Receiver<Request>,
     band_receiver: Receiver<u64>,
     sender: Sender<Response>,
+    // TODO: make neighbors attrs into HashMap<GnomeId,Neighbor>
     fast_neighbors: Vec<Neighbor>,
     slow_neighbors: Vec<Neighbor>,
     new_neighbors: Vec<Neighbor>,
@@ -1830,7 +1831,9 @@ impl Gnome {
                     self.payload = Payload::KeepAlive(available_bandwith);
                     self.chill_out.0 = true;
                     // self.chill_out.1 = self.chill_out_max;
+                    // TODO: probably we can merge chillout and timeout into one
                     self.chill_out.1 = Instant::now();
+                    // self.timeout_duration = Duration::from_secs(15);
                 }
             // } else if self.block_id == BlockID(0) && self.data.0 > 0 {
             // println!("We have got a Reconfig to parse");
