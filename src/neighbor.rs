@@ -64,7 +64,7 @@ pub struct Neighbor {
     active_unicasts: HashMap<CastID, Sender<Data>>,
     active_broadcasts: HashMap<CastID, Sender<WrappedMessage>>,
     pub available_bandwith: u64,
-    // pending_unicasts: HashMap<CastID, Sender<Data>>,
+    pub member_of_swarms: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +77,7 @@ pub enum NeighborRequest {
     SwarmSyncRequest,
     SubscribeRequest(bool, CastID),
     CreateNeighbor(GnomeId, String),
+    SwarmJoinedInfo(String),
     CustomRequest(u8, Data),
 }
 
@@ -113,6 +114,7 @@ impl Neighbor {
         )>,
         swarm_time: SwarmTime,
         swarm_diameter: SwarmTime,
+        member_of_swarms: Vec<String>,
     ) -> Self {
         Neighbor {
             id,
@@ -136,7 +138,7 @@ impl Neighbor {
             active_unicasts: HashMap::new(),
             active_broadcasts: HashMap::new(),
             available_bandwith: 1024,
-            // pending_unicasts: HashMap::new(),
+            member_of_swarms,
         }
     }
     pub fn get_shared_sender(
@@ -159,7 +161,9 @@ impl Neighbor {
         c_send: Sender<CastMessage>,
         recv: Receiver<WrappedMessage>,
     ) {
-        let _ = self.shared_sender.send((swarm_name, send, c_send, recv));
+        println!("clone to swarm");
+        let r = self.shared_sender.send((swarm_name, send, c_send, recv));
+        println!("clone to swarm: {:?}", r);
     }
 
     pub fn start_new_round(&mut self, swarm_time: SwarmTime) {
@@ -242,7 +246,7 @@ impl Neighbor {
                     match id {
                         CastID(255) => {
                             //Request
-                            println!("Some NReq received: {:?}", c_type);
+                            // println!("Some NReq received: {:?}", c_type);
                             if let Some(request) = c_msg.get_request() {
                                 self.requests.push_front(request.clone());
                                 // TODO
@@ -650,8 +654,13 @@ impl Neighbor {
         }
     }
 
+    pub fn send_no_op(&self) {
+        let _ = self.sender.send(WrappedMessage::NoOp);
+    }
     pub fn send_out_cast(&mut self, message: CastMessage) {
-        let _ = self.sender.send(WrappedMessage::Cast(message));
+        // println!("Sending: {:?}", message);
+        let res = self.sender.send(WrappedMessage::Cast(message));
+        // println!("result: {:?}", res);
     }
 
     pub fn send_out(&mut self, message: Message) {

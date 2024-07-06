@@ -1,5 +1,7 @@
 use crate::gnome::NetworkSettings;
-use crate::multicast::{CastMessage, Multicast};
+use crate::gnome_to_manager::GnomeToManager;
+use crate::manager_to_gnome::ManagerToGnome;
+use crate::multicast::Multicast;
 use crate::Gnome;
 use crate::GnomeId;
 use crate::Neighbor;
@@ -90,6 +92,8 @@ impl Swarm {
         id: SwarmID,
         gnome_id: GnomeId,
         neighbors: Option<Vec<Neighbor>>,
+        mgr_sender: Sender<GnomeToManager>,
+        mgr_receiver: Receiver<ManagerToGnome>,
         band_receiver: Receiver<u64>,
         net_settings_send: Sender<NetworkSettings>,
         network_settings: NetworkSettings,
@@ -111,6 +115,8 @@ impl Swarm {
                 swarm,
                 response_sender,
                 request_receiver,
+                mgr_sender,
+                mgr_receiver,
                 band_receiver,
                 neighbors,
                 network_settings,
@@ -122,6 +128,8 @@ impl Swarm {
                 swarm,
                 response_sender,
                 request_receiver,
+                mgr_sender,
+                mgr_receiver,
                 band_receiver,
                 network_settings,
                 net_settings_send,

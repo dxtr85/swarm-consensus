@@ -12,6 +12,7 @@ use std::fmt::Display;
 pub enum WrappedMessage {
     Cast(CastMessage),
     Regular(Message),
+    NoOp,
 }
 #[derive(Clone, Debug)]
 pub struct Message {

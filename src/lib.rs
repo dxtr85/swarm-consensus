@@ -1,4 +1,6 @@
 mod gnome;
+mod gnome_to_manager;
+mod manager_to_gnome;
 use crate::gnome::Gnome;
 pub use crate::gnome::GnomeId;
 mod message;
@@ -10,6 +12,8 @@ pub use crate::gnome::PortAllocationRule;
 pub use crate::swarm::Swarm;
 pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmTime;
+pub use gnome_to_manager::GnomeToManager;
+pub use manager_to_gnome::ManagerToGnome;
 pub use message::BlockID;
 pub use message::Configuration;
 pub use message::{Header, Message, Payload, WrappedMessage};
