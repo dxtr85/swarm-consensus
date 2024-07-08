@@ -65,6 +65,7 @@ pub struct Neighbor {
     active_broadcasts: HashMap<CastID, Sender<WrappedMessage>>,
     pub available_bandwith: u64,
     pub member_of_swarms: Vec<String>,
+    timeouts: [u8; 8],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,6 +140,7 @@ impl Neighbor {
             active_broadcasts: HashMap::new(),
             available_bandwith: 1024,
             member_of_swarms,
+            timeouts: [0; 8],
         }
     }
     pub fn get_shared_sender(
@@ -161,9 +163,9 @@ impl Neighbor {
         c_send: Sender<CastMessage>,
         recv: Receiver<WrappedMessage>,
     ) {
-        println!("clone to swarm");
+        // println!("clone to swarm");
         let r = self.shared_sender.send((swarm_name, send, c_send, recv));
-        println!("clone to swarm: {:?}", r);
+        // println!("clone to swarm: {:?}", r);
     }
 
     pub fn start_new_round(&mut self, swarm_time: SwarmTime) {
@@ -282,11 +284,11 @@ impl Neighbor {
         let mut drop_me = false;
         let mut force_break = false;
         while let Ok(
-            ref message @ Message {
+            message @ Message {
                 swarm_time,
                 neighborhood,
                 header,
-                ref payload,
+                ..
             },
         ) = self.receiver.try_recv()
         {
@@ -403,9 +405,9 @@ impl Neighbor {
                     }
                 }
             };
-            match payload {
+            match message.payload {
                 Payload::KeepAlive(bandwith) => {
-                    self.available_bandwith = *bandwith;
+                    self.available_bandwith = bandwith;
                     // println!("KeepAlive");
                 }
                 Payload::Bye => {
@@ -415,16 +417,16 @@ impl Neighbor {
                 Payload::Block(block_id, data) => {
                     match self.header {
                         Header::Block(id) => {
-                            if id == *block_id {
-                                self.payload = payload.clone();
+                            if id == block_id {
+                                self.payload = Payload::Block(id, data)
                             } else {
                                 self.user_responses
-                                    .push_front(Response::Block(*block_id, *data));
+                                    .push_front(Response::Block(block_id, data));
                             }
                         }
                         Header::Sync => {
                             self.user_responses
-                                .push_front(Response::Block(*block_id, *data));
+                                .push_front(Response::Block(block_id, data));
                         }
                         Header::Reconfigure(_ct, _gid) => {
                             println!("Sending Block in Reconfigure header is not allowed");
@@ -438,7 +440,7 @@ impl Neighbor {
                     // Priority:  Block > Reconfigure > Sync
                     // Reconfigure is when we have first bit in a Header set to '0'
                     // and three Payload bits are all ones: '111'
-                    self.payload = payload.clone();
+                    self.payload = message.payload;
                 } // Payload::Request(request) => {
                   //     // println!("Pushing riquest");
                   //     self.requests.push_front(request.clone());
@@ -534,6 +536,23 @@ impl Neighbor {
 
     pub fn activate_broadcast(&mut self, cast_id: CastID, sender: Sender<WrappedMessage>) {
         self.active_broadcasts.insert(cast_id, sender);
+    }
+
+    pub fn add_timeout(&mut self) {
+        self.timeouts[0] += 1;
+    }
+
+    pub fn shift_timeout(&mut self) {
+        // println!("shift_timeout");
+        for i in (0..=6).rev() {
+            self.timeouts[i + 1] = self.timeouts[i];
+        }
+        self.timeouts[0] = 0;
+    }
+
+    pub fn timeouts_count(&self) -> u8 {
+        // println!("timeouts_count");
+        self.timeouts.iter().sum()
     }
 
     fn send_casting(&self, message: CastMessage) {

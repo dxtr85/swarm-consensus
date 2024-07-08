@@ -55,12 +55,25 @@ pub enum Payload {
 }
 
 impl Payload {
-    pub fn data(&self) -> Option<Data> {
-        match *self {
-            Payload::Block(_id, data) => Some(data),
+    pub fn has_data(&self) -> bool {
+        matches!(self, Payload::Block(_b, _d))
+    }
+    pub fn id_and_data(self) -> Option<(BlockID, Data)> {
+        match self {
+            Payload::Block(id, data) => Some((id, data)),
             // Payload::Unicast(_id, data) => Some(data),
             // Payload::Broadcast(_id, data) => Some(data),
             // Payload::Multicast(_id, data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn has_config(&self) -> bool {
+        matches!(self, Payload::Reconfigure(_c))
+    }
+    pub fn config(self) -> Option<Configuration> {
+        match self {
+            Payload::Reconfigure(config) => Some(config),
             _ => None,
         }
     }
@@ -132,7 +145,7 @@ impl Configuration {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BlockID(pub u32);
+pub struct BlockID(pub u64);
 
 impl Message {
     pub fn new(
@@ -175,7 +188,7 @@ impl Message {
             swarm_time: SwarmTime(0),
             neighborhood: Neighborhood(0),
             header: Header::Block(BlockID(0)),
-            payload: Payload::Block(BlockID(0), Data(0)),
+            payload: Payload::Block(BlockID(0), Data::empty()),
         }
     }
     pub fn reconfigure() -> Message {

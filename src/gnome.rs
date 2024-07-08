@@ -211,14 +211,23 @@ struct ConnRequest {
     neighbor_id: GnomeId,
     // network_settings: NetworkSettings,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Proposal {
     Block(BlockID, Data),
     Config(Configuration),
 }
 impl Proposal {
-    pub fn as_header_payload(&self) -> (Header, Payload) {
-        match *self {
+    pub fn new(payload: Payload) -> Self {
+        if payload.has_data() {
+            let (id, data) = payload.id_and_data().unwrap();
+            Proposal::Block(id, data)
+        } else {
+            let conf = payload.config().unwrap();
+            Proposal::Config(conf)
+        }
+    }
+    pub fn to_header_payload(self) -> (Header, Payload) {
+        match self {
             Self::Block(b_id, data) => (Header::Block(b_id), Payload::Block(b_id, data)),
             Self::Config(config) => (
                 Header::Reconfigure(config.as_ct(), config.as_gid()),
@@ -1619,23 +1628,42 @@ impl Gnome {
 
     fn swap_neighbors(&mut self) {
         // println!("Swapping neighbors");
-        while let Some(neighbor) = self.slow_neighbors.pop() {
-            println!(
-                "{} DROP\ttimeout \t neighbors: {}, {}",
-                neighbor.id,
-                self.fast_neighbors.len(),
-                self.refreshed_neighbors.len()
-            );
-            drop(neighbor);
+        // TODO: we do not want to drop slow neighbors,
+        //       only increase some counters to indicate what % of time
+        //       they could not keep up
+        //       user should decide to drop a neighbor
+        //       or set a policy to drop a neighbor when certain dgram loss threashold
+        //       is crossed
+        for neighbor in &mut self.slow_neighbors {
+            // TODO: here we should also check if given neighbor
+            //       is a source for any multicast and
+            //       maybe change it to some other neighbor
+            neighbor.add_timeout();
         }
-        self.slow_neighbors = std::mem::replace(
-            &mut self.fast_neighbors,
-            Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
-        );
+        // while let Some(neighbor) = self.slow_neighbors.pop() {
+        //     println!(
+        //         "{} DROP\ttimeout \t neighbors: {}, {}",
+        //         neighbor.id,
+        //         self.fast_neighbors.len(),
+        //         self.refreshed_neighbors.len()
+        //     );
+        //     drop(neighbor);
+        // }
+        // self.slow_neighbors = std::mem::replace(
+        //     &mut self.fast_neighbors,
+        //     Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
+        // );
+        let fast_n = std::mem::take(&mut self.fast_neighbors);
+        for neighbor in fast_n {
+            self.slow_neighbors.push(neighbor);
+        }
         self.fast_neighbors = std::mem::replace(
             &mut self.refreshed_neighbors,
             Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
         );
+        // TODO: if we have only slow_neighbors and no fast/refreshed
+        //       neighbors - this is an indication that something is
+        //       wrong with our network connection
         // println!(
         //     "After swap fast: {}, slow: {}, refr: {}",
         //     self.fast_neighbors.len(),
@@ -1743,7 +1771,7 @@ impl Gnome {
         // if n_bid == BlockID(0) && n_data == Data(0) {
         if self.header == Header::Sync {
             if let Some(proposal) = self.proposals.pop_back() {
-                (self.header, self.payload) = proposal.as_header_payload();
+                (self.header, self.payload) = proposal.clone().to_header_payload();
                 if self.header.is_reconfigure() {
                     if let Payload::Reconfigure(Configuration::StartBroadcast(g_id, c_id)) =
                         self.payload
@@ -1800,6 +1828,27 @@ impl Gnome {
             self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
         if all_gnomes_aware || finish_round {
             // println!("New round");
+            if !self.slow_neighbors.is_empty() {
+                // TODO: we need to store it as gnome's attribute and allow for
+                //       user to change it (default is 87.5%)
+                let drop_treshold: u8 = 7 * self.swarm_diameter.0 as u8;
+                let mut slow_neighbors = std::mem::take(&mut self.slow_neighbors);
+                while let Some(mut neighbor) = slow_neighbors.pop() {
+                    neighbor.shift_timeout();
+                    if neighbor.timeouts_count() < drop_treshold {
+                        self.slow_neighbors.push(neighbor);
+                    } else {
+                        println!("DROP {} as drop threshold exceeded", neighbor.id);
+                    }
+                }
+            }
+            for neighbor in &mut self.fast_neighbors {
+                neighbor.shift_timeout();
+            }
+            // for neighbor in &mut self.refreshed_neighbors {
+            //     println!("refreshed not empty?!");
+            //     neighbor.shift_timeout();
+            // }
             // let block_non_zero = self.block_id > BlockID(0);
             let block_proposed = self.header.non_zero_block();
             let reconfig = self.header.is_reconfigure();
@@ -1807,8 +1856,12 @@ impl Gnome {
                 self.send_immediate = true;
                 if all_gnomes_aware {
                     self.next_state.last_accepted_message = self.prepare_message();
+                    let payload = std::mem::replace(
+                        &mut self.payload,
+                        Payload::KeepAlive(available_bandwith),
+                    );
                     if block_proposed {
-                        if let Payload::Block(block_id, data) = self.payload {
+                        if let Payload::Block(block_id, data) = payload {
                             let _res = self.sender.send(Response::Block(block_id, data));
                             // println!("^^^ USER ^^^ NEW {} {:075}", block_id, data.0);
                         } else {
@@ -1879,16 +1932,17 @@ impl Gnome {
                         // self.next_state.last_accepted_reconf =
                         //     Some(Configuration::from_u32(self.data.0));
                     }
-                    if let Some(my_proposed_data) = self.my_proposal {
+                    let my_proposal = std::mem::replace(&mut self.my_proposal, None);
+                    if let Some(my_proposed_data) = my_proposal {
                         // TODO: here we need to distinguish between Block and Reconfig
-                        let (head, payload) = my_proposed_data.as_header_payload();
-                        if (head, payload)
+                        let (head, payload) = my_proposed_data.to_header_payload();
+                        if (&head, &payload)
                             != (
-                                self.next_state.last_accepted_message.header,
-                                self.next_state.last_accepted_message.payload.clone(),
+                                &self.next_state.last_accepted_message.header,
+                                &self.next_state.last_accepted_message.payload,
                             )
                         {
-                            self.proposals.push_back(my_proposed_data);
+                            self.proposals.push_back(Proposal::new(payload));
                         }
                         self.my_proposal = None;
                     }
@@ -1903,8 +1957,8 @@ impl Gnome {
                     );
                 }
                 if let Some(proposal) = self.proposals.pop_back() {
-                    (self.header, self.payload) = proposal.as_header_payload();
-                    self.my_proposal = Some(proposal);
+                    self.my_proposal = Some(proposal.clone());
+                    (self.header, self.payload) = proposal.to_header_payload();
                     self.send_immediate = true;
                 } else {
                     self.header = Header::Sync;
@@ -1941,8 +1995,8 @@ impl Gnome {
                     //         self.data = Data(config.as_u32());
                     //     }
                     // }
-                    (self.header, self.payload) = proposal.as_header_payload();
-                    self.my_proposal = Some(proposal);
+                    self.my_proposal = Some(proposal.clone());
+                    (self.header, self.payload) = proposal.to_header_payload();
                     self.send_immediate = true;
                 } else {
                     self.chill_out.0 = true;

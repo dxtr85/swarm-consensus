@@ -37,7 +37,7 @@ impl CastMessage {
     pub fn id(&self) -> CastID {
         self.id
     }
-    pub fn get_data(&self) -> Option<Data> {
+    pub fn get_data(self) -> Option<Data> {
         if let CastContent::Data(dat) = self.content {
             Some(dat)
         } else {
@@ -148,12 +148,12 @@ impl Multicast {
     pub fn serve(&mut self) {
         while let Ok(WrappedMessage::Cast(msg)) = self.source.1.try_recv() {
             // println!("Received a casting msg: {:?}", msg);
-            if let Some(sender) = &self.to_user {
-                let _ = sender.send(msg.get_data().unwrap());
-            }
             for sender in self.subscribers.values() {
                 // println!("Wrapped send: {:?}", msg);
                 let _ = sender.send(WrappedMessage::Cast(msg.clone()));
+            }
+            if let Some(sender) = &self.to_user {
+                let _ = sender.send(msg.get_data().unwrap());
             }
         }
     }
