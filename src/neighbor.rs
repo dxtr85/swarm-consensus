@@ -164,7 +164,7 @@ impl Neighbor {
         recv: Receiver<WrappedMessage>,
     ) {
         // println!("clone to swarm");
-        let r = self.shared_sender.send((swarm_name, send, c_send, recv));
+        let _r = self.shared_sender.send((swarm_name, send, c_send, recv));
         // println!("clone to swarm: {:?}", r);
     }
 
@@ -227,7 +227,7 @@ impl Neighbor {
 
             // return Some(self.swarm_time);
         }
-        return Err("Unexpected Cast message during SwarmSync".to_string());
+        Err("Unexpected Cast message during SwarmSync".to_string())
     }
 
     pub fn try_recv_cast(&mut self) {
@@ -251,19 +251,19 @@ impl Neighbor {
                             // println!("Some NReq received: {:?}", c_type);
                             if let Some(request) = c_msg.get_request() {
                                 self.requests.push_front(request.clone());
-                                // TODO
                             }
                         }
                         CastID(254) => {
                             //Response
                             if let Some(response) = c_msg.get_response() {
-                                // TODO
                                 self.serve_neighbor_response(response);
                             }
                         }
                         _ => {
                             if let Some(sender) = self.active_unicasts.get(&id) {
                                 let _ = sender.send(c_msg.get_data().unwrap());
+                            } else {
+                                println!("Could not find Unicast with id: {:?}", id);
                             }
                         }
                     }
