@@ -16,7 +16,7 @@ pub use gnome_to_manager::GnomeToManager;
 pub use manager_to_gnome::ManagerToGnome;
 pub use message::BlockID;
 pub use message::Configuration;
-pub use message::{Header, Message, Payload, WrappedMessage};
+pub use message::{Header, Message, Payload, Signature, WrappedMessage};
 pub use neighbor::NeighborRequest;
 pub use proposal::Data;
 use std::net::IpAddr;

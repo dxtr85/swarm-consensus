@@ -6,9 +6,14 @@ use std::{fmt, hash::Hash};
 pub struct Data(Vec<u8>);
 impl Data {
     pub fn new(contents: Vec<u8>) -> Result<Self, Vec<u8>> {
+        // println!("new data: {:?}", contents);
         if contents.len() > 1024 {
             return Err(contents);
         }
+        // // Prefix is for later storing SwarmTime value before sign/verify
+        // let mut with_prefix = vec![0, 0, 0, 0];
+        // with_prefix.append(&mut contents);
+        // Ok(Self(with_prefix))
         Ok(Self(contents))
     }
 
@@ -18,6 +23,9 @@ impl Data {
 
     pub fn bytes(self) -> Vec<u8> {
         self.0
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
     pub fn get_block_id(&self) -> BlockID {
         let mut hasher = DefaultHasher::new();

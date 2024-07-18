@@ -11,6 +11,8 @@ use crate::GnomeId;
 use crate::Message;
 use crate::NetworkSettings;
 use crate::Response;
+use crate::Signature;
+use crate::Swarm;
 use crate::SwarmID;
 use crate::SwarmTime;
 use std::collections::HashMap;
@@ -66,6 +68,7 @@ pub struct Neighbor {
     pub available_bandwith: u64,
     pub member_of_swarms: Vec<String>,
     timeouts: [u8; 8],
+    // pub pub_key_pem: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,6 +119,7 @@ impl Neighbor {
         swarm_time: SwarmTime,
         swarm_diameter: SwarmTime,
         member_of_swarms: Vec<String>,
+        // pub_key_pem: String,
     ) -> Self {
         Neighbor {
             id,
@@ -141,6 +145,7 @@ impl Neighbor {
             available_bandwith: 1024,
             member_of_swarms,
             timeouts: [0; 8],
+            // pub_key_pem,
         }
     }
     pub fn get_shared_sender(
@@ -272,9 +277,34 @@ impl Neighbor {
         }
     }
 
+    fn verify_payload(&self, round_start: SwarmTime, swarm: &Swarm, payload: &mut Payload) -> bool {
+        if !payload.has_signature() {
+            return true;
+        }
+        let signature_option = payload.signature_and_bytes();
+        if signature_option.is_none() {
+            println!("No signature");
+            return false;
+        }
+        let (signature, mut bytes) = signature_option.unwrap();
+        match *signature {
+            Signature::Regular(ref _sign) => {
+                println!("Regular signature verification not yet implemented");
+                false
+            } //TODO
+            Signature::Extended(ref pubkey_bytes, ref sign) => {
+                println!("Extended signature verification...");
+                // let key = String::from_utf8(pubkey_bytes.clone()).unwrap();
+                (swarm.verify)(pubkey_bytes, round_start, &mut bytes, sign)
+            } // pub verify: fn(&str, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
+              // }
+        }
+    }
+
     pub fn try_recv(
         &mut self,
         last_accepted_message: Message,
+        swarm: &Swarm,
         // last_accepted_block: BlockID,
         // last_accepted_reconf: Option<Configuration>,
     ) -> (bool, bool, bool, bool) {
@@ -284,7 +314,7 @@ impl Neighbor {
         let mut drop_me = false;
         let mut force_break = false;
         while let Ok(
-            message @ Message {
+            mut message @ Message {
                 swarm_time,
                 neighborhood,
                 header,
@@ -303,6 +333,8 @@ impl Neighbor {
                 && message.payload == last_accepted_message.payload
             {
                 println!("Ignoring: {}", message);
+                // TODO: without this message verification fails...
+                // self.round_start = message.swarm_time;
                 continue;
             }
             message_recvd = true;
@@ -322,6 +354,11 @@ impl Neighbor {
                 drop_me = true;
                 return (message_recvd, sanity_passed, new_proposal, drop_me);
             }
+            if !self.verify_payload(self.round_start, swarm, &mut message.payload) {
+                println!("Verification failed");
+                continue;
+            }
+            // println!("Verification success");
             if !self.sanity_check(&swarm_time, &neighborhood, &header) {
                 //     message_recvd = true;
                 // } else {
@@ -414,11 +451,11 @@ impl Neighbor {
                     println!("Bye");
                     drop_me = true;
                 }
-                Payload::Block(block_id, data) => {
+                Payload::Block(block_id, signature, data) => {
                     match self.header {
                         Header::Block(id) => {
                             if id == block_id {
-                                self.payload = Payload::Block(id, data)
+                                self.payload = Payload::Block(id, signature, data)
                             } else {
                                 self.user_responses
                                     .push_front(Response::Block(block_id, data));
@@ -433,14 +470,14 @@ impl Neighbor {
                         }
                     };
                 }
-                Payload::Reconfigure(_config) => {
+                Payload::Reconfigure(sign, conf) => {
                     //TODO: this can not be a Sync header, since we can not distinguish
                     // two Sync messages
                     // Probably we need to introduce new header, Reconfigure
                     // Priority:  Block > Reconfigure > Sync
                     // Reconfigure is when we have first bit in a Header set to '0'
                     // and three Payload bits are all ones: '111'
-                    self.payload = message.payload;
+                    self.payload = Payload::Reconfigure(sign, conf);
                 } // Payload::Request(request) => {
                   //     // println!("Pushing riquest");
                   //     self.requests.push_front(request.clone());
@@ -678,7 +715,7 @@ impl Neighbor {
     }
     pub fn send_out_cast(&mut self, message: CastMessage) {
         // println!("Sending: {:?}", message);
-        let res = self.sender.send(WrappedMessage::Cast(message));
+        let _res = self.sender.send(WrappedMessage::Cast(message));
         // println!("result: {:?}", res);
     }
 

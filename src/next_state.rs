@@ -122,7 +122,8 @@ impl NextState {
             self.neighborhood = Neighborhood(0);
             // } else if block_id_received == self.block_id
             if self.header.is_reconfigure() {
-                if let Payload::Reconfigure(config) = self.payload {
+                // TODO: make use of signature
+                if let Payload::Reconfigure(ref signature, config) = self.payload {
                     match config {
                         Configuration::StartBroadcast(origin, id) => {
                             self.change_config = ChangeConfig::AddBroadcast {
@@ -144,7 +145,7 @@ impl NextState {
             self.neighborhood = neighbor.neighborhood;
             // println!("nhood downgraded to {}", self.neighborhood);
             if neighbor.header.is_reconfigure() {
-                if let Payload::Reconfigure(config) = neighbor.payload {
+                if let Payload::Reconfigure(ref signature, config) = neighbor.payload {
                     match config {
                         Configuration::StartBroadcast(_g_id, _c_id) => {
                             self.change_config.add_filtered_neighbor(neighbor.id);
@@ -204,7 +205,7 @@ impl NextState {
         self.change_config.end_turn();
         self.neighborhood = if new_round {
             self.change_config = if header.is_reconfigure() {
-                if let Payload::Reconfigure(config) = payload {
+                if let Payload::Reconfigure(signature, config) = payload {
                     match config {
                         Configuration::StartBroadcast(origin, id) => ChangeConfig::AddBroadcast {
                             id,

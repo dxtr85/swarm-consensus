@@ -39,6 +39,23 @@ impl Add for SwarmTime {
     }
 }
 
+// #[derive(Clone)]
+pub enum PubKey {
+    Empty,
+    Pem(String),
+}
+
+pub enum KeyRegister {
+    Reg32(Box<[(GnomeId, PubKey); 32]>),
+    Reg64(Box<[(GnomeId, PubKey); 64]>),
+    Reg128(Box<[(GnomeId, PubKey); 128]>),
+    Reg256(Box<[(GnomeId, PubKey); 256]>),
+    Reg512(Box<[(GnomeId, PubKey); 512]>),
+    Reg1024(Box<[(GnomeId, PubKey); 1024]>),
+    Reg2048(Box<[(GnomeId, PubKey); 2048]>),
+    Reg4096(Box<[(GnomeId, PubKey); 4096]>),
+    Reg8192(Box<[(GnomeId, PubKey); 8192]>),
+}
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub struct SwarmID(pub u8);
 
@@ -49,6 +66,8 @@ pub struct Swarm {
     active_unicasts: HashSet<CastID>,
     active_broadcasts: HashMap<CastID, Multicast>,
     active_multicasts: HashMap<CastID, Multicast>,
+    key_reg: KeyRegister,
+    pub verify: fn(&Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
     // TODO: This struct (or SwarmManifesto and/or attrs) should be provided by the user,
     // or some other mean like another Swarm functioning as a swarm catalogue,
     // and we only need to define Traits that particular attributes should be bounded to.
@@ -91,12 +110,16 @@ impl Swarm {
         name: String,
         id: SwarmID,
         gnome_id: GnomeId,
+        pub_key_der: Vec<u8>,
+        priv_key_pem: String,
         neighbors: Option<Vec<Neighbor>>,
         mgr_sender: Sender<GnomeToManager>,
         mgr_receiver: Receiver<ManagerToGnome>,
         band_receiver: Receiver<u64>,
         net_settings_send: Sender<NetworkSettings>,
         network_settings: NetworkSettings,
+        verify: fn(&Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
+        sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
     ) -> (Sender<Request>, Receiver<Response>) {
         let (sender, request_receiver) = channel::<Request>();
         let (response_sender, receiver) = channel::<Response>();
@@ -108,10 +131,17 @@ impl Swarm {
             active_unicasts: HashSet::new(),
             active_broadcasts: HashMap::new(),
             active_multicasts: HashMap::new(),
+            verify,
+            key_reg: KeyRegister::Reg64(Box::new(core::array::from_fn(|_i| {
+                (GnomeId(0), PubKey::Empty)
+            }))),
         };
         let gnome = if let Some(neighbors) = neighbors {
+            // println!("PubKey {} {}", pub_key_pem, pub_key_pem.len());
             Gnome::new_with_neighbors(
                 gnome_id,
+                pub_key_der,
+                priv_key_pem,
                 swarm,
                 response_sender,
                 request_receiver,
@@ -121,10 +151,13 @@ impl Swarm {
                 neighbors,
                 network_settings,
                 net_settings_send,
+                sign,
             )
         } else {
             Gnome::new(
                 gnome_id,
+                pub_key_der,
+                priv_key_pem,
                 swarm,
                 response_sender,
                 request_receiver,
@@ -133,6 +166,7 @@ impl Swarm {
                 band_receiver,
                 network_settings,
                 net_settings_send,
+                sign,
             )
         };
         let _join_handle = spawn(move || {

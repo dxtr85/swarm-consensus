@@ -4,6 +4,7 @@ use crate::message::BlockID;
 use crate::message::Configuration;
 use crate::message::Header;
 use crate::message::Payload;
+use crate::message::Signature;
 use crate::multicast::CastType;
 use crate::multicast::{CastMessage, Multicast};
 use crate::neighbor::NeighborResponse;
@@ -226,19 +227,45 @@ impl Proposal {
             Proposal::Config(conf)
         }
     }
-    pub fn to_header_payload(self) -> (Header, Payload) {
+    pub fn to_header_payload(
+        self,
+        sign: &fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
+        round_start: SwarmTime,
+        priv_key: &str,
+        pubkey_bytes: Vec<u8>,
+    ) -> (Header, Payload) {
+        println!("to_header_payload pubkey bytes len: {}", pubkey_bytes.len());
         match self {
-            Self::Block(b_id, data) => (Header::Block(b_id), Payload::Block(b_id, data)),
-            Self::Config(config) => (
-                Header::Reconfigure(config.as_ct(), config.as_gid()),
-                Payload::Reconfigure(config),
-            ),
+            Self::Block(b_id, data) => {
+                let mut bytes = data.bytes();
+                let extended = bytes.len() <= 900;
+
+                let signature_b = sign(priv_key, round_start, &mut bytes).unwrap();
+                let signature = if extended {
+                    Signature::Extended(pubkey_bytes, signature_b)
+                } else {
+                    Signature::Regular(signature_b)
+                };
+
+                let data = Data::new(bytes).unwrap();
+                (Header::Block(b_id), Payload::Block(b_id, signature, data))
+            }
+            Self::Config(config) => {
+                let signature_b = sign(priv_key, round_start, &mut config.bytes()).unwrap();
+                let signature = Signature::Extended(pubkey_bytes, signature_b);
+                (
+                    Header::Reconfigure(config.as_ct(), config.as_gid()),
+                    Payload::Reconfigure(signature, config),
+                )
+            }
         }
     }
 }
 
 pub struct Gnome {
     pub id: GnomeId,
+    pub pub_key_bytes: Vec<u8>,
+    priv_key_pem: String,
     pub neighborhood: Neighborhood,
     swarm: Swarm,
     swarm_time: SwarmTime,
@@ -271,11 +298,14 @@ pub struct Gnome {
     chill_out: (bool, Instant),
     chill_out_max: Duration,
     data_converters: HashMap<(CastType, CastID), (Receiver<Data>, Sender<WrappedMessage>)>,
+    sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
 }
 
 impl Gnome {
     pub fn new(
         id: GnomeId,
+        pub_key_bytes: Vec<u8>,
+        priv_key_pem: String,
         swarm: Swarm,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
@@ -284,9 +314,13 @@ impl Gnome {
         band_receiver: Receiver<u64>,
         network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
+        sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
     ) -> Self {
+        // println!("DER size: {}", pub_key_bytes.len());
         Gnome {
             id,
+            pub_key_bytes,
+            priv_key_pem,
             neighborhood: Neighborhood(0),
             swarm,
             swarm_time: SwarmTime(0),
@@ -320,11 +354,14 @@ impl Gnome {
             chill_out: (false, Instant::now()),
             chill_out_max: Duration::from_millis(14500),
             data_converters: HashMap::new(),
+            sign,
         }
     }
 
     pub fn new_with_neighbors(
         id: GnomeId,
+        pub_key_bytes: Vec<u8>,
+        priv_key_pem: String,
         swarm: Swarm,
         sender: Sender<Response>,
         receiver: Receiver<Request>,
@@ -334,9 +371,12 @@ impl Gnome {
         neighbors: Vec<Neighbor>,
         network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
+        sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
     ) -> Self {
         let mut gnome = Gnome::new(
             id,
+            pub_key_bytes,
+            priv_key_pem,
             swarm,
             sender,
             receiver,
@@ -345,6 +385,7 @@ impl Gnome {
             band_receiver,
             network_settings,
             net_settings_send,
+            sign,
         );
         gnome.fast_neighbors = neighbors;
         gnome
@@ -1771,16 +1812,23 @@ impl Gnome {
         // if n_bid == BlockID(0) && n_data == Data(0) {
         if self.header == Header::Sync {
             if let Some(proposal) = self.proposals.pop_back() {
-                (self.header, self.payload) = proposal.clone().to_header_payload();
+                (self.header, self.payload) = proposal.clone().to_header_payload(
+                    &self.sign,
+                    self.round_start,
+                    &self.priv_key_pem,
+                    self.pub_key_bytes.clone(),
+                );
                 if self.header.is_reconfigure() {
-                    if let Payload::Reconfigure(Configuration::StartBroadcast(g_id, c_id)) =
-                        self.payload
+                    if let Payload::Reconfigure(
+                        _signature,
+                        Configuration::StartBroadcast(g_id, c_id),
+                    ) = &self.payload
                     {
                         // if let Configuration::StartBroadcast(g_id, c_id) = config {
                         self.next_state.change_config = ChangeConfig::AddBroadcast {
-                            id: c_id,
-                            origin: g_id,
-                            source: g_id,
+                            id: *c_id,
+                            origin: *g_id,
+                            source: *g_id,
                             filtered_neighbors: vec![],
                             turn_ended: false,
                         };
@@ -1861,7 +1909,7 @@ impl Gnome {
                         Payload::KeepAlive(available_bandwith),
                     );
                     if block_proposed {
-                        if let Payload::Block(block_id, data) = payload {
+                        if let Payload::Block(block_id, signature, data) = payload {
                             let _res = self.sender.send(Response::Block(block_id, data));
                             // println!("^^^ USER ^^^ NEW {} {:075}", block_id, data.0);
                         } else {
@@ -1935,7 +1983,12 @@ impl Gnome {
                     let my_proposal = std::mem::replace(&mut self.my_proposal, None);
                     if let Some(my_proposed_data) = my_proposal {
                         // TODO: here we need to distinguish between Block and Reconfig
-                        let (head, payload) = my_proposed_data.to_header_payload();
+                        let (head, payload) = my_proposed_data.to_header_payload(
+                            &self.sign,
+                            self.round_start,
+                            &self.priv_key_pem,
+                            self.pub_key_bytes.clone(),
+                        );
                         if (&head, &payload)
                             != (
                                 &self.next_state.last_accepted_message.header,
@@ -1958,7 +2011,12 @@ impl Gnome {
                 }
                 if let Some(proposal) = self.proposals.pop_back() {
                     self.my_proposal = Some(proposal.clone());
-                    (self.header, self.payload) = proposal.to_header_payload();
+                    (self.header, self.payload) = proposal.to_header_payload(
+                        &self.sign,
+                        self.round_start,
+                        &self.priv_key_pem,
+                        self.pub_key_bytes.clone(),
+                    );
                     self.send_immediate = true;
                 } else {
                     self.header = Header::Sync;
@@ -1996,7 +2054,12 @@ impl Gnome {
                     //     }
                     // }
                     self.my_proposal = Some(proposal.clone());
-                    (self.header, self.payload) = proposal.to_header_payload();
+                    (self.header, self.payload) = proposal.to_header_payload(
+                        &self.sign,
+                        self.round_start,
+                        &self.priv_key_pem,
+                        self.pub_key_bytes.clone(),
+                    );
                     self.send_immediate = true;
                 } else {
                     self.chill_out.0 = true;
@@ -2017,6 +2080,7 @@ impl Gnome {
                     for mut neighbor in new_neighbors {
                         let _ = neighbor.try_recv(
                             self.next_state.last_accepted_message.clone(),
+                            &self.swarm,
                             // self.next_state.last_accepted_reconf,
                         );
                         // println!("snd2 {}", msg);
@@ -2132,6 +2196,7 @@ impl Gnome {
             }
             let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv(
                 self.next_state.last_accepted_message.clone(),
+                &self.swarm,
                 // self.next_state.last_accepted_reconf,
             );
             if !new_proposal_received {
@@ -2260,6 +2325,7 @@ impl Gnome {
             }
             let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv(
                 self.next_state.last_accepted_message.clone(),
+                &self.swarm,
                 // self.next_state.last_accepted_reconf,
             );
             // println!(

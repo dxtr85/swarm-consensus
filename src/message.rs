@@ -45,8 +45,8 @@ pub type ConfigType = u8;
 pub enum Payload {
     KeepAlive(u64),
     Bye,
-    Reconfigure(Configuration),
-    Block(BlockID, Data),
+    Reconfigure(Signature, Configuration),
+    Block(BlockID, Signature, Data),
     // Request(NeighborRequest),
     // Response(NeighborResponse),
     // Unicast(CastID, Data),
@@ -55,12 +55,31 @@ pub enum Payload {
 }
 
 impl Payload {
+    pub fn has_signature(&self) -> bool {
+        self.has_data() || self.has_config()
+    }
+    pub fn signature_and_bytes(&mut self) -> Option<(&Signature, Vec<u8>)> {
+        match self {
+            Payload::Reconfigure(ref sign, _config) => Some((sign, _config.bytes())),
+            Self::Block(_bid, ref sign, ref _data) => Some((sign, _data.clone().bytes())),
+            _ => None,
+        }
+    }
+    pub fn bytes(&mut self) -> Option<Vec<u8>> {
+        match self {
+            Payload::Reconfigure(ref _sign, ref config) => Some(config.bytes()),
+            // TODO: find a way to not copy data
+            Self::Block(_bid, ref _sign, ref data) => Some(data.clone().bytes()),
+            _ => None,
+        }
+    }
+
     pub fn has_data(&self) -> bool {
-        matches!(self, Payload::Block(_b, _d))
+        matches!(self, Payload::Block(_b, _sign, _d))
     }
     pub fn id_and_data(self) -> Option<(BlockID, Data)> {
         match self {
-            Payload::Block(id, data) => Some((id, data)),
+            Payload::Block(id, _sign, data) => Some((id, data)),
             // Payload::Unicast(_id, data) => Some(data),
             // Payload::Broadcast(_id, data) => Some(data),
             // Payload::Multicast(_id, data) => Some(data),
@@ -69,11 +88,11 @@ impl Payload {
     }
 
     pub fn has_config(&self) -> bool {
-        matches!(self, Payload::Reconfigure(_c))
+        matches!(self, Payload::Reconfigure(_sign, _c))
     }
     pub fn config(self) -> Option<Configuration> {
         match self {
-            Payload::Reconfigure(config) => Some(config),
+            Payload::Reconfigure(_signature, config) => Some(config),
             _ => None,
         }
     }
@@ -93,7 +112,7 @@ pub enum Configuration {
     UserDefined(u8),
 }
 impl Configuration {
-    pub fn as_u8(&self) -> u8 {
+    pub fn header_byte(&self) -> u8 {
         match *self {
             Self::StartBroadcast(_gid, _cid) => 254,
             Self::ChangeBroadcastOrigin(_gid, _cid) => 253,
@@ -108,7 +127,7 @@ impl Configuration {
         }
     }
     pub fn as_ct(&self) -> ConfigType {
-        self.as_u8() as ConfigType
+        self.header_byte() as ConfigType
     }
     pub fn as_gid(&self) -> GnomeId {
         match *self {
@@ -126,7 +145,7 @@ impl Configuration {
     }
 
     pub fn as_u32(&self) -> u32 {
-        (self.as_u8() as u32) << 24
+        (self.header_byte() as u32) << 24
     }
     pub fn from_u32(value: u32) -> Configuration {
         match (value >> 24) as u8 {
@@ -142,10 +161,104 @@ impl Configuration {
             other => Self::UserDefined(other),
         }
     }
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut result_vec = vec![];
+        result_vec.push(self.header_byte());
+        for byte in self.content_bytes() {
+            result_vec.push(byte);
+        }
+        result_vec
+    }
+
+    fn content_bytes(&self) -> Vec<u8> {
+        let mut content_bytes = vec![];
+        match *self {
+            Self::StartBroadcast(gid, cid) => {
+                for b in gid.0.to_be_bytes() {
+                    content_bytes.push(b);
+                }
+                content_bytes.push(cid.0);
+            }
+            Self::ChangeBroadcastOrigin(gid, cid) => {
+                for b in gid.0.to_be_bytes() {
+                    content_bytes.push(b);
+                }
+                content_bytes.push(cid.0);
+            }
+            Self::EndBroadcast(cid) => {
+                content_bytes.push(cid.0);
+            }
+            Self::StartMulticast(gid, cid) => {
+                for b in gid.0.to_be_bytes() {
+                    content_bytes.push(b);
+                }
+                content_bytes.push(cid.0);
+            }
+            Self::ChangeMulticastOrigin(gid, cid) => {
+                for b in gid.0.to_be_bytes() {
+                    content_bytes.push(b);
+                }
+                content_bytes.push(cid.0);
+            }
+            Self::EndMulticast(cid) => {
+                content_bytes.push(cid.0);
+            }
+            Self::CreateGroup => {
+                //TODO!
+            }
+            Self::DeleteGroup => {
+                //TODO!
+            }
+            Self::ModifyGroup => {
+                //TODO!
+            }
+            Self::UserDefined(_other) => {
+                //TODO!
+            }
+        }
+        content_bytes
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BlockID(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Signature {
+    Regular(Vec<u8>),
+    Extended(Vec<u8>, Vec<u8>),
+}
+impl Signature {
+    pub fn header_byte(&self) -> u8 {
+        if matches!(*self, Signature::Regular(_)) {
+            0
+        } else {
+            255
+        }
+    }
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Regular(signature) => signature.len(),
+            Self::Extended(pub_key, signature) => pub_key.len() + signature.len(),
+        }
+    }
+    pub fn bytes(self) -> Vec<u8> {
+        match self {
+            Self::Regular(signature) => signature,
+            Self::Extended(mut pub_key, signature) => {
+                // println!(
+                //     "EXT: {:?}\n{:?}\n{}{}",
+                //     pub_key,
+                //     signature,
+                //     pub_key.len(),
+                //     signature.len()
+                // );
+                pub_key.extend(signature);
+                pub_key
+            }
+        }
+    }
+}
 
 impl Message {
     pub fn new(
@@ -188,7 +301,7 @@ impl Message {
             swarm_time: SwarmTime(0),
             neighborhood: Neighborhood(0),
             header: Header::Block(BlockID(0)),
-            payload: Payload::Block(BlockID(0), Data::empty()),
+            payload: Payload::Block(BlockID(0), Signature::Regular(vec![]), Data::empty()),
         }
     }
     pub fn reconfigure() -> Message {
@@ -196,7 +309,10 @@ impl Message {
             swarm_time: SwarmTime(0),
             neighborhood: Neighborhood(0),
             header: Header::Reconfigure(255 as ConfigType, GnomeId(0)),
-            payload: Payload::Reconfigure(Configuration::StartBroadcast(GnomeId(0), CastID(0))),
+            payload: Payload::Reconfigure(
+                Signature::Regular(vec![]),
+                Configuration::StartBroadcast(GnomeId(0), CastID(0)),
+            ),
         }
     }
 
@@ -257,11 +373,11 @@ impl Display for Payload {
         match self {
             Self::KeepAlive(_bandwith) => write!(f, "",),
             Self::Bye => write!(f, "Bye",),
-            Self::Reconfigure(_) => write!(f, "Reconfigure",),
+            Self::Reconfigure(_s, _) => write!(f, "Reconfigure",),
             // Self::Request(_) => write!(f, "Request"),
             // Self::Response(_nresp) => write!(f, "Response"),
-            Self::Block(block_id, data) => {
-                write!(f, "{} {}", block_id, data)
+            Self::Block(block_id, _signature, data) => {
+                write!(f, "{}", data)
             } // Self::Unicast(_uid, _data) => write!(f, "Unicast",),
               // Self::Multicast(_mid, _data) => write!(f, "Multicast",),
               // Self::Broadcast(_bid, _data) => write!(f, "Broadcast",),
