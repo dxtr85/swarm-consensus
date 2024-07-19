@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::ops::Add;
+use std::ops::DerefMut;
 use std::ops::Sub;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::spawn;
@@ -42,10 +43,11 @@ impl Add for SwarmTime {
 // #[derive(Clone)]
 pub enum PubKey {
     Empty,
-    Pem(String),
+    Der(Vec<u8>),
 }
 
-pub enum KeyRegister {
+pub enum KeyRegistry {
+    Disabled,
     Reg32(Box<[(GnomeId, PubKey); 32]>),
     Reg64(Box<[(GnomeId, PubKey); 64]>),
     Reg128(Box<[(GnomeId, PubKey); 128]>),
@@ -55,6 +57,105 @@ pub enum KeyRegister {
     Reg2048(Box<[(GnomeId, PubKey); 2048]>),
     Reg4096(Box<[(GnomeId, PubKey); 4096]>),
     Reg8192(Box<[(GnomeId, PubKey); 8192]>),
+}
+
+fn insert32(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 32]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+fn insert64(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 64]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+fn insert128(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 128]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+fn insert256(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 256]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+fn insert512(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 512]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+fn insert1024(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 1024]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+fn insert2048(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 2048]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+fn insert4096(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 4096]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+fn insert8192(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 8192]) {
+    let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
+    for elem in &mut array[1..] {
+        temp = std::mem::replace(elem, temp);
+        if temp.0 == gnome_id || temp.0 .0 == 0 {
+            break;
+        }
+    }
+}
+impl KeyRegistry {
+    // fn get_array(&mut self)
+    pub fn insert(&mut self, gnome_id: GnomeId, key: PubKey) {
+        match self {
+            Self::Disabled => (),
+            Self::Reg32(arr) => insert32(gnome_id, key, arr.deref_mut()),
+            Self::Reg64(arr) => insert64(gnome_id, key, arr.deref_mut()),
+            Self::Reg128(arr) => insert128(gnome_id, key, arr.deref_mut()),
+            Self::Reg256(arr) => insert256(gnome_id, key, arr.deref_mut()),
+            Self::Reg512(arr) => insert512(gnome_id, key, arr.deref_mut()),
+            Self::Reg1024(arr) => insert1024(gnome_id, key, arr.deref_mut()),
+            Self::Reg2048(arr) => insert2048(gnome_id, key, arr.deref_mut()),
+            Self::Reg4096(arr) => insert4096(gnome_id, key, arr.deref_mut()),
+            Self::Reg8192(arr) => insert8192(gnome_id, key, arr.deref_mut()),
+        };
+    }
 }
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub struct SwarmID(pub u8);
@@ -66,8 +167,8 @@ pub struct Swarm {
     active_unicasts: HashSet<CastID>,
     active_broadcasts: HashMap<CastID, Multicast>,
     active_multicasts: HashMap<CastID, Multicast>,
-    key_reg: KeyRegister,
-    pub verify: fn(&Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
+    key_reg: KeyRegistry,
+    pub verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
     // TODO: This struct (or SwarmManifesto and/or attrs) should be provided by the user,
     // or some other mean like another Swarm functioning as a swarm catalogue,
     // and we only need to define Traits that particular attributes should be bounded to.
@@ -118,7 +219,7 @@ impl Swarm {
         band_receiver: Receiver<u64>,
         net_settings_send: Sender<NetworkSettings>,
         network_settings: NetworkSettings,
-        verify: fn(&Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
+        verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
     ) -> (Sender<Request>, Receiver<Response>) {
         let (sender, request_receiver) = channel::<Request>();
@@ -132,7 +233,7 @@ impl Swarm {
             active_broadcasts: HashMap::new(),
             active_multicasts: HashMap::new(),
             verify,
-            key_reg: KeyRegister::Reg64(Box::new(core::array::from_fn(|_i| {
+            key_reg: KeyRegistry::Reg64(Box::new(core::array::from_fn(|_i| {
                 (GnomeId(0), PubKey::Empty)
             }))),
         };

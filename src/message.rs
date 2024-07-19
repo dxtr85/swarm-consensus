@@ -58,10 +58,10 @@ impl Payload {
     pub fn has_signature(&self) -> bool {
         self.has_data() || self.has_config()
     }
-    pub fn signature_and_bytes(&mut self) -> Option<(&Signature, Vec<u8>)> {
+    pub fn signature_and_bytes(self) -> Option<(Signature, Vec<u8>)> {
         match self {
-            Payload::Reconfigure(ref sign, _config) => Some((sign, _config.bytes())),
-            Self::Block(_bid, ref sign, ref _data) => Some((sign, _data.clone().bytes())),
+            Payload::Reconfigure(sign, _config) => Some((sign, _config.bytes())),
+            Self::Block(_bid, sign, _data) => Some((sign, _data.clone().bytes())),
             _ => None,
         }
     }
@@ -144,16 +144,29 @@ impl Configuration {
         }
     }
 
-    pub fn as_u32(&self) -> u32 {
-        (self.header_byte() as u32) << 24
-    }
-    pub fn from_u32(value: u32) -> Configuration {
-        match (value >> 24) as u8 {
-            254 => Self::StartBroadcast(GnomeId(0), CastID(0)), //TODO: need source for this
-            253 => Self::ChangeBroadcastOrigin(GnomeId(0), CastID(0)),
-            252 => Self::EndBroadcast(CastID(0)),
-            251 => Self::StartMulticast(GnomeId(0), CastID(0)),
-            250 => Self::ChangeMulticastOrigin(GnomeId(0), CastID(0)),
+    // pub fn as_u32(&self) -> u32 {
+    //     (self.header_byte() as u32) << 24
+    // }
+    pub fn from_bytes(value: Vec<u8>) -> Configuration {
+        let header_byte = value[0];
+        match header_byte {
+            254 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                Self::StartBroadcast(GnomeId(gnome_id), CastID(value[9]))
+            } //TODO: need source for this
+            253 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                Self::ChangeBroadcastOrigin(GnomeId(gnome_id), CastID(value[9]))
+            }
+            252 => Self::EndBroadcast(CastID(value[1])),
+            251 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                Self::StartMulticast(GnomeId(gnome_id), CastID(value[9]))
+            }
+            250 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                Self::ChangeMulticastOrigin(GnomeId(gnome_id), CastID(value[9]))
+            }
             249 => Self::EndMulticast(CastID(0)),
             248 => Self::CreateGroup,
             247 => Self::DeleteGroup,
@@ -225,12 +238,12 @@ pub struct BlockID(pub u64);
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Signature {
-    Regular(Vec<u8>),
-    Extended(Vec<u8>, Vec<u8>),
+    Regular(GnomeId, Vec<u8>),
+    Extended(GnomeId, Vec<u8>, Vec<u8>),
 }
 impl Signature {
     pub fn header_byte(&self) -> u8 {
-        if matches!(*self, Signature::Regular(_)) {
+        if matches!(*self, Signature::Regular(_gid, _)) {
             0
         } else {
             255
@@ -238,14 +251,20 @@ impl Signature {
     }
     pub fn len(&self) -> usize {
         match self {
-            Self::Regular(signature) => signature.len(),
-            Self::Extended(pub_key, signature) => pub_key.len() + signature.len(),
+            Self::Regular(_gid, signature) => signature.len(),
+            Self::Extended(_gid, pub_key, signature) => pub_key.len() + signature.len(),
+        }
+    }
+    pub fn gnome_id(&self) -> GnomeId {
+        match self {
+            Self::Regular(gid, _signature) => *gid,
+            Self::Extended(gid, _pub_key, _signature) => *gid,
         }
     }
     pub fn bytes(self) -> Vec<u8> {
         match self {
-            Self::Regular(signature) => signature,
-            Self::Extended(mut pub_key, signature) => {
+            Self::Regular(_gid, signature) => signature,
+            Self::Extended(_gid, mut pub_key, signature) => {
                 // println!(
                 //     "EXT: {:?}\n{:?}\n{}{}",
                 //     pub_key,
@@ -272,6 +291,47 @@ impl Message {
             neighborhood,
             header,
             payload,
+        }
+    }
+    pub fn unpack(
+        self,
+    ) -> (
+        SwarmTime,
+        Neighborhood,
+        Header,
+        bool,
+        Option<(Signature, Vec<u8>)>,
+    ) {
+        let is_config = self.payload.has_config();
+        (
+            self.swarm_time,
+            self.neighborhood,
+            self.header,
+            is_config,
+            self.payload.signature_and_bytes(),
+        )
+    }
+    pub fn pack(
+        &mut self,
+        swarm_time: SwarmTime,
+        neighborhood: Neighborhood,
+        header: Header,
+        is_config: bool,
+        sign_bytes_opt: Option<(Signature, Vec<u8>)>,
+    ) {
+        self.swarm_time = swarm_time;
+        self.neighborhood = neighborhood;
+        self.header = header;
+        if is_config {
+            let (signature, bytes) = sign_bytes_opt.unwrap();
+            let conf = Configuration::from_bytes(bytes);
+            self.payload = Payload::Reconfigure(signature, conf);
+        } else if let Some((signature, bytes)) = sign_bytes_opt {
+            let data = Data::new(bytes).unwrap();
+            let block_id = data.get_block_id();
+            self.payload = Payload::Block(block_id, signature, data);
+        } else {
+            panic!("We unpacked a message without Signature");
         }
     }
     pub fn set_payload(&self, payload: Payload) -> Message {
@@ -301,7 +361,11 @@ impl Message {
             swarm_time: SwarmTime(0),
             neighborhood: Neighborhood(0),
             header: Header::Block(BlockID(0)),
-            payload: Payload::Block(BlockID(0), Signature::Regular(vec![]), Data::empty()),
+            payload: Payload::Block(
+                BlockID(0),
+                Signature::Regular(GnomeId(0), vec![]),
+                Data::empty(),
+            ),
         }
     }
     pub fn reconfigure() -> Message {
@@ -310,7 +374,7 @@ impl Message {
             neighborhood: Neighborhood(0),
             header: Header::Reconfigure(255 as ConfigType, GnomeId(0)),
             payload: Payload::Reconfigure(
-                Signature::Regular(vec![]),
+                Signature::Regular(GnomeId(0), vec![]),
                 Configuration::StartBroadcast(GnomeId(0), CastID(0)),
             ),
         }

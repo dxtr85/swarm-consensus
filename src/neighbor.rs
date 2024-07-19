@@ -277,25 +277,31 @@ impl Neighbor {
         }
     }
 
-    fn verify_payload(&self, round_start: SwarmTime, swarm: &Swarm, payload: &mut Payload) -> bool {
-        if !payload.has_signature() {
-            return true;
-        }
-        let signature_option = payload.signature_and_bytes();
-        if signature_option.is_none() {
-            println!("No signature");
-            return false;
-        }
-        let (signature, mut bytes) = signature_option.unwrap();
+    fn verify_payload(
+        &self,
+        round_start: SwarmTime,
+        swarm: &Swarm,
+        signature: &Signature,
+        bytes: &mut Vec<u8>,
+    ) -> bool {
+        // if !payload.has_signature() {
+        //     return true;
+        // }
+        // let signature_option = payload.signature_and_bytes();
+        // if signature_option.is_none() {
+        //     println!("No signature");
+        //     return false;
+        // }
+        // let (signature, mut bytes) = signature_option.unwrap();
         match *signature {
-            Signature::Regular(ref _sign) => {
+            Signature::Regular(gid, ref _sign) => {
                 println!("Regular signature verification not yet implemented");
                 false
             } //TODO
-            Signature::Extended(ref pubkey_bytes, ref sign) => {
+            Signature::Extended(gid, ref pubkey_bytes, ref sign) => {
                 println!("Extended signature verification...");
                 // let key = String::from_utf8(pubkey_bytes.clone()).unwrap();
-                (swarm.verify)(pubkey_bytes, round_start, &mut bytes, sign)
+                (swarm.verify)(gid, pubkey_bytes, round_start, bytes, sign)
             } // pub verify: fn(&str, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
               // }
         }
@@ -304,7 +310,7 @@ impl Neighbor {
     pub fn try_recv(
         &mut self,
         last_accepted_message: Message,
-        swarm: &Swarm,
+        swarm: &mut Swarm,
         // last_accepted_block: BlockID,
         // last_accepted_reconf: Option<Configuration>,
     ) -> (bool, bool, bool, bool) {
@@ -354,9 +360,23 @@ impl Neighbor {
                 drop_me = true;
                 return (message_recvd, sanity_passed, new_proposal, drop_me);
             }
-            if !self.verify_payload(self.round_start, swarm, &mut message.payload) {
-                println!("Verification failed");
-                continue;
+            // TODO:
+            //       if there is signature then unpack payload into pieces
+            //           verify it
+            //           if verification failed
+            //               return
+            //       else
+            //           continue
+            if message.payload.has_signature() {
+                let tested_message = std::mem::replace(&mut message, Message::bye());
+                let (r_st, r_n, r_header, is_config, sign_bytes_opt) = tested_message.unpack();
+                let (signature, mut bytes) = sign_bytes_opt.unwrap();
+                if !self.verify_payload(self.round_start, swarm, &signature, &mut bytes) {
+                    println!("Verification failed");
+                    return (message_recvd, false, new_proposal, drop_me);
+                } else {
+                    message.pack(r_st, r_n, r_header, is_config, Some((signature, bytes)));
+                }
             }
             // println!("Verification success");
             if !self.sanity_check(&swarm_time, &neighborhood, &header) {

@@ -230,11 +230,12 @@ impl Proposal {
     pub fn to_header_payload(
         self,
         sign: &fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
+        gnome_id: GnomeId,
         round_start: SwarmTime,
         priv_key: &str,
         pubkey_bytes: Vec<u8>,
     ) -> (Header, Payload) {
-        println!("to_header_payload pubkey bytes len: {}", pubkey_bytes.len());
+        // println!("to_header_payload pubkey bytes len: {}", pubkey_bytes.len());
         match self {
             Self::Block(b_id, data) => {
                 let mut bytes = data.bytes();
@@ -242,9 +243,9 @@ impl Proposal {
 
                 let signature_b = sign(priv_key, round_start, &mut bytes).unwrap();
                 let signature = if extended {
-                    Signature::Extended(pubkey_bytes, signature_b)
+                    Signature::Extended(gnome_id, pubkey_bytes, signature_b)
                 } else {
-                    Signature::Regular(signature_b)
+                    Signature::Regular(gnome_id, signature_b)
                 };
 
                 let data = Data::new(bytes).unwrap();
@@ -252,7 +253,7 @@ impl Proposal {
             }
             Self::Config(config) => {
                 let signature_b = sign(priv_key, round_start, &mut config.bytes()).unwrap();
-                let signature = Signature::Extended(pubkey_bytes, signature_b);
+                let signature = Signature::Extended(gnome_id, pubkey_bytes, signature_b);
                 (
                     Header::Reconfigure(config.as_ct(), config.as_gid()),
                     Payload::Reconfigure(signature, config),
@@ -1814,6 +1815,7 @@ impl Gnome {
             if let Some(proposal) = self.proposals.pop_back() {
                 (self.header, self.payload) = proposal.clone().to_header_payload(
                     &self.sign,
+                    self.id,
                     self.round_start,
                     &self.priv_key_pem,
                     self.pub_key_bytes.clone(),
@@ -1985,6 +1987,7 @@ impl Gnome {
                         // TODO: here we need to distinguish between Block and Reconfig
                         let (head, payload) = my_proposed_data.to_header_payload(
                             &self.sign,
+                            self.id,
                             self.round_start,
                             &self.priv_key_pem,
                             self.pub_key_bytes.clone(),
@@ -2013,6 +2016,7 @@ impl Gnome {
                     self.my_proposal = Some(proposal.clone());
                     (self.header, self.payload) = proposal.to_header_payload(
                         &self.sign,
+                        self.id,
                         self.round_start,
                         &self.priv_key_pem,
                         self.pub_key_bytes.clone(),
@@ -2056,6 +2060,7 @@ impl Gnome {
                     self.my_proposal = Some(proposal.clone());
                     (self.header, self.payload) = proposal.to_header_payload(
                         &self.sign,
+                        self.id,
                         self.round_start,
                         &self.priv_key_pem,
                         self.pub_key_bytes.clone(),
@@ -2080,7 +2085,7 @@ impl Gnome {
                     for mut neighbor in new_neighbors {
                         let _ = neighbor.try_recv(
                             self.next_state.last_accepted_message.clone(),
-                            &self.swarm,
+                            &mut self.swarm,
                             // self.next_state.last_accepted_reconf,
                         );
                         // println!("snd2 {}", msg);
@@ -2196,7 +2201,7 @@ impl Gnome {
             }
             let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv(
                 self.next_state.last_accepted_message.clone(),
-                &self.swarm,
+                &mut self.swarm,
                 // self.next_state.last_accepted_reconf,
             );
             if !new_proposal_received {
@@ -2325,7 +2330,7 @@ impl Gnome {
             }
             let (served, sanity_passed, new_proposal, drop_me) = neighbor.try_recv(
                 self.next_state.last_accepted_message.clone(),
-                &self.swarm,
+                &mut self.swarm,
                 // self.next_state.last_accepted_reconf,
             );
             // println!(
