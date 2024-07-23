@@ -294,9 +294,13 @@ impl Neighbor {
         // }
         // let (signature, mut bytes) = signature_option.unwrap();
         match *signature {
-            Signature::Regular(gid, ref _sign) => {
-                println!("Regular signature verification not yet implemented");
-                false
+            Signature::Regular(gid, ref sign) => {
+                println!("Regular signature verification...");
+                if let Some(pubkey_bytes) = swarm.key_reg.get(gid) {
+                    (swarm.verify)(gid, &pubkey_bytes, round_start, bytes, sign)
+                } else {
+                    false
+                }
             } //TODO
             Signature::Extended(gid, ref pubkey_bytes, ref sign) => {
                 println!("Extended signature verification...");

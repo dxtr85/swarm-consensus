@@ -1,6 +1,7 @@
 use crate::gnome_to_manager::GnomeToManager;
 use crate::manager_to_gnome::ManagerToGnome;
 use crate::message::BlockID;
+use crate::message::ConfigType;
 use crate::message::Configuration;
 use crate::message::Header;
 use crate::message::Payload;
@@ -227,11 +228,23 @@ impl Proposal {
             Proposal::Config(conf)
         }
     }
+    pub fn can_be_extended(&self) -> bool {
+        match self {
+            Self::Block(_bid, data) => data.len() <= 900,
+            Self::Config(_conf) => {
+                // Until now config size is no bigger than 10 bytes
+                // _conf.len()<=900
+                true
+            }
+        }
+    }
+
     pub fn to_header_payload(
         self,
         sign: &fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
         gnome_id: GnomeId,
         round_start: SwarmTime,
+        extend: bool,
         priv_key: &str,
         pubkey_bytes: Vec<u8>,
     ) -> (Header, Payload) {
@@ -239,10 +252,14 @@ impl Proposal {
         match self {
             Self::Block(b_id, data) => {
                 let mut bytes = data.bytes();
-                let extended = bytes.len() <= 900;
+                // TODO: we need to cover case when we are not in swarm's registry
+                //       and bytes are longer than 900
+                // TODO: we also should not send extended signature when registry
+                //       arleady contains our key - this should be a bool argument
+                // let extended = bytes.len() <= 900;
 
                 let signature_b = sign(priv_key, round_start, &mut bytes).unwrap();
-                let signature = if extended {
+                let signature = if extend {
                     Signature::Extended(gnome_id, pubkey_bytes, signature_b)
                 } else {
                     Signature::Regular(gnome_id, signature_b)
@@ -253,7 +270,11 @@ impl Proposal {
             }
             Self::Config(config) => {
                 let signature_b = sign(priv_key, round_start, &mut config.bytes()).unwrap();
-                let signature = Signature::Extended(gnome_id, pubkey_bytes, signature_b);
+                let signature = if extend {
+                    Signature::Extended(gnome_id, pubkey_bytes, signature_b)
+                } else {
+                    Signature::Regular(gnome_id, signature_b)
+                };
                 (
                     Header::Reconfigure(config.as_ct(), config.as_gid()),
                     Payload::Reconfigure(signature, config),
@@ -1812,14 +1833,51 @@ impl Gnome {
         self.payload = n_payload;
         // if n_bid == BlockID(0) && n_data == Data(0) {
         if self.header == Header::Sync {
-            if let Some(proposal) = self.proposals.pop_back() {
-                (self.header, self.payload) = proposal.clone().to_header_payload(
-                    &self.sign,
-                    self.id,
-                    self.round_start,
-                    &self.priv_key_pem,
-                    self.pub_key_bytes.clone(),
-                );
+            if let Some(mut proposal) = self.proposals.pop_back() {
+                let extend = !self.swarm.key_reg.has_key(self.id);
+                let proposal_can_extend = proposal.can_be_extended();
+                // Now we need to cover cases
+                // 1. extend = false
+                if !extend {
+                    (self.header, self.payload) = proposal.clone().to_header_payload(
+                        &self.sign,
+                        self.id,
+                        self.round_start,
+                        extend,
+                        &self.priv_key_pem,
+                        self.pub_key_bytes.clone(),
+                    );
+                } else if !proposal_can_extend {
+                    // 2. extend = true, can not be extended
+                    // 2 requires us to send a special Reconfiguration message
+                    //   that adds given pubkey to swarm's key_reg
+                    //   and we need to push back existing proposal
+                    let configuration =
+                        Configuration::InsertPubkey(self.id, self.pub_key_bytes.clone());
+                    // let config_type = configuration.header_byte() as ConfigType;
+                    let new_proposal = Proposal::Config(configuration);
+                    let orig_proposal = std::mem::replace(&mut proposal, new_proposal);
+                    self.proposals.push_back(orig_proposal);
+                    (self.header, self.payload) = proposal.clone().to_header_payload(
+                        &self.sign,
+                        self.id,
+                        self.round_start,
+                        extend,
+                        &self.priv_key_pem,
+                        self.pub_key_bytes.clone(),
+                    );
+                } else {
+                    // 3. extend = true, can be extended
+                    (self.header, self.payload) = proposal.clone().to_header_payload(
+                        &self.sign,
+                        self.id,
+                        self.round_start,
+                        extend,
+                        &self.priv_key_pem,
+                        self.pub_key_bytes.clone(),
+                    );
+                }
+
                 if self.header.is_reconfigure() {
                     if let Payload::Reconfigure(
                         _signature,
@@ -1837,38 +1895,9 @@ impl Gnome {
                         // }
                     }
                 }
-                // println!("some");
-                // match proposal {
-                //     Proposal::Block(b_id, data) => {
-                //         // self.block_id = BlockID(data.0);
-                //         // self.data = data;
-                //         self.header = Header::Block(b_id);
-                //         self.payload = Payload::Block(b_id, data);
-                //     }
-                //     Proposal::Config(config) => {
-                //         // self.block_id = BlockID(0);
-                //         // self.data = Data(config.as_u32())
-                //         self.header = Header::Reconfigure;
-                //         self.payload = Payload::Reconfigure(config);
-                //     }
-                // }
                 self.my_proposal = Some(proposal);
                 self.send_immediate = true;
             }
-            // } else if self.header.is_reconfigure() {
-            //     match self.payload {
-            //         Payload::Reconfigure(config) => match config {
-            //             Configuration::StartBroadcast(_gid, _cid) => {
-            //                 // if self.pending_casting.
-            //             }
-            //             _ => {
-            //                 println!("Unhandled config payload");
-            //             }
-            //         },
-            //         _ => {
-            //             println!("Unexpected payload while for Reconfigure header");
-            //         }
-            //     }
         }
     }
 
@@ -1911,7 +1940,11 @@ impl Gnome {
                         Payload::KeepAlive(available_bandwith),
                     );
                     if block_proposed {
+                        // println!("Block proposed");
                         if let Payload::Block(block_id, signature, data) = payload {
+                            if let Some((g_id, pub_key)) = signature.pubkey() {
+                                self.swarm.key_reg.insert(g_id, pub_key)
+                            }
                             let _res = self.sender.send(Response::Block(block_id, data));
                             // println!("^^^ USER ^^^ NEW {} {:075}", block_id, data.0);
                         } else {
@@ -1919,6 +1952,11 @@ impl Gnome {
                         }
                     } else {
                         println!("We have got a Reconfig to parse");
+                        if let Payload::Reconfigure(signature, _conf) = payload {
+                            if let Some((g_id, pub_key)) = signature.pubkey() {
+                                self.swarm.key_reg.insert(g_id, pub_key)
+                            }
+                        }
                         let change_config = std::mem::replace(
                             &mut self.next_state.change_config,
                             ChangeConfig::None,
@@ -1982,13 +2020,20 @@ impl Gnome {
                         // self.next_state.last_accepted_reconf =
                         //     Some(Configuration::from_u32(self.data.0));
                     }
-                    let my_proposal = std::mem::replace(&mut self.my_proposal, None);
+                    // let my_proposal = std::mem::replace(&mut self.my_proposal, None);
+                    let my_proposal = self.my_proposal.take();
                     if let Some(my_proposed_data) = my_proposal {
                         // TODO: here we need to distinguish between Block and Reconfig
+                        let extend = self
+                            .next_state
+                            .last_accepted_message
+                            .payload
+                            .is_signature_extended();
                         let (head, payload) = my_proposed_data.to_header_payload(
                             &self.sign,
                             self.id,
                             self.round_start,
+                            extend,
                             &self.priv_key_pem,
                             self.pub_key_bytes.clone(),
                         );
@@ -1998,7 +2043,15 @@ impl Gnome {
                                 &self.next_state.last_accepted_message.payload,
                             )
                         {
+                            // panic!(
+                            //     "Not the same proposal!{:?} != {:?}",
+                            //     payload, self.next_state.last_accepted_message.payload
+                            // );
                             self.proposals.push_back(Proposal::new(payload));
+                            // panic!(
+                            //     "Not the same proposal!{:?} != {:?}",
+                            //     head, self.next_state.last_accepted_message.header
+                            // );
                         }
                         self.my_proposal = None;
                     }
@@ -2012,15 +2065,61 @@ impl Gnome {
                         self.header, self.round_start
                     );
                 }
-                if let Some(proposal) = self.proposals.pop_back() {
-                    self.my_proposal = Some(proposal.clone());
-                    (self.header, self.payload) = proposal.to_header_payload(
-                        &self.sign,
-                        self.id,
-                        self.round_start,
-                        &self.priv_key_pem,
-                        self.pub_key_bytes.clone(),
-                    );
+                if let Some(mut proposal) = self.proposals.pop_back() {
+                    let extend = !self.swarm.key_reg.has_key(self.id);
+                    let proposal_can_extend = proposal.can_be_extended();
+                    // TODO: insert logic here ?
+                    // probably yes, but include my_proposal update
+                    // (self.header, self.payload) = proposal.to_header_payload(
+                    //     &self.sign,
+                    //     self.id,
+                    //     self.round_start,
+                    //     extend,
+                    //     &self.priv_key_pem,
+                    //     self.pub_key_bytes.clone(),
+                    // );
+                    // Now we need to cover cases
+                    // 1. extend = false
+                    if !extend {
+                        (self.header, self.payload) = proposal.clone().to_header_payload(
+                            &self.sign,
+                            self.id,
+                            self.round_start,
+                            extend,
+                            &self.priv_key_pem,
+                            self.pub_key_bytes.clone(),
+                        );
+                    } else if !proposal_can_extend {
+                        // 2. extend = true, can not be extended
+                        // 2 requires us to send a special Reconfiguration message
+                        //   that adds given pubkey to swarm's key_reg
+                        //   and we need to push back existing proposal
+                        let configuration =
+                            Configuration::InsertPubkey(self.id, self.pub_key_bytes.clone());
+                        // let config_type = configuration.header_byte() as ConfigType;
+                        let new_proposal = Proposal::Config(configuration);
+                        let orig_proposal = std::mem::replace(&mut proposal, new_proposal);
+                        self.proposals.push_back(orig_proposal);
+                        (self.header, self.payload) = proposal.clone().to_header_payload(
+                            &self.sign,
+                            self.id,
+                            self.round_start,
+                            extend,
+                            &self.priv_key_pem,
+                            self.pub_key_bytes.clone(),
+                        );
+                    } else {
+                        // 3. extend = true, can be extended
+                        (self.header, self.payload) = proposal.clone().to_header_payload(
+                            &self.sign,
+                            self.id,
+                            self.round_start,
+                            extend,
+                            &self.priv_key_pem,
+                            self.pub_key_bytes.clone(),
+                        );
+                    }
+                    self.my_proposal = Some(proposal);
                     self.send_immediate = true;
                 } else {
                     self.header = Header::Sync;
@@ -2046,25 +2145,62 @@ impl Gnome {
                 // }
                 // self.next_state.all_neighbors_same_header = false;
                 // println!("--------round start to: {}", self.swarm_time);
-                if let Some(proposal) = self.proposals.pop_back() {
-                    // match proposal {
-                    //     Proposal::Block(data) => {
-                    //         self.block_id = BlockID(data.0);
-                    //         self.data = data;
-                    //     }
-                    //     Proposal::Config(config) => {
-                    //         self.block_id = BlockID(0);
-                    //         self.data = Data(config.as_u32());
-                    //     }
-                    // }
+                if let Some(mut proposal) = self.proposals.pop_back() {
                     self.my_proposal = Some(proposal.clone());
-                    (self.header, self.payload) = proposal.to_header_payload(
-                        &self.sign,
-                        self.id,
-                        self.round_start,
-                        &self.priv_key_pem,
-                        self.pub_key_bytes.clone(),
-                    );
+                    let extend = !self.swarm.key_reg.has_key(self.id);
+                    let proposal_can_extend = proposal.can_be_extended();
+                    // TODO: insert logic here ?
+                    // probably yes, but include my_proposal update
+                    // (self.header, self.payload) = proposal.to_header_payload(
+                    //     &self.sign,
+                    //     self.id,
+                    //     self.round_start,
+                    //     extend,
+                    //     &self.priv_key_pem,
+                    //     self.pub_key_bytes.clone(),
+                    // );
+                    // Now we need to cover cases
+                    // 1. extend = false
+                    if !extend {
+                        (self.header, self.payload) = proposal.clone().to_header_payload(
+                            &self.sign,
+                            self.id,
+                            self.round_start,
+                            extend,
+                            &self.priv_key_pem,
+                            self.pub_key_bytes.clone(),
+                        );
+                    } else if !proposal_can_extend {
+                        // 2. extend = true, can not be extended
+                        // 2 requires us to send a special Reconfiguration message
+                        //   that adds given pubkey to swarm's key_reg
+                        //   and we need to push back existing proposal
+                        let configuration =
+                            Configuration::InsertPubkey(self.id, self.pub_key_bytes.clone());
+                        // let config_type = configuration.header_byte() as ConfigType;
+                        let new_proposal = Proposal::Config(configuration);
+                        let orig_proposal = std::mem::replace(&mut proposal, new_proposal);
+                        self.proposals.push_back(orig_proposal);
+                        (self.header, self.payload) = proposal.clone().to_header_payload(
+                            &self.sign,
+                            self.id,
+                            self.round_start,
+                            extend,
+                            &self.priv_key_pem,
+                            self.pub_key_bytes.clone(),
+                        );
+                    } else {
+                        // 3. extend = true, can be extended
+                        (self.header, self.payload) = proposal.clone().to_header_payload(
+                            &self.sign,
+                            self.id,
+                            self.round_start,
+                            extend,
+                            &self.priv_key_pem,
+                            self.pub_key_bytes.clone(),
+                        );
+                    }
+                    self.my_proposal = Some(proposal);
                     self.send_immediate = true;
                 } else {
                     self.chill_out.0 = true;

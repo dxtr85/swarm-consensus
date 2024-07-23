@@ -1,6 +1,7 @@
 // use crate::neighbor::NeighborRequest;
 use crate::neighbor::Neighborhood;
 use crate::proposal::Data;
+// use crate::swarm::PubKey;
 use crate::CastID;
 use crate::CastMessage;
 use crate::GnomeId;
@@ -58,6 +59,13 @@ impl Payload {
     pub fn has_signature(&self) -> bool {
         self.has_data() || self.has_config()
     }
+    pub fn is_signature_extended(&self) -> bool {
+        match self {
+            Payload::Reconfigure(sign, _config) => matches!(sign, Signature::Extended(_g, _p, _s)),
+            Self::Block(_bid, sign, _data) => matches!(sign, Signature::Extended(_g, _p, _s)),
+            _ => false,
+        }
+    }
     pub fn signature_and_bytes(self) -> Option<(Signature, Vec<u8>)> {
         match self {
             Payload::Reconfigure(sign, _config) => Some((sign, _config.bytes())),
@@ -98,7 +106,8 @@ impl Payload {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+// #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Configuration {
     StartBroadcast(GnomeId, CastID),
     ChangeBroadcastOrigin(GnomeId, CastID),
@@ -109,6 +118,7 @@ pub enum Configuration {
     CreateGroup,
     DeleteGroup,
     ModifyGroup,
+    InsertPubkey(GnomeId, Vec<u8>),
     UserDefined(u8),
 }
 impl Configuration {
@@ -123,6 +133,7 @@ impl Configuration {
             Self::CreateGroup => 248,
             Self::DeleteGroup => 247,
             Self::ModifyGroup => 246,
+            Self::InsertPubkey(_gid, ref _pub_key) => 245,
             Self::UserDefined(other) => other,
         }
     }
@@ -140,14 +151,31 @@ impl Configuration {
             Self::CreateGroup => GnomeId(0),
             Self::DeleteGroup => GnomeId(0),
             Self::ModifyGroup => GnomeId(0),
+            Self::InsertPubkey(gid, ref _pub_key) => gid,
             Self::UserDefined(_other) => GnomeId(0),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::StartBroadcast(_gid, _cid) => 10,
+            Self::ChangeBroadcastOrigin(_gid, _cid) => 10,
+            Self::EndBroadcast(_cid) => 2,
+            Self::StartMulticast(_gid, _cid) => 10,
+            Self::ChangeMulticastOrigin(_gid, _cid) => 10,
+            Self::EndMulticast(_cid) => 2,
+            Self::CreateGroup => 1,
+            Self::DeleteGroup => 1,
+            Self::ModifyGroup => 1,
+            Self::InsertPubkey(_gid, pub_key) => 9 + pub_key.len(),
+            Self::UserDefined(_other) => 1,
         }
     }
 
     // pub fn as_u32(&self) -> u32 {
     //     (self.header_byte() as u32) << 24
     // }
-    pub fn from_bytes(value: Vec<u8>) -> Configuration {
+    pub fn from_bytes(mut value: Vec<u8>) -> Configuration {
         let header_byte = value[0];
         match header_byte {
             254 => {
@@ -171,6 +199,11 @@ impl Configuration {
             248 => Self::CreateGroup,
             247 => Self::DeleteGroup,
             246 => Self::ModifyGroup,
+            245 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                value.drain(0..9);
+                Self::InsertPubkey(GnomeId(gnome_id), value)
+            }
             other => Self::UserDefined(other),
         }
     }
@@ -225,6 +258,14 @@ impl Configuration {
             Self::ModifyGroup => {
                 //TODO!
             }
+            Self::InsertPubkey(gid, ref pub_key) => {
+                for b in gid.0.to_be_bytes() {
+                    content_bytes.push(b);
+                }
+                for b in pub_key {
+                    content_bytes.push(*b);
+                }
+            }
             Self::UserDefined(_other) => {
                 //TODO!
             }
@@ -259,6 +300,12 @@ impl Signature {
         match self {
             Self::Regular(gid, _signature) => *gid,
             Self::Extended(gid, _pub_key, _signature) => *gid,
+        }
+    }
+    pub fn pubkey(&self) -> Option<(GnomeId, Vec<u8>)> {
+        match self {
+            Self::Regular(_gid, _signature) => None,
+            Self::Extended(gid, pub_key, _signature) => Some((*gid, pub_key.clone())),
         }
     }
     pub fn bytes(self) -> Vec<u8> {
@@ -440,7 +487,7 @@ impl Display for Payload {
             Self::Reconfigure(_s, _) => write!(f, "Reconfigure",),
             // Self::Request(_) => write!(f, "Request"),
             // Self::Response(_nresp) => write!(f, "Response"),
-            Self::Block(block_id, _signature, data) => {
+            Self::Block(_block_id, _signature, data) => {
                 write!(f, "{}", data)
             } // Self::Unicast(_uid, _data) => write!(f, "Unicast",),
               // Self::Multicast(_mid, _data) => write!(f, "Multicast",),

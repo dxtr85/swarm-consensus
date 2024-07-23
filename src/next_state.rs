@@ -65,7 +65,7 @@ impl NextState {
         NextState {
             neighborhood: Neighborhood(0),
             swarm_time: SwarmTime(0),
-            swarm_time_max: SwarmTime(std::u32::MAX),
+            swarm_time_max: SwarmTime(u32::MAX),
             change_config: ChangeConfig::None,
             // block_id: BlockID(0),
             // last_accepted_block: BlockID(0),
@@ -123,12 +123,12 @@ impl NextState {
             // } else if block_id_received == self.block_id
             if self.header.is_reconfigure() {
                 // TODO: make use of signature
-                if let Payload::Reconfigure(ref signature, config) = self.payload {
+                if let Payload::Reconfigure(ref _signature, ref config) = self.payload {
                     match config {
                         Configuration::StartBroadcast(origin, id) => {
                             self.change_config = ChangeConfig::AddBroadcast {
-                                id,
-                                origin,
+                                id: *id,
+                                origin: *origin,
                                 source: neighbor.id,
                                 filtered_neighbors: vec![],
                                 turn_ended: false,
@@ -145,7 +145,7 @@ impl NextState {
             self.neighborhood = neighbor.neighborhood;
             // println!("nhood downgraded to {}", self.neighborhood);
             if neighbor.header.is_reconfigure() {
-                if let Payload::Reconfigure(ref signature, config) = neighbor.payload {
+                if let Payload::Reconfigure(ref _signature, ref config) = neighbor.payload {
                     match config {
                         Configuration::StartBroadcast(_g_id, _c_id) => {
                             self.change_config.add_filtered_neighbor(neighbor.id);
@@ -164,7 +164,7 @@ impl NextState {
     }
 
     fn next_swarm_time(&mut self) {
-        self.swarm_time = if self.swarm_time.0 == std::u32::MAX {
+        self.swarm_time = if self.swarm_time.0 == u32::MAX {
             SwarmTime(0)
         } else {
             self.swarm_time.inc()
@@ -205,7 +205,7 @@ impl NextState {
         self.change_config.end_turn();
         self.neighborhood = if new_round {
             self.change_config = if header.is_reconfigure() {
-                if let Payload::Reconfigure(signature, config) = payload {
+                if let Payload::Reconfigure(_signature, config) = payload {
                     match config {
                         Configuration::StartBroadcast(origin, id) => ChangeConfig::AddBroadcast {
                             id,

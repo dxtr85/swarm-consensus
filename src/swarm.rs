@@ -41,108 +41,272 @@ impl Add for SwarmTime {
 }
 
 // #[derive(Clone)]
-pub enum PubKey {
-    Empty,
-    Der(Vec<u8>),
-}
+// pub enum PubKey {
+//     Empty,
+//     Der(Vec<u8>),
+// }
 
 pub enum KeyRegistry {
     Disabled,
-    Reg32(Box<[(GnomeId, PubKey); 32]>),
-    Reg64(Box<[(GnomeId, PubKey); 64]>),
-    Reg128(Box<[(GnomeId, PubKey); 128]>),
-    Reg256(Box<[(GnomeId, PubKey); 256]>),
-    Reg512(Box<[(GnomeId, PubKey); 512]>),
-    Reg1024(Box<[(GnomeId, PubKey); 1024]>),
-    Reg2048(Box<[(GnomeId, PubKey); 2048]>),
-    Reg4096(Box<[(GnomeId, PubKey); 4096]>),
-    Reg8192(Box<[(GnomeId, PubKey); 8192]>),
+    Reg32(Box<[(GnomeId, Vec<u8>); 32]>),
+    Reg64(Box<[(GnomeId, Vec<u8>); 64]>),
+    Reg128(Box<[(GnomeId, Vec<u8>); 128]>),
+    Reg256(Box<[(GnomeId, Vec<u8>); 256]>),
+    Reg512(Box<[(GnomeId, Vec<u8>); 512]>),
+    Reg1024(Box<[(GnomeId, Vec<u8>); 1024]>),
+    Reg2048(Box<[(GnomeId, Vec<u8>); 2048]>),
+    Reg4096(Box<[(GnomeId, Vec<u8>); 4096]>),
+    Reg8192(Box<[(GnomeId, Vec<u8>); 8192]>),
 }
 
-fn insert32(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 32]) {
+fn insert32(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 32]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
+            println!("Insert complete: {:?}", temp.0);
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
 }
-fn insert64(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 64]) {
+fn insert64(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 64]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
 }
-fn insert128(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 128]) {
+fn insert128(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 128]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
 }
-fn insert256(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 256]) {
+fn insert256(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 256]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
 }
-fn insert512(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 512]) {
+fn insert512(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 512]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
 }
-fn insert1024(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 1024]) {
+fn insert1024(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 1024]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
 }
-fn insert2048(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 2048]) {
+fn insert2048(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 2048]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
 }
-fn insert4096(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 4096]) {
+fn insert4096(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 4096]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
 }
-fn insert8192(gnome_id: GnomeId, key: PubKey, array: &mut [(GnomeId, PubKey); 8192]) {
+fn insert8192(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 8192]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
-        temp = std::mem::replace(elem, temp);
         if temp.0 == gnome_id || temp.0 .0 == 0 {
             break;
         }
+        temp = std::mem::replace(elem, temp);
     }
+}
+fn get32(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 32]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn get64(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 64]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn get128(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 128]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn get256(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 256]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn get512(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 512]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn get1024(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 1024]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn get2048(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 2048]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn get4096(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 4096]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn get8192(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 8192]) -> Option<Vec<u8>> {
+    for (id, key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return Some(key.clone());
+        }
+    }
+    None
+}
+fn has32(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 32]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
+}
+fn has64(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 64]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
+}
+fn has128(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 128]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
+}
+fn has256(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 256]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
+}
+fn has512(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 512]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
+}
+fn has1024(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 1024]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
+}
+fn has2048(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 2048]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
+}
+fn has4096(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 4096]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
+}
+fn has8192(gnome_id: GnomeId, array: &[(GnomeId, Vec<u8>); 8192]) -> bool {
+    for (id, _key) in array {
+        if id.0 == gnome_id.0 {
+            println!("Found: {:?}", id);
+            return true;
+        }
+    }
+    false
 }
 impl KeyRegistry {
     // fn get_array(&mut self)
-    pub fn insert(&mut self, gnome_id: GnomeId, key: PubKey) {
+    pub fn insert(&mut self, gnome_id: GnomeId, key: Vec<u8>) {
+        println!("Inserting key for {}", gnome_id);
         match self {
             Self::Disabled => (),
             Self::Reg32(arr) => insert32(gnome_id, key, arr.deref_mut()),
@@ -156,6 +320,36 @@ impl KeyRegistry {
             Self::Reg8192(arr) => insert8192(gnome_id, key, arr.deref_mut()),
         };
     }
+    pub fn get(&self, gnome_id: GnomeId) -> Option<Vec<u8>> {
+        println!("Searching for {}", gnome_id);
+        match self {
+            Self::Disabled => None,
+            Self::Reg32(arr) => get32(gnome_id, arr),
+            Self::Reg64(arr) => get64(gnome_id, arr),
+            Self::Reg128(arr) => get128(gnome_id, arr),
+            Self::Reg256(arr) => get256(gnome_id, arr),
+            Self::Reg512(arr) => get512(gnome_id, arr),
+            Self::Reg1024(arr) => get1024(gnome_id, arr),
+            Self::Reg2048(arr) => get2048(gnome_id, arr),
+            Self::Reg4096(arr) => get4096(gnome_id, arr),
+            Self::Reg8192(arr) => get8192(gnome_id, arr),
+        }
+    }
+    pub fn has_key(&self, gnome_id: GnomeId) -> bool {
+        println!("Searching for {}", gnome_id);
+        match self {
+            Self::Disabled => false,
+            Self::Reg32(arr) => has32(gnome_id, arr),
+            Self::Reg64(arr) => has64(gnome_id, arr),
+            Self::Reg128(arr) => has128(gnome_id, arr),
+            Self::Reg256(arr) => has256(gnome_id, arr),
+            Self::Reg512(arr) => has512(gnome_id, arr),
+            Self::Reg1024(arr) => has1024(gnome_id, arr),
+            Self::Reg2048(arr) => has2048(gnome_id, arr),
+            Self::Reg4096(arr) => has4096(gnome_id, arr),
+            Self::Reg8192(arr) => has8192(gnome_id, arr),
+        }
+    }
 }
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub struct SwarmID(pub u8);
@@ -167,7 +361,7 @@ pub struct Swarm {
     active_unicasts: HashSet<CastID>,
     active_broadcasts: HashMap<CastID, Multicast>,
     active_multicasts: HashMap<CastID, Multicast>,
-    key_reg: KeyRegistry,
+    pub key_reg: KeyRegistry,
     pub verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
     // TODO: This struct (or SwarmManifesto and/or attrs) should be provided by the user,
     // or some other mean like another Swarm functioning as a swarm catalogue,
@@ -233,9 +427,7 @@ impl Swarm {
             active_broadcasts: HashMap::new(),
             active_multicasts: HashMap::new(),
             verify,
-            key_reg: KeyRegistry::Reg64(Box::new(core::array::from_fn(|_i| {
-                (GnomeId(0), PubKey::Empty)
-            }))),
+            key_reg: KeyRegistry::Reg32(Box::new(core::array::from_fn(|_i| (GnomeId(0), vec![])))),
         };
         let gnome = if let Some(neighbors) = neighbors {
             // println!("PubKey {} {}", pub_key_pem, pub_key_pem.len());
