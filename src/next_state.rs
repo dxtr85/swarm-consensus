@@ -11,6 +11,11 @@ use crate::SwarmTime;
 #[derive(Debug)]
 pub enum ChangeConfig {
     None,
+    InsertPubkey {
+        id: GnomeId,
+        key: Vec<u8>,
+        turn_ended: bool,
+    },
     AddBroadcast {
         id: CastID,
         origin: GnomeId,
@@ -25,6 +30,9 @@ impl ChangeConfig {
         match *self {
             Self::None => {}
             Self::AddBroadcast {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
+            Self::InsertPubkey {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
         }
@@ -131,6 +139,13 @@ impl NextState {
                                 origin: *origin,
                                 source: neighbor.id,
                                 filtered_neighbors: vec![],
+                                turn_ended: false,
+                            };
+                        }
+                        Configuration::InsertPubkey(id, key) => {
+                            self.change_config = ChangeConfig::InsertPubkey {
+                                id: *id,
+                                key: key.clone(),
                                 turn_ended: false,
                             };
                         }

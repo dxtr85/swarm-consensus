@@ -1,11 +1,9 @@
-// use crate::neighbor::NeighborRequest;
 use crate::neighbor::Neighborhood;
 use crate::proposal::Data;
 // use crate::swarm::PubKey;
 use crate::CastID;
 use crate::CastMessage;
 use crate::GnomeId;
-// use crate::NeighborResponse;
 use crate::SwarmTime;
 use std::fmt::Display;
 
@@ -38,6 +36,9 @@ impl Header {
     }
     pub fn is_reconfigure(&self) -> bool {
         matches!(self, Header::Reconfigure(_t, _g))
+    }
+    pub fn is_sync(&self) -> bool {
+        matches!(self, Header::Sync)
     }
 }
 pub type ConfigType = u8;

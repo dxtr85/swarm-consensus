@@ -1,7 +1,7 @@
 use crate::gnome_to_manager::GnomeToManager;
 use crate::manager_to_gnome::ManagerToGnome;
 use crate::message::BlockID;
-use crate::message::ConfigType;
+// use crate::message::ConfigType;
 use crate::message::Configuration;
 use crate::message::Header;
 use crate::message::Payload;
@@ -1893,6 +1893,17 @@ impl Gnome {
                             turn_ended: false,
                         };
                         // }
+                    } else if let Payload::Reconfigure(
+                        _signature,
+                        Configuration::InsertPubkey(id, key),
+                    ) = &self.payload
+                    {
+                        // if let Configuration::StartBroadcast(g_id, c_id) = config {
+                        self.next_state.change_config = ChangeConfig::InsertPubkey {
+                            id: *id,
+                            key: key.clone(),
+                            turn_ended: false,
+                        }; // }
                     }
                 }
                 self.my_proposal = Some(proposal);
@@ -2014,6 +2025,10 @@ impl Gnome {
                                 } else {
                                     println!("Unable to activate broadcast");
                                 }
+                            }
+                            ChangeConfig::InsertPubkey { id, key, .. } => {
+                                // This is done automatically
+                                // self.swarm.key_reg.insert(id, key);
                             }
                             ChangeConfig::None => {}
                         }
