@@ -123,9 +123,9 @@ impl NextState {
         //     || (block_id_received == self.block_id && data_received.0 > self.data.0)
         if neighbor.header > self.header {
             // println!("N {} > {}", neighbor.header, self.header);
+            // println!("P: {:?}", neighbor.payload);
             // self.block_id = block_id_received;
             self.header = neighbor.header;
-            // self.data = data_received;
             self.payload = neighbor.payload.clone();
             self.neighborhood = Neighborhood(0);
             // } else if block_id_received == self.block_id

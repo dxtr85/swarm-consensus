@@ -332,7 +332,7 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
-            println!("{} < {}", self.id, message);
+            println!("{}  <  {}", self.id, message);
             // if message.is_cast() {
             //     println!("Unserved casting 1");
             //     // self.send_casting(message.clone());
@@ -340,9 +340,12 @@ impl Neighbor {
             // }
             if message.header == last_accepted_message.header
                 && message.neighborhood == Neighborhood(7)
-                && message.payload == last_accepted_message.payload
+            // && message.payload == last_accepted_message.payload
             {
                 println!("Ignoring: {}", message);
+                if let Payload::KeepAlive(avail_bandwith) = message.payload {
+                    self.available_bandwith = avail_bandwith;
+                }
                 // TODO: without this message verification fails...
                 // self.round_start = message.swarm_time;
                 continue;
@@ -373,6 +376,7 @@ impl Neighbor {
             //           continue
             if message.payload.has_signature() {
                 let tested_message = std::mem::replace(&mut message, Message::bye());
+                // println!("Testing message: {:?}", tested_message);
                 let (r_st, r_n, r_header, is_config, sign_bytes_opt) = tested_message.unpack();
                 let (signature, mut bytes) = sign_bytes_opt.unwrap();
                 if !self.verify_payload(self.round_start, swarm, &signature, &mut bytes) {
@@ -395,7 +399,10 @@ impl Neighbor {
                 // } else if message.is_request() || message.is_response() {
                 //     // println!("Unserved requests");
                 // } else {
-                continue;
+
+                // TODO: maybe return instead of continue?
+                return (message_recvd, false, new_proposal, drop_me);
+                // continue;
                 // }
             }
             // } else {
@@ -481,13 +488,15 @@ impl Neighbor {
                             if id == block_id {
                                 self.payload = Payload::Block(id, signature, data)
                             } else {
-                                self.user_responses
-                                    .push_front(Response::Block(block_id, data));
+                                println!("This is not possible");
+                                // self.user_responses
+                                //     .push_front(Response::Block(block_id, data));
                             }
                         }
                         Header::Sync => {
-                            self.user_responses
-                                .push_front(Response::Block(block_id, data));
+                            println!("This is not possible too");
+                            // self.user_responses
+                            //     .push_front(Response::Block(block_id, data));
                         }
                         Header::Reconfigure(_ct, _gid) => {
                             println!("Sending Block in Reconfigure header is not allowed");

@@ -69,7 +69,10 @@ impl Payload {
     }
     pub fn signature_and_bytes(self) -> Option<(Signature, Vec<u8>)> {
         match self {
-            Payload::Reconfigure(sign, _config) => Some((sign, _config.bytes())),
+            Payload::Reconfigure(sign, _config) => {
+                // println!("reco {}", _config.len());
+                Some((sign, _config.bytes()))
+            }
             Self::Block(_bid, sign, _data) => Some((sign, _data.clone().bytes())),
             _ => None,
         }
@@ -177,6 +180,7 @@ impl Configuration {
     //     (self.header_byte() as u32) << 24
     // }
     pub fn from_bytes(mut value: Vec<u8>) -> Configuration {
+        // println!("From bytes: {:?}", value);
         let header_byte = value[0];
         match header_byte {
             254 => {
@@ -211,24 +215,28 @@ impl Configuration {
     pub fn bytes(&self) -> Vec<u8> {
         let mut result_vec = vec![];
         result_vec.push(self.header_byte());
-        for byte in self.content_bytes() {
+        for byte in self.content_bytes(true) {
             result_vec.push(byte);
         }
         result_vec
     }
 
-    fn content_bytes(&self) -> Vec<u8> {
+    pub fn content_bytes(&self, with_gnome_id: bool) -> Vec<u8> {
         let mut content_bytes = vec![];
         match *self {
             Self::StartBroadcast(gid, cid) => {
-                for b in gid.0.to_be_bytes() {
-                    content_bytes.push(b);
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
                 }
                 content_bytes.push(cid.0);
             }
             Self::ChangeBroadcastOrigin(gid, cid) => {
-                for b in gid.0.to_be_bytes() {
-                    content_bytes.push(b);
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
                 }
                 content_bytes.push(cid.0);
             }
@@ -236,14 +244,18 @@ impl Configuration {
                 content_bytes.push(cid.0);
             }
             Self::StartMulticast(gid, cid) => {
-                for b in gid.0.to_be_bytes() {
-                    content_bytes.push(b);
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
                 }
                 content_bytes.push(cid.0);
             }
             Self::ChangeMulticastOrigin(gid, cid) => {
-                for b in gid.0.to_be_bytes() {
-                    content_bytes.push(b);
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
                 }
                 content_bytes.push(cid.0);
             }
@@ -260,8 +272,10 @@ impl Configuration {
                 //TODO!
             }
             Self::InsertPubkey(gid, ref pub_key) => {
-                for b in gid.0.to_be_bytes() {
-                    content_bytes.push(b);
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
                 }
                 for b in pub_key {
                     content_bytes.push(*b);
@@ -351,12 +365,14 @@ impl Message {
         Option<(Signature, Vec<u8>)>,
     ) {
         let is_config = self.payload.has_config();
+        let sign_opt = self.payload.signature_and_bytes();
+        // println!("Sign opt: {:?}", sign_opt);
         (
             self.swarm_time,
             self.neighborhood,
             self.header,
             is_config,
-            self.payload.signature_and_bytes(),
+            sign_opt,
         )
     }
     pub fn pack(
@@ -483,13 +499,13 @@ impl Display for BlockID {
 impl Display for Payload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::KeepAlive(_bandwith) => write!(f, "",),
+            Self::KeepAlive(bandwith) => write!(f, "KA[{}]", bandwith),
             Self::Bye => write!(f, "Bye",),
             Self::Reconfigure(_s, _) => write!(f, "Reconfigure",),
             // Self::Request(_) => write!(f, "Request"),
             // Self::Response(_nresp) => write!(f, "Response"),
             Self::Block(_block_id, _signature, data) => {
-                write!(f, "{}", data)
+                write!(f, "BLK{}", data)
             } // Self::Unicast(_uid, _data) => write!(f, "Unicast",),
               // Self::Multicast(_mid, _data) => write!(f, "Multicast",),
               // Self::Broadcast(_bid, _data) => write!(f, "Broadcast",),

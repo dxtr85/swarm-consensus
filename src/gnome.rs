@@ -1301,7 +1301,7 @@ impl Gnome {
         };
         available_bandwith = 1024;
         println!("Avail bandwith: {}", available_bandwith);
-        self.sync_with_swarm();
+        self.sync_with_swarm(available_bandwith);
         // let mut _guard = self.start_new_timer(self.timeout_duration, timer_sender.clone(), None);
         let mut timer = Instant::now();
         self.timeout_duration = Duration::from_secs(16);
@@ -1432,11 +1432,11 @@ impl Gnome {
                     // println!("swap&send");
                     self.swap_neighbors();
                     // self.send_specialized(true);
-                    self.send_all();
+                    self.send_all(available_bandwith);
                 } else {
                     // println!("konkat&send");
                     self.concat_neighbors();
-                    self.send_all();
+                    self.send_all(available_bandwith);
                 }
                 self.send_immediate = false;
                 if self.check_if_new_round(available_bandwith)
@@ -1493,16 +1493,25 @@ impl Gnome {
         }
     }
 
-    pub fn send_all(&mut self) {
+    pub fn send_all(&mut self, available_bandwith: u64) {
         let message = self.prepare_message();
-        eprintln!("{} >>> {}", self.id, message);
+        let keep_alive = message.set_payload(Payload::KeepAlive(available_bandwith));
         for neighbor in &mut self.fast_neighbors {
-            // println!("f");
-            neighbor.send_out(message.clone());
+            if neighbor.header == message.header {
+                eprintln!("{} >>> {}", self.id, keep_alive);
+                // println!("Sending KA only");
+                neighbor.send_out(keep_alive.clone());
+            } else {
+                eprintln!("{} >>> {}", self.id, message);
+                neighbor.send_out(message.clone());
+            }
         }
         for neighbor in &mut self.slow_neighbors {
-            // println!("s");
-            neighbor.send_out(message.clone());
+            if neighbor.header == message.header {
+                neighbor.send_out(keep_alive.clone());
+            } else {
+                neighbor.send_out(message.clone());
+            }
         }
         // for neighbor in &mut self.new_neighbors {
         //     neighbor.send_out(message);
@@ -1595,7 +1604,7 @@ impl Gnome {
     //       and also how many iterations of ChillOut mode are currently left.
     //       We apply those parameters to our state and continue to loop.
     //       If we receive any other message we set ChillOut to false and continue.
-    fn sync_with_swarm(&mut self) {
+    fn sync_with_swarm(&mut self, available_bandwith: u64) {
         // let request = ;
         // let message = self
         //     .prepare_message()
@@ -1675,7 +1684,7 @@ impl Gnome {
                 self.subscribe_multicast(m_id, origin);
             }
         } else {
-            self.send_all();
+            self.send_all(available_bandwith);
         }
         // if let Some(response) = response_opt {
         //     println!("Sync response: {}", response);
@@ -1830,6 +1839,7 @@ impl Gnome {
         // self.block_id = n_bid;
         // self.data = n_data;
         self.header = n_head;
+        // println!("Set payload: {:?}", n_payload);
         self.payload = n_payload;
         // if n_bid == BlockID(0) && n_data == Data(0) {
         if self.header == Header::Sync {
@@ -1877,6 +1887,8 @@ impl Gnome {
                         self.pub_key_bytes.clone(),
                     );
                 }
+                self.next_state.header = self.header;
+                self.next_state.payload = self.payload.clone();
 
                 if self.header.is_reconfigure() {
                     if let Payload::Reconfigure(
@@ -1959,7 +1971,7 @@ impl Gnome {
                             let _res = self.sender.send(Response::Block(block_id, data));
                             // println!("^^^ USER ^^^ NEW {} {:075}", block_id, data.0);
                         } else {
-                            println!("Can not send to user, payload not matching");
+                            println!("Can not send to user, payload not matching\n {:?}", payload);
                         }
                     } else {
                         println!("We have got a Reconfig to parse");
