@@ -1,11 +1,16 @@
+mod capabilities;
 mod gnome;
 mod gnome_to_manager;
+mod key_registry;
 mod manager_to_gnome;
+mod policy;
+mod requirement;
 use crate::gnome::Gnome;
 pub use crate::gnome::GnomeId;
 mod message;
 mod multicast;
 mod swarm;
+pub use crate::capabilities::Capabilities;
 pub use crate::gnome::Nat;
 pub use crate::gnome::NetworkSettings;
 pub use crate::gnome::PortAllocationRule;
