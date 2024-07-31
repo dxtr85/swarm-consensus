@@ -14,6 +14,7 @@ use crate::next_state::ChangeConfig;
 use crate::swarm::Swarm;
 use crate::CastID;
 use crate::Data;
+use crate::KeyRegistry;
 use crate::Message;
 use crate::Neighbor;
 use crate::NeighborRequest;
@@ -37,6 +38,11 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Debug, Hash)]
 pub struct GnomeId(pub u64);
+impl GnomeId {
+    pub fn bytes(&self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+}
 impl fmt::Display for GnomeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GID-{:x}", self.0)
@@ -1014,42 +1020,118 @@ impl Gnome {
         if self.new_neighbors.is_empty() {
             return;
         }
-        // println!("Serving Sync Swarm request");
         let message = self.prepare_message();
         let mut processed_neighbors = vec![];
         // for neighbor in self.new_neighbors {
         while let Some(mut neighbor) = self.new_neighbors.pop() {
+            // println!("Serving Sync Swarm request");
             // let _ = neighbor.try_recv(self.next_state.last_accepted_message.clone());
             neighbor.try_recv_cast();
-            if let Some(NeighborRequest::SwarmSyncRequest) = neighbor.requests.pop_back() {
-                // if let = request {
-                println!("Serving some SyncRequest!");
+            if let Some(NeighborRequest::SwarmSyncRequest(
+                sync_key_reg,
+                sync_capability,
+                sync_policy,
+                sync_broadcast,
+                sync_multicast,
+            )) = neighbor.requests.pop_back()
+            {
+                // println!("Serving some SyncRequest!");
                 let b_count = self.swarm.broadcasts_count();
                 let m_count = self.swarm.multicasts_count();
-                let b_casts = if b_count == 0 {
-                    vec![]
-                } else {
-                    self.swarm.broadcast_ids()
-                };
-
-                let m_casts = if m_count == 0 {
-                    vec![]
-                } else {
-                    self.swarm.multicast_ids()
-                };
 
                 let chill_phase = if self.chill_out.0 {
                     (self.chill_out_max - self.chill_out.1.elapsed()).as_millis() as u16
                 } else {
                     0
                 };
-                let response =
-                    NeighborResponse::SwarmSync(chill_phase, self.swarm_time, b_casts, m_casts);
+                let (more_keys, first_key_batch, mut remaining_batches) = if sync_key_reg {
+                    let mut chunks = self.swarm.key_reg.chunks();
+                    let more_keys = chunks.len() > 1;
+                    let first_chunk = if !chunks.is_empty() {
+                        chunks.pop().unwrap()
+                    } else {
+                        vec![]
+                    };
+                    (more_keys, first_chunk, chunks)
+                } else {
+                    (false, vec![], vec![])
+                };
+
+                let response = NeighborResponse::SwarmSync(
+                    chill_phase,
+                    self.swarm.founder,
+                    self.swarm_time,
+                    self.swarm.swarm_type,
+                    self.swarm.key_reg.byte(),
+                    self.swarm.capability_reg.len() as u8,
+                    self.swarm.policy_reg.len() as u8,
+                    b_count,
+                    m_count,
+                    more_keys,
+                    first_key_batch,
+                );
                 // neighbor.add_requested_data(response);
                 // let message = self.prepare_message();
                 neighbor.swarm_time = message.swarm_time;
                 neighbor.start_new_round(self.swarm_time);
                 neighbor.send_out_cast(CastMessage::new_response(response));
+                let mut i: u8 = 1;
+                let total_batches = remaining_batches.len() as u8;
+                while let Some(batch) = remaining_batches.pop() {
+                    let response = NeighborResponse::KeyRegistrySync(i, total_batches, batch);
+                    neighbor.send_out_cast(CastMessage::new_response(response));
+                    i += 1;
+                }
+                if sync_capability {
+                    let mut chunks = self.swarm.capabilities_chunks();
+                    let total_chunks = chunks.len();
+                    if total_chunks > 0 {
+                        for i in 1..total_chunks + 1 {
+                            let response = NeighborResponse::CapabilitySync(
+                                i as u8,
+                                // TODO: we have to limit maximum size of Capability registry!
+                                // max 128 gnomes per Capability
+                                total_chunks as u8,
+                                chunks.pop().unwrap(),
+                            );
+                            neighbor.send_out_cast(CastMessage::new_response(response));
+                        }
+                    }
+                }
+                if sync_policy {
+                    let mut chunks = self.swarm.policy_chunks();
+                    // println!("Policy chunks: {:?}", chunks);
+                    // println!("Policy : {:?}", self.swarm.policy_reg);
+                    let total_chunks = chunks.len();
+                    if total_chunks > 0 {
+                        for i in 1..total_chunks + 1 {
+                            let response = NeighborResponse::PolicySync(
+                                i as u8,
+                                total_chunks as u8,
+                                chunks.pop().unwrap(),
+                            );
+                            neighbor.send_out_cast(CastMessage::new_response(response));
+                        }
+                    }
+                }
+                if sync_broadcast {
+                    let b_casts = if b_count == 0 {
+                        vec![]
+                    } else {
+                        self.swarm.broadcast_ids()
+                    };
+                    let response = NeighborResponse::BroadcastSync(1, 1, b_casts);
+                    neighbor.send_out_cast(CastMessage::new_response(response));
+                }
+                if sync_multicast {
+                    let m_casts = if m_count == 0 {
+                        vec![]
+                    } else {
+                        self.swarm.multicast_ids()
+                    };
+                    let response = NeighborResponse::MulticastSync(1, 1, m_casts);
+                    neighbor.send_out_cast(CastMessage::new_response(response));
+                }
                 // message.include_response(response));
                 // self.refreshed_neighbors.push(neighbor);
                 self.fast_neighbors.push(neighbor);
@@ -1113,43 +1195,60 @@ impl Gnome {
                             neighbor.add_requested_data(response);
                         }
                     }
-                    NeighborRequest::SwarmSyncRequest => {
-                        // println!("SwarmSyncRequest");
-                        let b_count = self.swarm.broadcasts_count();
-                        let m_count = self.swarm.multicasts_count();
-                        let b_casts = if b_count == 0 {
-                            vec![]
-                        } else {
-                            self.swarm.broadcast_ids()
-                        };
+                    NeighborRequest::SwarmSyncRequest(
+                        sync_key_reg,
+                        sync_caps,
+                        sync_pol,
+                        sync_bcasts,
+                        sync_mcasts,
+                    ) => {
+                        // This is already served in separate function
+                        println!("Unserved SwarmSyncRequest");
+                        // let b_count = self.swarm.broadcasts_count();
+                        // let m_count = self.swarm.multicasts_count();
+                        // // let b_casts = if b_count == 0 {
+                        // //     vec![]
+                        // // } else {
+                        // //     self.swarm.broadcast_ids()
+                        // // };
 
-                        let m_casts = if m_count == 0 {
-                            vec![]
-                        } else {
-                            self.swarm.multicast_ids()
-                        };
+                        // // let m_casts = if m_count == 0 {
+                        // //     vec![]
+                        // // } else {
+                        // //     self.swarm.multicast_ids()
+                        // // };
 
-                        let chill_phase = if self.chill_out.0 {
-                            (self.chill_out_max - self.chill_out.1.elapsed()).as_millis() as u16
-                        } else {
-                            0
-                        };
-                        let response = NeighborResponse::SwarmSync(
-                            chill_phase,
-                            self.swarm_time,
-                            b_casts,
-                            m_casts,
-                        );
-                        neighbor.add_requested_data(response);
-                        // let message = Message::new(
+                        // let chill_phase = if self.chill_out.0 {
+                        //     (self.chill_out_max - self.chill_out.1.elapsed()).as_millis() as u16
+                        // } else {
+                        //     0
+                        // };
+                        // // TODO
+                        // let more_keys = false;
+                        // let key_reg_chunk = vec![];
+                        // let response = NeighborResponse::SwarmSync(
+                        //     chill_phase,
+                        //     self.swarm.founder,
                         //     self.swarm_time,
-                        //     self.header,
-                        //     Payload::Response(response),
-                        //     self.neighborhood,
+                        //     self.swarm.swarm_type,
+                        //     self.swarm.key_reg.byte(),
+                        //     self.swarm.capability_reg.len() as u8,
+                        //     self.swarm.policy_reg.len() as u8,
+                        //     b_count,
+                        //     m_count,
+                        //     more_keys,
+                        //     key_reg_chunk,
                         // );
-                        neighbor.swarm_time = self.swarm_time;
-                        neighbor.start_new_round(self.swarm_time);
-                        // neighbor.send_out(message);
+                        // neighbor.add_requested_data(response);
+                        // // let message = Message::new(
+                        // //     self.swarm_time,
+                        // //     self.header,
+                        // //     Payload::Response(response),
+                        // //     self.neighborhood,
+                        // // );
+                        // neighbor.swarm_time = self.swarm_time;
+                        // neighbor.start_new_round(self.swarm_time);
+                        // // neighbor.send_out(message);
                     }
                     NeighborRequest::SwarmJoinedInfo(swarm_name) => {
                         // println!("SwarmJoinedInfo");
@@ -1609,17 +1708,21 @@ impl Gnome {
         // let message = self
         //     .prepare_message()
         //     .include_request(NeighborRequest::SwarmSyncRequest);
+        let mut remote_id = GnomeId(0);
         let response_opt = if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
             // neighbor.request_data(request);
             // let new_message = message
             // println!("{} >S> {}", neighbor.id, message);
-            neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest));
+            neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
+                true, true, true, true, true,
+            )));
             if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
                 // neighbor.send_out(message);
                 // if let Some(response) = neighbor.recv(Duration::from_secs(20)) {
                 // TODO: not sure if reversing next_state update with start_new_round
                 // inside neighbor.recv_sync is fine
                 self.next_state.update(neighbor);
+                remote_id = neighbor.id;
                 // self.next_state
                 //     .reset_for_next_turn(true, Header::Sync, Payload::KeepAlive(1024));
                 // neighbor.swarm_time = swarm_time;
@@ -1632,9 +1735,12 @@ impl Gnome {
         } else if let Some(neighbor) = self.slow_neighbors.iter_mut().next() {
             // neighbor.request_data(request);
             // neighbor.send_out(message);
-            neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest));
+            neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
+                true, true, true, true, true,
+            )));
             if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
                 self.next_state.update(neighbor);
+                remote_id = neighbor.id;
                 sync_response_option
             } else {
                 None
@@ -1642,8 +1748,19 @@ impl Gnome {
         } else {
             None
         };
-        if let Some(NeighborResponse::SwarmSync(chill_phase, swarm_time, b_casts, m_casts)) =
-            response_opt
+        if let Some(NeighborResponse::SwarmSync(
+            chill_phase,
+            founder,
+            swarm_time,
+            swarm_type,
+            key_reg_size,
+            capability_size,
+            policy_size,
+            b_cast_size,
+            m_cast_size,
+            more_keys_follow,
+            mut id_key_pairs,
+        )) = response_opt
         {
             // if let Some(response) = neighbor.recv(Duration::from_secs(20)) {
             // self.next_state
@@ -1651,9 +1768,19 @@ impl Gnome {
             // neighbor.swarm_time = swarm_time;
             // neighbor.start_new_round(swarm_time);
             // self.update_state();
+            println!(
+                "Setting founder from: {} to {}",
+                self.swarm.founder, founder
+            );
+            self.swarm.set_founder(founder);
+            self.swarm.swarm_type = swarm_type;
+            self.swarm.key_reg = KeyRegistry::from(&mut vec![key_reg_size, 0, 0]);
             self.swarm_time = swarm_time;
             self.round_start = swarm_time;
             self.next_state.swarm_time = swarm_time;
+            while let Some((g_id, pubkey)) = id_key_pairs.pop() {
+                self.swarm.key_reg.insert(g_id, pubkey);
+            }
             // TODO following needed?
             // self.next_state.last_accepted_message = response.clone();
 
@@ -1676,26 +1803,39 @@ impl Gnome {
                 // self.chill_out.1 = chill_phase;
             }
 
-            for (b_id, origin) in b_casts {
-                self.subscribe_broadcast(b_id, origin);
+            // for (b_id, origin) in b_casts {
+            //     self.subscribe_broadcast(b_id, origin);
+            // }
+            // // TODO: only subscribe to multicast if needed/possible
+            // for (m_id, origin) in m_casts {
+            //     self.subscribe_multicast(m_id, origin);
+            // }
+            // } else {
+            //     self.send_all(available_bandwith);
+        } else if response_opt.is_none() {
+            if remote_id.0 > 0 {
+                // TODO: both of us want to Sync to empty Swarm
+                //       we need to determine who is Founder
+                if self.id > remote_id {
+                    println!(
+                        "Setting founder from: {} to {}",
+                        self.swarm.founder, self.id
+                    );
+                    self.swarm.set_founder(self.id);
+                } else {
+                    println!(
+                        "Setting founder from: {} to {}",
+                        self.swarm.founder, remote_id
+                    );
+                    self.swarm.set_founder(remote_id);
+                }
             }
-            // TODO: only subscribe to multicast if needed/possible
-            for (m_id, origin) in m_casts {
-                self.subscribe_multicast(m_id, origin);
-            }
-        } else {
+            // println!("Sync response: {}", response);
+            // if matches!(response, NeighborRequest::SwarmSyncRequest) {
             self.send_all(available_bandwith);
+            return;
+            // }
         }
-        // if let Some(response) = response_opt {
-        //     println!("Sync response: {}", response);
-        //     if matches!(
-        //         response.payload,
-        //         Payload::Request(NeighborRequest::SwarmSyncRequest)
-        //     ) {
-        //         self.send_all();
-        //         return;
-        //     }
-        // }
     }
 
     fn swap_neighbors(&mut self) {
@@ -2307,9 +2447,16 @@ impl Gnome {
                         }
                         NeighborResponse::SwarmSync(
                             _chill_phase,
+                            _founder,
                             _swarm_time,
-                            b_casts,
-                            m_casts,
+                            _swarm_type,
+                            _key_reg_size,
+                            _capa_size,
+                            _policy_size,
+                            b_cast_size,
+                            m_cast_size,
+                            more_keys_follow,
+                            id_key_pairs,
                         ) => {
                             // TODO serve this
                             println!("Received SwarmSync response");
@@ -2318,12 +2465,13 @@ impl Gnome {
                             //     .iter_mut()
                             //     .max_by(|n, m| n.available_bandwith.cmp(&m.available_bandwith))
                             // {
-                            for (b_id, origin) in b_casts {
-                                self.subscribe_broadcast(b_id, origin);
-                            }
-                            for (m_id, origin) in m_casts {
-                                self.subscribe_multicast(m_id, origin);
-                            }
+                            // TODO
+                            // for (b_id, origin) in b_casts {
+                            //     self.subscribe_broadcast(b_id, origin);
+                            // }
+                            // for (m_id, origin) in m_casts {
+                            //     self.subscribe_multicast(m_id, origin);
+                            // }
                             // for b_cast_id in b_casts {
                             //     neighbor.request_data(NeighborRequest::SubscribeRequest(
                             //         true, b_cast_id,
@@ -2351,6 +2499,39 @@ impl Gnome {
                             // In case we receive it, we remove given item from pending list
                             // In case we receive a SubscribeFailed, we try subscribing to another Neighbor
                             // For this we also need to carry a list of Neighbors we have already tried
+                        }
+                        NeighborResponse::CapabilitySync(_chunk_no, _total_chunks, mut pairs) => {
+                            while let Some((capability, ids)) = pairs.pop() {
+                                println!("Inserting capability: {:?}: {:?}", capability, ids);
+                                self.swarm.insert_capability(capability, ids);
+                            }
+                        }
+                        NeighborResponse::PolicySync(_chunk_no, _total_chunks, mut pairs) => {
+                            while let Some((policy, req)) = pairs.pop() {
+                                self.swarm.policy_reg.insert(policy, req);
+                            }
+                        }
+                        NeighborResponse::BroadcastSync(_chunk_no, _total_chunks, mut pairs) => {
+                            while let Some((c_id, origin)) = pairs.pop() {
+                                // TODO: do we really want to subscribe to all broadcasts?
+                                self.subscribe_broadcast(c_id, origin);
+                            }
+                        }
+                        NeighborResponse::MulticastSync(_chunk_no, _total_chunks, mut pairs) => {
+                            while let Some((c_id, origin)) = pairs.pop() {
+                                // TODO: do we really want to subscribe to all multicasts?
+                                self.subscribe_multicast(c_id, origin);
+                            }
+                        }
+                        NeighborResponse::KeyRegistrySync(chunk_no, total_chunks, mut pairs) => {
+                            while let Some((gnome_id, pubkey)) = pairs.pop() {
+                                self.swarm.key_reg.insert(gnome_id, pubkey);
+                            }
+                            let inserted = self.swarm.insert_pubkeys(chunk_no, total_chunks, pairs);
+                            if !inserted {
+                                // TODO: send another sync request to start syncing pubkeys from scratch
+                                println!("Failed to insert Pubkeys from Key RegistrySync");
+                            }
                         }
                         other => {
                             println!("Uncovered NeighborResponse: {:?}\nuncovered", other);
@@ -2433,7 +2614,19 @@ impl Gnome {
                             // TODO build querying mechanism
                             // TODO inform gnome's mechanism to ask another neighbor
                         }
-                        NeighborResponse::SwarmSync(chill_phase, _st, b_casts, m_casts) => {
+                        NeighborResponse::SwarmSync(
+                            chill_phase,
+                            founder,
+                            _st,
+                            swarm_type,
+                            key_reg_size,
+                            capa_size,
+                            policy_size,
+                            b_cast_size,
+                            m_cast_size,
+                            more_keys_follow,
+                            mut id_pubkey_pairs,
+                        ) => {
                             if chill_phase > 0 {
                                 println!("Into chill {}", chill_phase);
                                 self.chill_out.0 = true;
@@ -2444,6 +2637,13 @@ impl Gnome {
                                 println!("no chill ");
                                 self.chill_out.0 = false;
                                 // self.chill_out.1 = chill_phase;
+                            }
+                            println!("Setting founder from {} to {}", self.swarm.founder, founder);
+                            self.swarm.set_founder(founder);
+                            self.swarm.swarm_type = swarm_type;
+                            self.swarm.key_reg = KeyRegistry::from(&mut vec![key_reg_size, 0, 0]);
+                            while let Some((id, pubkey)) = id_pubkey_pairs.pop() {
+                                self.swarm.key_reg.insert(id, pubkey);
                             }
                         }
                         NeighborResponse::Subscribed(is_bcast, cast_id, origin, source) => {
@@ -2481,6 +2681,36 @@ impl Gnome {
                                 }
                             }
                         }
+                        NeighborResponse::KeyRegistrySync(chunk_no, total_chunks, mut pairs) => {
+                            // TODO: we need to preserve key registry order!
+                            while let Some((gnome_id, pubkey)) = pairs.pop() {
+                                self.swarm.key_reg.insert(gnome_id, pubkey);
+                            }
+                        }
+                        NeighborResponse::CapabilitySync(chunk_no, total_chunks, mut pairs) => {
+                            // TODO: we also need to cover case when a capability
+                            //       is split into two or more chunks
+                            while let Some((capability, ids)) = pairs.pop() {
+                                self.swarm.capability_reg.insert(capability, ids);
+                            }
+                        }
+                        NeighborResponse::PolicySync(_chunk_no, _total_chunks, mut pairs) => {
+                            while let Some((policy, req)) = pairs.pop() {
+                                self.swarm.policy_reg.insert(policy, req);
+                            }
+                        }
+                        NeighborResponse::BroadcastSync(chunk_no, total_chunks, mut pairs) => {
+                            while let Some((c_id, origin)) = pairs.pop() {
+                                // TODO: do we really want to subscribe to all broadcasts?
+                                self.subscribe_broadcast(c_id, origin);
+                            }
+                        }
+                        NeighborResponse::MulticastSync(chunk_no, total_chunks, mut pairs) => {
+                            while let Some((c_id, origin)) = pairs.pop() {
+                                // TODO: do we really want to subscribe to all multicasts?
+                                self.subscribe_multicast(c_id, origin);
+                            }
+                        }
                         other => {
                             println!("Uncovered NeighborResponse: {:?}\nother", other);
                         }
@@ -2516,7 +2746,7 @@ impl Gnome {
                 if !drop_me {
                     self.refreshed_neighbors.push(neighbor);
                 } else {
-                    println!("Dropping disconnected neighbor");
+                    println!("Dropping neighbor {}", neighbor.id);
                     continue;
                 }
             } else if !drop_me {

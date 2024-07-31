@@ -23,12 +23,20 @@ use std::thread::spawn;
 #[derive(PartialEq, PartialOrd, Eq, Clone, Copy, Debug)]
 pub struct SwarmTime(pub u32);
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum SwarmType {
+    Catalog,
+    Forum,
+    UserDefined(u8),
+}
+
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub struct SwarmID(pub u8);
 
 pub struct Swarm {
     pub name: String,
     pub id: SwarmID,
+    pub swarm_type: SwarmType,
     pub founder: GnomeId,
     pub sender: Sender<Request>,
     active_unicasts: HashSet<CastID>,
@@ -38,6 +46,7 @@ pub struct Swarm {
     pub capability_reg: HashMap<Capabilities, Vec<GnomeId>>,
     pub policy_reg: HashMap<Policy, Requirement>,
     pub verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
+    last_accepted_pubkey_chunk: (u8, u8),
     // TODO: This struct (or SwarmManifesto and/or attrs) should be provided by the user,
     // or some other mean like another Swarm functioning as a swarm catalogue,
     // and we only need to define Traits that particular attributes should be bounded to.
@@ -55,7 +64,7 @@ pub struct Swarm {
     //   health. Other *casts should be ended after set inactivity period.
     //   This could be all done with Reconfigure headers:
     //   - Once inactivity period is passed some gnome can claim ownership
-    //   - This claim is being admitted to pending refonfigurations
+    //   - This claim is being admitted to pending reconfigurations
     //   - Current gnome acting as a source for given *cast can Deny that
     //   claim with another Reconfigure message within some time period
     //   - If Deny message is accepted, pending Takeover is dismissed
@@ -64,15 +73,23 @@ pub struct Swarm {
     //   Some possible DataStructures:
     //   - Capabilities - attributes that are assigned to groups to give it's members
     //   certain priviledges, there can be for example a capability that is required
-    //   in order to start a Broadcast. If a gnome sends StartBroadcast message,
-    //   after full round it is accepted and then when it comes to creating
-    //   logic and structures responsible for serving that broadcast, first each
-    //   gnome needs to authorize that message against necessary capabilities befor
-    //   given action gets executed
+    //   in order to start a Broadcast.
     //   - Groups - sets of gnomes that have certain capabilities
     //   - Multicasts
     //   - Broadcasts
-    //   - and other stuff
+    //   - SwarmType: i.e a catalog swarm, or a forum swarm or anything.
+    //     We need a way to be able to define unlimited number of SwarmTypes.
+    //     This can be done by having a handle to a Swarm that has those
+    //     definitions,
+    //     Predefined SwarmType definitions:
+    //     - catalog swarm type
+    //     - forum/discussion swarm type
+    //
+    //   - TypeDefinitions: descriptions of datatypes used by this swarm
+    //     Universal type definitions used by every swarm:
+    //     - a type containing SwarmType definitions
+    //     - a type containing TypeDefinitions definitions
+    //   - DataIdentifiers: id -> type mapping of data used by this swarm
 }
 
 impl Swarm {
@@ -95,20 +112,22 @@ impl Swarm {
         let (response_sender, receiver) = channel::<Response>();
         let mut policy_reg = HashMap::new();
         policy_reg.insert(Policy::Default, Requirement::None);
-        // policy_reg.insert(Policy::Data, Requirement::Has(Capabilities::Founder));
+        policy_reg.insert(Policy::Data, Requirement::Has(Capabilities::Founder));
 
         let swarm = Swarm {
             name,
             id,
+            swarm_type: SwarmType::Catalog,
             founder: GnomeId(0),
             sender: sender.clone(),
             active_unicasts: HashSet::new(),
             active_broadcasts: HashMap::new(),
             active_multicasts: HashMap::new(),
             verify,
-            key_reg: KeyRegistry::Reg8(Box::new(core::array::from_fn(|_i| (GnomeId(0), vec![])))),
+            key_reg: KeyRegistry::new8(),
             capability_reg: HashMap::new(),
             policy_reg,
+            last_accepted_pubkey_chunk: (0, 0),
         };
         let gnome = if let Some(neighbors) = neighbors {
             // println!("PubKey {} {}", pub_key_pem, pub_key_pem.len());
@@ -178,6 +197,60 @@ impl Swarm {
         self.active_broadcasts.insert(cast_id, broadcast);
     }
 
+    pub fn insert_capability(&mut self, cap: Capabilities, mut id_list: Vec<GnomeId>) {
+        if let Some(list) = self.capability_reg.get_mut(&cap) {
+            list.append(&mut id_list);
+        } else {
+            self.capability_reg.insert(cap, id_list);
+        }
+    }
+    pub fn mark_pubkeys_unsynced(&mut self) {
+        self.last_accepted_pubkey_chunk = (0, 1);
+    }
+    pub fn insert_pubkeys(
+        &mut self,
+        chunk_no: u8,
+        total_chunks: u8,
+        mut pairs: Vec<(GnomeId, Vec<u8>)>,
+    ) -> bool {
+        // TODO: add a mechanism to insert pubkeys in order
+        // that will require storing last added chunk id
+        // and a hashmap of pending keys
+        // in case some chunk went missing
+        // then we will need to send a request for specific chunk,
+        // or, for now, simply send another SyncRequest with sync_pubkey
+        // flag being the only one set to true
+        if chunk_no == self.last_accepted_pubkey_chunk.0 + 1
+            && self.last_accepted_pubkey_chunk.1 == total_chunks
+        {
+            self.last_accepted_pubkey_chunk = if chunk_no == total_chunks {
+                (0, 0)
+            } else {
+                (chunk_no, total_chunks)
+            };
+            while let Some((gnome_id, pubkey)) = pairs.pop() {
+                self.key_reg.insert(gnome_id, pubkey);
+            }
+            true
+        } else if self.last_accepted_pubkey_chunk == (0, 1) {
+            if chunk_no == 1 {
+                self.last_accepted_pubkey_chunk = (chunk_no, total_chunks);
+                while let Some((gnome_id, pubkey)) = pairs.pop() {
+                    self.key_reg.insert(gnome_id, pubkey);
+                }
+                true
+            } else {
+                self.last_accepted_pubkey_chunk = (0, 0);
+                println!("Pubkey registry chunk not in order!");
+                false
+            }
+        } else {
+            self.last_accepted_pubkey_chunk = (0, 0);
+            println!("Pubkey registry chunk not in order!");
+            false
+        }
+    }
+
     pub fn serve_casts(&mut self) {
         self.serve_broadcasts();
         // self.serve_unicasts();
@@ -239,6 +312,11 @@ impl Swarm {
                 .is_fullfilled(gnome_id, &swarm.capability_reg)
         }
     }
+    pub fn set_founder(&mut self, gnome_id: GnomeId) {
+        self.founder = gnome_id;
+        self.capability_reg
+            .insert(Capabilities::Founder, vec![gnome_id]);
+    }
     pub fn check_data_policy(&self, gnome_id: &GnomeId, swarm: &Swarm) -> bool {
         if let Some(req) = swarm.policy_reg.get(&Policy::Data) {
             req.is_fullfilled(gnome_id, &swarm.capability_reg)
@@ -249,6 +327,95 @@ impl Swarm {
                 .unwrap()
                 .is_fullfilled(gnome_id, &swarm.capability_reg)
         }
+    }
+
+    pub fn capabilities_chunks(&self) -> Vec<Vec<(Capabilities, Vec<GnomeId>)>> {
+        let mut total = vec![];
+        let mut pairs = Vec::with_capacity(100);
+        let mut avail_bytes = 1200;
+
+        for (c_id, mut gnome_ids) in self.capability_reg.clone() {
+            let mut gnomes_to_add = vec![];
+            while let Some(g_id) = gnome_ids.pop() {
+                if avail_bytes >= 9 {
+                    gnomes_to_add.push(g_id);
+                    avail_bytes -= 8;
+                } else {
+                    pairs.push((c_id, gnomes_to_add));
+                    total.push(pairs);
+                    pairs = Vec::with_capacity(100);
+                    gnomes_to_add = vec![];
+                    avail_bytes = 1200;
+                }
+            }
+            pairs.push((c_id, gnomes_to_add));
+        }
+        if !pairs.is_empty() {
+            total.push(pairs);
+        }
+        total
+    }
+
+    pub fn bytes_to_capabilities(bytes: &mut Vec<u8>) -> HashMap<Capabilities, Vec<GnomeId>> {
+        let mut cap_drain = bytes.drain(0..1);
+        let cap_len = cap_drain.next().unwrap() as usize;
+        drop(cap_drain);
+
+        let mut capa_map = HashMap::with_capacity(cap_len);
+        for _i in 0..cap_len {
+            cap_drain = bytes.drain(0..2);
+            let cap_id = cap_drain.next().unwrap();
+            let gnome_count = cap_drain.next().unwrap();
+            let mut gnomes = Vec::with_capacity(gnome_count as usize);
+            drop(cap_drain);
+            for _i in 0..gnome_count {
+                cap_drain = bytes.drain(0..8);
+                let mut gnome_id: u64 = 0;
+                for id_part in cap_drain.by_ref() {
+                    gnome_id <<= 8;
+                    gnome_id += id_part as u64;
+                }
+                gnomes.push(GnomeId(gnome_id));
+                drop(cap_drain);
+            }
+            capa_map.insert(Capabilities::from(cap_id), gnomes);
+        }
+        capa_map
+    }
+
+    pub fn policy_chunks(&self) -> Vec<Vec<(Policy, Requirement)>> {
+        let mut total = vec![];
+        let mut pairs = Vec::with_capacity(100);
+        let mut avail_bytes: u16 = 1200;
+
+        for (p_id, req) in self.policy_reg.clone() {
+            let req_len = req.len();
+            if req_len as u16 + 1 <= avail_bytes {
+                pairs.push((p_id, req));
+                avail_bytes -= 1 + req_len as u16;
+            } else {
+                total.push(pairs);
+                pairs = Vec::with_capacity(100);
+                avail_bytes = 1200;
+            }
+        }
+        if !pairs.is_empty() {
+            total.push(pairs);
+        }
+        total
+    }
+
+    pub fn bytes_to_policy(bytes: &mut Vec<u8>) -> HashMap<Policy, Requirement> {
+        let policy_count = bytes.drain(0..1).next().unwrap();
+        let mut policies = HashMap::with_capacity(policy_count as usize);
+        for i in 0..policy_count {
+            let policy_byte = bytes.drain(0..1).next().unwrap();
+            let policy = Policy::from(policy_byte);
+            let req_size = bytes.drain(0..1).next().unwrap();
+            let requirement = Requirement::from(bytes);
+            policies.insert(policy, requirement);
+        }
+        policies
     }
 
     fn config_to_policy(&self, c_id: u8) -> Policy {
@@ -371,5 +538,23 @@ impl Add for SwarmTime {
     type Output = SwarmTime;
     fn add(self, rhs: SwarmTime) -> Self::Output {
         SwarmTime(self.0 + rhs.0)
+    }
+}
+
+impl SwarmType {
+    pub fn from(byte: u8) -> Self {
+        match byte {
+            255 => SwarmType::Catalog,
+            254 => SwarmType::Forum,
+            other => SwarmType::UserDefined(other),
+        }
+    }
+
+    pub fn as_byte(&self) -> u8 {
+        match self {
+            SwarmType::Catalog => 255,
+            SwarmType::Forum => 254,
+            SwarmType::UserDefined(num) => *num,
+        }
     }
 }

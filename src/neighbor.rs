@@ -4,6 +4,9 @@ use crate::message::Payload;
 use crate::message::WrappedMessage;
 use crate::multicast::CastMessage;
 use crate::multicast::CastType;
+use crate::policy::Policy;
+use crate::requirement::Requirement;
+use crate::Capabilities;
 use crate::CastContent;
 use crate::CastID;
 use crate::Data;
@@ -15,6 +18,7 @@ use crate::Signature;
 use crate::Swarm;
 use crate::SwarmID;
 use crate::SwarmTime;
+use crate::SwarmType;
 use std::collections::HashMap;
 use std::fmt::Display;
 
@@ -78,7 +82,8 @@ pub enum NeighborRequest {
     UnicastRequest(SwarmID, Box<[CastID; 256]>),
     ForwardConnectRequest(NetworkSettings),
     ConnectRequest(u8, GnomeId, NetworkSettings),
-    SwarmSyncRequest,
+    // bools for: key reg, capability, policy, broadcast, multicast
+    SwarmSyncRequest(bool, bool, bool, bool, bool),
     SubscribeRequest(bool, CastID),
     CreateNeighbor(GnomeId, String),
     SwarmJoinedInfo(String),
@@ -96,10 +101,22 @@ pub enum NeighborResponse {
     AlreadyConnected(u8),
     SwarmSync(
         u16,
+        GnomeId,
         SwarmTime,
-        Vec<(CastID, GnomeId)>,
-        Vec<(CastID, GnomeId)>,
+        SwarmType,
+        u8,                      // KeyRegistry size
+        u8,                      // Capability size
+        u8,                      // Policy size
+        u8,                      // Broadcast size
+        u8,                      // Multicast size
+        bool,                    // is_following Vec complete KeyReg?
+        Vec<(GnomeId, Vec<u8>)>, // KeyReg pairs
     ),
+    KeyRegistrySync(u8, u8, Vec<(GnomeId, Vec<u8>)>),
+    CapabilitySync(u8, u8, Vec<(Capabilities, Vec<GnomeId>)>),
+    PolicySync(u8, u8, Vec<(Policy, Requirement)>),
+    BroadcastSync(u8, u8, Vec<(CastID, GnomeId)>),
+    MulticastSync(u8, u8, Vec<(CastID, GnomeId)>),
     Subscribed(bool, CastID, GnomeId, Option<GnomeId>),
     CustomResponse(u8, Data),
 }
@@ -211,15 +228,46 @@ impl Neighbor {
             // {
             if c_type == CastType::Unicast && CastID(254) == id {
                 if let CastContent::Response(
-                    ref n_resp @ NeighborResponse::SwarmSync(_a, st, ref _b, ref _m),
+                    // SwarmSync(
+                    //     u16,
+                    //     GnomeId,
+                    //     SwarmTime,
+                    //     SwarmType,
+                    //     u8,                      // KeyRegistry size
+                    //     u8,                      // Capability size
+                    //     u8,                      // Policy size
+                    //     u8,                      // Broadcast size
+                    //     u8,                      // Multicast size
+                    //     Vec<(GnomeId, Vec<u8>)>, // KeyReg pairs
+                    // ),
+                    ref n_resp @ NeighborResponse::SwarmSync(
+                        _chill_out_phase,
+                        _founder,
+                        swarm_time,
+                        _swarm_type,
+                        _key_reg_size,
+                        _capa_reg_size,
+                        _poli_reg_size,
+                        _broadcast_reg_size,
+                        _multicast_reg_size,
+                        _more_key_coming,
+                        ref key_reg_pairs,
+                    ),
                 ) = content
                 {
-                    self.swarm_time = st;
-                    self.start_new_round(st);
+                    self.swarm_time = swarm_time;
+                    self.start_new_round(swarm_time);
                     return Ok(Some(n_resp.clone()));
                 }
             } else if c_type == CastType::Unicast && CastID(255) == id {
-                if let CastContent::Request(NeighborRequest::SwarmSyncRequest) = content {}
+                if let CastContent::Request(NeighborRequest::SwarmSyncRequest(
+                    sync_key_reg,
+                    sync_caps,
+                    sync_pol,
+                    sync_bcasts,
+                    sync_mcasts,
+                )) = content
+                {}
                 return Ok(None);
                 // } else {
             };
@@ -381,12 +429,14 @@ impl Neighbor {
                 let (signature, mut bytes) = sign_bytes_opt.unwrap();
                 if !self.verify_payload(self.round_start, swarm, &signature, &mut bytes) {
                     println!("Verification failed");
+                    drop_me = true;
                     return (message_recvd, false, new_proposal, drop_me);
                 } else {
                     message.pack(r_st, r_n, r_header, is_config, Some((signature, bytes)));
                 }
                 if !self.verify_policy(&message, swarm) {
                     println!("Policy not fulfilled");
+                    drop_me = true;
                     return (message_recvd, false, new_proposal, drop_me);
                 }
             }
@@ -574,17 +624,9 @@ impl Neighbor {
     }
     fn serve_neighbor_response(&mut self, response: NeighborResponse) {
         match response {
-            NeighborResponse::Listing(_count, listing) => {
-                // let mut list_ver = vec![];
-                // let mut i: usize = 0;
-                // let count: usize = *count as usize;
-                // while i < count {
-                //     i += 1;
-                //     list_ver.push(listing[i]);
-                // }
-                self.user_responses
-                    .push_front(Response::Listing(listing.clone()))
-            }
+            NeighborResponse::Listing(_count, listing) => self
+                .user_responses
+                .push_front(Response::Listing(listing.clone())),
             NeighborResponse::Block(block_id, data) => {
                 self.user_responses
                     .push_front(Response::Block(block_id, data));
@@ -611,13 +653,32 @@ impl Neighbor {
                 self.user_responses.push_front(Response::ToGnome(response));
                 //TODO send this to gnome.ongoing_requests
             }
-            NeighborResponse::SwarmSync(chill_phase, swarm_time, bcasts, mcasts) => {
+            NeighborResponse::SwarmSync(
+                chill_phase,
+                founder,
+                swarm_time,
+                swarm_type,
+                key_reg_size,
+                capability_reg_size,
+                policy_reg_size,
+                bcast_size,
+                mcast_size,
+                more_key_coming,
+                key_reg_pairs,
+            ) => {
                 self.user_responses
                     .push_front(Response::ToGnome(NeighborResponse::SwarmSync(
                         chill_phase,
+                        founder,
                         swarm_time,
-                        bcasts,
-                        mcasts,
+                        swarm_type,
+                        key_reg_size,
+                        capability_reg_size,
+                        policy_reg_size,
+                        bcast_size,
+                        mcast_size,
+                        more_key_coming,
+                        key_reg_pairs,
                     )));
             }
             NeighborResponse::Subscribed(is_bcast, cast_id, origin_id, _none) => {
@@ -627,6 +688,40 @@ impl Neighbor {
                         cast_id,
                         origin_id,
                         Some(self.id),
+                    )));
+            }
+            NeighborResponse::KeyRegistrySync(part_no, total_parts_count, id_key_pairs) => {
+                self.user_responses.push_front(Response::ToGnome(
+                    NeighborResponse::KeyRegistrySync(part_no, total_parts_count, id_key_pairs),
+                ));
+            }
+            NeighborResponse::CapabilitySync(part_no, total_parts_count, capa_ids_pairs) => {
+                self.user_responses.push_front(Response::ToGnome(
+                    NeighborResponse::CapabilitySync(part_no, total_parts_count, capa_ids_pairs),
+                ));
+            }
+            NeighborResponse::PolicySync(part_no, total_parts_count, policy_req_pairs) => {
+                self.user_responses
+                    .push_front(Response::ToGnome(NeighborResponse::PolicySync(
+                        part_no,
+                        total_parts_count,
+                        policy_req_pairs,
+                    )));
+            }
+            NeighborResponse::BroadcastSync(part_no, total_parts_count, cast_id_source_pairs) => {
+                self.user_responses
+                    .push_front(Response::ToGnome(NeighborResponse::BroadcastSync(
+                        part_no,
+                        total_parts_count,
+                        cast_id_source_pairs,
+                    )));
+            }
+            NeighborResponse::MulticastSync(part_no, total_parts_count, cast_id_source_pairs) => {
+                self.user_responses
+                    .push_front(Response::ToGnome(NeighborResponse::MulticastSync(
+                        part_no,
+                        total_parts_count,
+                        cast_id_source_pairs,
                     )));
             }
             NeighborResponse::CustomResponse(id, data) => {
