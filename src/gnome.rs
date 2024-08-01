@@ -2691,7 +2691,7 @@ impl Gnome {
                             // TODO: we also need to cover case when a capability
                             //       is split into two or more chunks
                             while let Some((capability, ids)) = pairs.pop() {
-                                self.swarm.capability_reg.insert(capability, ids);
+                                self.swarm.insert_capability(capability, ids);
                             }
                         }
                         NeighborResponse::PolicySync(_chunk_no, _total_chunks, mut pairs) => {

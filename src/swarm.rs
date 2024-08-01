@@ -5,6 +5,7 @@ use crate::manager_to_gnome::ManagerToGnome;
 use crate::multicast::Multicast;
 use crate::policy::Policy;
 use crate::requirement::Requirement;
+use crate::CapabiliTree;
 use crate::Capabilities;
 use crate::Gnome;
 use crate::GnomeId;
@@ -43,7 +44,7 @@ pub struct Swarm {
     active_broadcasts: HashMap<CastID, Multicast>,
     active_multicasts: HashMap<CastID, Multicast>,
     pub key_reg: KeyRegistry,
-    pub capability_reg: HashMap<Capabilities, Vec<GnomeId>>,
+    pub capability_reg: HashMap<Capabilities, CapabiliTree>,
     pub policy_reg: HashMap<Policy, Requirement>,
     pub verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
     last_accepted_pubkey_chunk: (u8, u8),
@@ -198,10 +199,17 @@ impl Swarm {
     }
 
     pub fn insert_capability(&mut self, cap: Capabilities, mut id_list: Vec<GnomeId>) {
-        if let Some(list) = self.capability_reg.get_mut(&cap) {
-            list.append(&mut id_list);
+        id_list.reverse();
+        if let Some(tree) = self.capability_reg.get_mut(&cap) {
+            while let Some(gnome_id) = id_list.pop() {
+                tree.insert(gnome_id);
+            }
         } else {
-            self.capability_reg.insert(cap, id_list);
+            let mut tree = CapabiliTree::create();
+            while let Some(gnome_id) = id_list.pop() {
+                tree.insert(gnome_id);
+            }
+            self.capability_reg.insert(cap, tree);
         }
     }
     pub fn mark_pubkeys_unsynced(&mut self) {
@@ -314,8 +322,9 @@ impl Swarm {
     }
     pub fn set_founder(&mut self, gnome_id: GnomeId) {
         self.founder = gnome_id;
-        self.capability_reg
-            .insert(Capabilities::Founder, vec![gnome_id]);
+        let mut tree = CapabiliTree::create();
+        tree.insert(gnome_id);
+        self.capability_reg.insert(Capabilities::Founder, tree);
     }
     pub fn check_data_policy(&self, gnome_id: &GnomeId, swarm: &Swarm) -> bool {
         if let Some(req) = swarm.policy_reg.get(&Policy::Data) {
@@ -334,21 +343,22 @@ impl Swarm {
         let mut pairs = Vec::with_capacity(100);
         let mut avail_bytes = 1200;
 
-        for (c_id, mut gnome_ids) in self.capability_reg.clone() {
+        for c_id in self.capability_reg.keys() {
+            let mut gnome_ids = self.capability_reg.get(c_id).unwrap().id_vec();
             let mut gnomes_to_add = vec![];
             while let Some(g_id) = gnome_ids.pop() {
                 if avail_bytes >= 9 {
                     gnomes_to_add.push(g_id);
                     avail_bytes -= 8;
                 } else {
-                    pairs.push((c_id, gnomes_to_add));
+                    pairs.push((*c_id, gnomes_to_add));
                     total.push(pairs);
                     pairs = Vec::with_capacity(100);
                     gnomes_to_add = vec![];
                     avail_bytes = 1200;
                 }
             }
-            pairs.push((c_id, gnomes_to_add));
+            pairs.push((*c_id, gnomes_to_add));
         }
         if !pairs.is_empty() {
             total.push(pairs);

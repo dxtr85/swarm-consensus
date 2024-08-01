@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{Capabilities, GnomeId};
+use crate::{CapabiliTree, Capabilities, GnomeId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Requirement {
@@ -61,13 +61,13 @@ impl Requirement {
     pub fn is_fullfilled(
         &self,
         gnome_id: &GnomeId,
-        caps: &HashMap<Capabilities, Vec<GnomeId>>,
+        caps: &HashMap<Capabilities, CapabiliTree>,
     ) -> bool {
         match self {
             Requirement::None => true,
             Requirement::Has(capa) => {
-                if let Some(list) = caps.get(capa) {
-                    list.contains(gnome_id)
+                if let Some(tree) = caps.get(capa) {
+                    tree.contains(gnome_id)
                 } else {
                     false
                 }

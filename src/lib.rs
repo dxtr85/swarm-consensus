@@ -10,6 +10,7 @@ pub use crate::gnome::GnomeId;
 mod message;
 mod multicast;
 mod swarm;
+pub use crate::capabilities::CapabiliTree;
 pub use crate::capabilities::Capabilities;
 pub use crate::gnome::Nat;
 pub use crate::gnome::NetworkSettings;
