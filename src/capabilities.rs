@@ -12,10 +12,10 @@ pub enum Capabilities {
 
 pub enum CapabiliTree {
     Empty(u8, u64),
-    Filled(Box<CapabiliNode>),
+    Filled(Box<CapabiLeaf>),
 }
 
-pub struct CapabiliNode {
+pub struct CapabiLeaf {
     level: u8,
     midpoint: u64,
     pub gnome_id: GnomeId,
@@ -40,7 +40,7 @@ impl CapabiliTree {
                 let shift = u64::MAX >> (new_level + 1);
                 let midpoint_left = *midpoint - shift;
                 let midpoint_right = *midpoint + shift;
-                *self = CapabiliTree::Filled(Box::new(CapabiliNode {
+                *self = CapabiliTree::Filled(Box::new(CapabiLeaf {
                     level: *level,
                     midpoint: *midpoint,
                     gnome_id,
@@ -88,7 +88,7 @@ impl CapabiliTree {
     }
 }
 
-impl CapabiliNode {
+impl CapabiLeaf {
     pub fn insert(&mut self, gnome_id: GnomeId) {
         let old_diff = self.gnome_id.0.abs_diff(self.midpoint);
         let new_diff = gnome_id.0.abs_diff(self.midpoint);

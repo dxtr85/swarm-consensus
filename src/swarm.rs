@@ -345,6 +345,7 @@ impl Swarm {
 
         for c_id in self.capability_reg.keys() {
             let mut gnome_ids = self.capability_reg.get(c_id).unwrap().id_vec();
+            gnome_ids.reverse();
             let mut gnomes_to_add = vec![];
             while let Some(g_id) = gnome_ids.pop() {
                 if avail_bytes >= 9 {

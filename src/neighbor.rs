@@ -367,7 +367,7 @@ impl Neighbor {
         // last_accepted_reconf: Option<Configuration>,
     ) -> (bool, bool, bool, bool) {
         let mut message_recvd = false;
-        let sanity_passed = true;
+        let mut sanity_passed = false;
         let mut new_proposal = false;
         let mut drop_me = false;
         let mut force_break = false;
@@ -455,15 +455,11 @@ impl Neighbor {
                 // } else {
 
                 // TODO: maybe return instead of continue?
-                return (message_recvd, false, new_proposal, drop_me);
+                return (message_recvd, sanity_passed, new_proposal, drop_me);
                 // continue;
                 // }
             }
-            // } else {
-            //     message_recvd = true;
-            // }
-            // println!("Sanity passed {}", message);
-
+            sanity_passed = true;
             self.swarm_time = swarm_time;
             match header {
                 Header::Sync => {
