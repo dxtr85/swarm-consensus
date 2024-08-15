@@ -1017,6 +1017,9 @@ impl Gnome {
         }
     }
     fn serve_sync_requests(&mut self) {
+        // TODO: in order to function we need to always have
+        //       actual value of app_sync_hash at hand
+        //       this should be provided by Manager and stored by Gnome or better Swarm
         if self.new_neighbors.is_empty() {
             return;
         }
@@ -1033,8 +1036,16 @@ impl Gnome {
                 sync_policy,
                 sync_broadcast,
                 sync_multicast,
+                app_sync_hash,
             )) = neighbor.requests.pop_back()
             {
+                // TODO: Manager should update us with actual value of this
+                let our_app_sync_hash = 0;
+                if our_app_sync_hash != app_sync_hash {
+                    // Notify upper layer about this inconsistency
+                    // might also hint that this is a freshly joined Neighbor
+                    panic!("We should do smthg about this!");
+                }
                 neighbor.swarm_time = message.swarm_time;
                 self.send_sync_responses(
                     sync_key_reg,
@@ -1085,11 +1096,14 @@ impl Gnome {
             (false, vec![], vec![])
         };
 
+        // TODO: user needs to provide this value
+        let app_sync_hash: u64 = 0;
         let response = NeighborResponse::SwarmSync(
             chill_phase,
             self.swarm.founder,
             self.swarm_time,
             self.swarm.swarm_type,
+            app_sync_hash,
             self.swarm.key_reg.byte(),
             self.swarm.capability_reg.len() as u8,
             self.swarm.policy_reg.len() as u8,
@@ -1219,6 +1233,7 @@ impl Gnome {
                         sync_policy,
                         sync_broadcast,
                         sync_multicast,
+                        app_sync_hash,
                     ) => {
                         self.send_sync_responses(
                             sync_key_reg,
@@ -1230,6 +1245,12 @@ impl Gnome {
                         );
                         neighbor.swarm_time = self.swarm_time;
                         neighbor.start_new_round(self.swarm_time);
+                        // TODO: Manager should update us with actual value of this
+                        let our_app_sync_hash = 0;
+                        if our_app_sync_hash != app_sync_hash {
+                            // TODO notify upper layer
+                            panic!("App data out of sync");
+                        }
                     }
                     NeighborRequest::SwarmJoinedInfo(swarm_name) => {
                         // println!("SwarmJoinedInfo");
@@ -1365,7 +1386,7 @@ impl Gnome {
     //     tx
     // }
 
-    pub fn do_your_job(mut self) {
+    pub fn do_your_job(mut self, app_sync_hash: u64) {
         println!("Waiting for user/network to provide some Neighbors...");
         while self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
             // println!("in while");
@@ -1381,7 +1402,7 @@ impl Gnome {
         };
         available_bandwith = 1024;
         println!("Avail bandwith: {}", available_bandwith);
-        self.sync_with_swarm(available_bandwith);
+        self.presync_with_swarm(available_bandwith, app_sync_hash);
         // let mut _guard = self.start_new_timer(self.timeout_duration, timer_sender.clone(), None);
         let mut timer = Instant::now();
         self.timeout_duration = Duration::from_secs(16);
@@ -1684,56 +1705,59 @@ impl Gnome {
     //       and also how many iterations of ChillOut mode are currently left.
     //       We apply those parameters to our state and continue to loop.
     //       If we receive any other message we set ChillOut to false and continue.
-    fn sync_with_swarm(&mut self, available_bandwith: u64) {
+    fn presync_with_swarm(&mut self, available_bandwith: u64, app_sync_hash: u64) {
         // let request = ;
         // let message = self
         //     .prepare_message()
         //     .include_request(NeighborRequest::SwarmSyncRequest);
         let mut remote_id = GnomeId(0);
-        let response_opt = if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
-            // neighbor.request_data(request);
-            // let new_message = message
-            // println!("{} >S> {}", neighbor.id, message);
-            neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
-                true, true, true, true, true,
-            )));
-            if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
+        let response_opt =
+            if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
+                // neighbor.request_data(request);
+                // let new_message = message
+                // println!("{} >S> {}", neighbor.id, message);
+                neighbor.send_out_cast(CastMessage::new_request(
+                    NeighborRequest::SwarmSyncRequest(true, true, true, true, true, app_sync_hash),
+                ));
+                if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
+                    // neighbor.send_out(message);
+                    // if let Some(response) = neighbor.recv(Duration::from_secs(20)) {
+                    // TODO: not sure if reversing next_state update with start_new_round
+                    // inside neighbor.recv_sync is fine
+                    self.next_state.update(neighbor);
+                    remote_id = neighbor.id;
+                    // self.next_state
+                    //     .reset_for_next_turn(true, Header::Sync, Payload::KeepAlive(1024));
+                    // neighbor.swarm_time = swarm_time;
+                    // neighbor.start_new_round(swarm_time);
+                    // self.update_state();
+                    sync_response_option
+                } else {
+                    None
+                }
+            } else if let Some(neighbor) = self.slow_neighbors.iter_mut().next() {
+                // neighbor.request_data(request);
                 // neighbor.send_out(message);
-                // if let Some(response) = neighbor.recv(Duration::from_secs(20)) {
-                // TODO: not sure if reversing next_state update with start_new_round
-                // inside neighbor.recv_sync is fine
-                self.next_state.update(neighbor);
-                remote_id = neighbor.id;
-                // self.next_state
-                //     .reset_for_next_turn(true, Header::Sync, Payload::KeepAlive(1024));
-                // neighbor.swarm_time = swarm_time;
-                // neighbor.start_new_round(swarm_time);
-                // self.update_state();
-                sync_response_option
+                neighbor.send_out_cast(CastMessage::new_request(
+                    NeighborRequest::SwarmSyncRequest(true, true, true, true, true, app_sync_hash),
+                ));
+                if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
+                    self.next_state.update(neighbor);
+                    remote_id = neighbor.id;
+                    sync_response_option
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else if let Some(neighbor) = self.slow_neighbors.iter_mut().next() {
-            // neighbor.request_data(request);
-            // neighbor.send_out(message);
-            neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
-                true, true, true, true, true,
-            )));
-            if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
-                self.next_state.update(neighbor);
-                remote_id = neighbor.id;
-                sync_response_option
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+            };
+        // TODO: make use of capability_size, policy_size, b_cast_size, m_cast_size, more_keys_follow
         if let Some(NeighborResponse::SwarmSync(
             chill_phase,
             founder,
             swarm_time,
             swarm_type,
+            remote_app_sync_hash,
             key_reg_size,
             capability_size,
             policy_size,
@@ -1749,6 +1773,12 @@ impl Gnome {
             // neighbor.swarm_time = swarm_time;
             // neighbor.start_new_round(swarm_time);
             // self.update_state();
+            if remote_app_sync_hash != app_sync_hash {
+                // TODO: notify upper layer and let it handle this
+                panic!("App data out of sync!");
+            } else {
+                println!("App data in sync");
+            }
             println!(
                 "Setting founder from: {} to {}",
                 self.swarm.founder, founder
@@ -2431,6 +2461,7 @@ impl Gnome {
                             _founder,
                             _swarm_time,
                             _swarm_type,
+                            _app_sync_hash,
                             _key_reg_size,
                             _capa_size,
                             _policy_size,
@@ -2595,11 +2626,18 @@ impl Gnome {
                             // TODO build querying mechanism
                             // TODO inform gnome's mechanism to ask another neighbor
                         }
+                        // TODO make use af app_sync_hash
+                        // We should notify application layer about received
+                        // app_sync_hash and it should act accordingly
+                        // If our hash is the same as received we do nothing
+                        // if it is different we need to sync,
+                        // if we have just joined then this means we are behind
                         NeighborResponse::SwarmSync(
                             chill_phase,
                             founder,
                             _st,
                             swarm_type,
+                            app_sync_hash,
                             key_reg_size,
                             capa_size,
                             policy_size,

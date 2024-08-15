@@ -27,10 +27,14 @@ impl Data {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn get_block_id(&self) -> BlockID {
+    pub fn hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         self.0.hash(&mut hasher);
-        BlockID(hasher.finish())
+        hasher.finish()
+    }
+
+    pub fn get_block_id(&self) -> BlockID {
+        BlockID(self.hash())
     }
 }
 

@@ -83,7 +83,7 @@ pub enum NeighborRequest {
     ForwardConnectRequest(NetworkSettings),
     ConnectRequest(u8, GnomeId, NetworkSettings),
     // bools for: key reg, capability, policy, broadcast, multicast
-    SwarmSyncRequest(bool, bool, bool, bool, bool),
+    SwarmSyncRequest(bool, bool, bool, bool, bool, u64),
     SubscribeRequest(bool, CastID),
     CreateNeighbor(GnomeId, String),
     SwarmJoinedInfo(String),
@@ -104,6 +104,7 @@ pub enum NeighborResponse {
         GnomeId,
         SwarmTime,
         SwarmType,
+        u64,
         u8,                      // KeyRegistry size
         u8,                      // Capability size
         u8,                      // Policy size
@@ -245,13 +246,14 @@ impl Neighbor {
                         _founder,
                         swarm_time,
                         _swarm_type,
+                        _app_sync_hash,
                         _key_reg_size,
                         _capa_reg_size,
                         _poli_reg_size,
                         _broadcast_reg_size,
                         _multicast_reg_size,
                         _more_key_coming,
-                        ref key_reg_pairs,
+                        ref _key_reg_pairs,
                     ),
                 ) = content
                 {
@@ -266,8 +268,18 @@ impl Neighbor {
                     sync_pol,
                     sync_bcasts,
                     sync_mcasts,
+                    app_sync_hash,
                 )) = content
-                {}
+                {
+                    if app_sync_hash != 0 {
+                        // TODO we need a more sophisticated sync method
+                        // once we enable storing swarm data on disk this will run
+                        // probably we should return either NeighborResponse or NeighborRequest?
+                        // -> Result<Option<NeighborResponse>, Option<NeighborRequest>>
+                        // lol
+                        panic!("Received SwarmSyncRequest with non zero app_sync_hash!");
+                    }
+                }
                 return Ok(None);
                 // } else {
             };
@@ -654,6 +666,7 @@ impl Neighbor {
                 founder,
                 swarm_time,
                 swarm_type,
+                app_sync_hash,
                 key_reg_size,
                 capability_reg_size,
                 policy_reg_size,
@@ -668,6 +681,7 @@ impl Neighbor {
                         founder,
                         swarm_time,
                         swarm_type,
+                        app_sync_hash,
                         key_reg_size,
                         capability_reg_size,
                         policy_reg_size,
