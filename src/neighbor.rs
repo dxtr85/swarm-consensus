@@ -87,6 +87,7 @@ pub enum NeighborRequest {
     SubscribeRequest(bool, CastID),
     CreateNeighbor(GnomeId, String),
     SwarmJoinedInfo(String),
+    AppSyncRequest(u8, Data),
     CustomRequest(u8, Data),
 }
 
@@ -119,6 +120,7 @@ pub enum NeighborResponse {
     BroadcastSync(u8, u8, Vec<(CastID, GnomeId)>),
     MulticastSync(u8, u8, Vec<(CastID, GnomeId)>),
     Subscribed(bool, CastID, GnomeId, Option<GnomeId>),
+    AppSync(u8, u16, u16, u16, Data),
     CustomResponse(u8, Data),
 }
 
@@ -734,6 +736,9 @@ impl Neighbor {
                         cast_id_source_pairs,
                     )));
             }
+            NeighborResponse::AppSync(sync_type, c_id, part_no, total, data) => self
+                .user_responses
+                .push_front(Response::AppSync(sync_type, c_id, part_no, total, data)),
             NeighborResponse::CustomResponse(id, data) => {
                 self.user_responses.push_front(Response::Custom(id, data))
             }

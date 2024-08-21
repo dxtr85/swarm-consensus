@@ -55,12 +55,13 @@ const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
 
 #[derive(Debug)]
 pub enum Request {
+    UpdateAppRootHash(u64),
     AddData(Data),
     AddNeighbor(Neighbor),
     DropNeighbor(GnomeId),
     ListNeighbors,
     AskData(GnomeId, NeighborRequest),
-    SendData(GnomeId, NeighborRequest, NeighborResponse),
+    SendData(GnomeId, NeighborResponse),
     Disconnect,
     Status,
     StartUnicast(GnomeId),
@@ -78,6 +79,9 @@ pub enum Request {
 pub struct CastID(pub u8);
 
 pub enum Response {
+    AppDataSynced(bool),
+    AppSync(u8, u16, u16, u16, Data),
+    AppSyncInquiry(GnomeId, u8, Data),
     Block(BlockID, Data),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(Vec<BlockID>),
@@ -96,6 +100,15 @@ pub enum Response {
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Response::AppDataSynced(is_synced) => {
+                write!(f, "AppDataSynced: {}", is_synced)
+            }
+            Response::AppSync(_type, c_id, part_no, total, _data) => {
+                write!(f, "AppSync[{}, {}/{}]", c_id, part_no, total)
+            }
+            Response::AppSyncInquiry(_g_id, s_type, _data) => {
+                write!(f, "AppSync[{}]", s_type)
+            }
             Response::Block(prop_id, data) => {
                 write!(f, "{:?} {}", prop_id, data)
             }
