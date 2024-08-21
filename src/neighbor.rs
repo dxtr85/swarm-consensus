@@ -612,14 +612,14 @@ impl Neighbor {
                 swarm.check_config_policy(gnome_id, c_id, swarm)
             }
             Header::Block(_b_id) => {
-                if let Payload::Block(_bid, ref _sign, ref _data) = message.payload {
+                if let Payload::Block(_bid, ref _sign, ref data) = message.payload {
                     println!("Verify Data policy...");
                     match _sign {
                         Signature::Regular(gnome_id, _s) => {
-                            swarm.check_data_policy(gnome_id, swarm)
+                            swarm.check_data_policy(gnome_id, swarm, data.first_byte())
                         }
                         Signature::Extended(gnome_id, _p, _s) => {
-                            swarm.check_data_policy(gnome_id, swarm)
+                            swarm.check_data_policy(gnome_id, swarm, data.first_byte())
                         }
                     }
                 } else {

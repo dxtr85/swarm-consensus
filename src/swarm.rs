@@ -114,7 +114,12 @@ impl Swarm {
         let (response_sender, receiver) = channel::<Response>();
         let mut policy_reg = HashMap::new();
         policy_reg.insert(Policy::Default, Requirement::None);
-        policy_reg.insert(Policy::Data, Requirement::Has(Capabilities::Founder));
+        policy_reg.insert(
+            Policy::DataWithFirstByte(0),
+            Requirement::Has(Capabilities::Founder),
+        );
+        // policy_reg.insert(Policy::Data, Requirement::Has(Capabilities::Admin));
+        policy_reg.insert(Policy::Data, Requirement::None);
 
         let swarm = Swarm {
             name,
@@ -327,8 +332,10 @@ impl Swarm {
         tree.insert(gnome_id);
         self.capability_reg.insert(Capabilities::Founder, tree);
     }
-    pub fn check_data_policy(&self, gnome_id: &GnomeId, swarm: &Swarm) -> bool {
-        if let Some(req) = swarm.policy_reg.get(&Policy::Data) {
+    pub fn check_data_policy(&self, gnome_id: &GnomeId, swarm: &Swarm, first_byte: u8) -> bool {
+        if let Some(req) = swarm.policy_reg.get(&Policy::DataWithFirstByte(first_byte)) {
+            req.is_fullfilled(gnome_id, &swarm.capability_reg)
+        } else if let Some(req) = swarm.policy_reg.get(&Policy::Data) {
             req.is_fullfilled(gnome_id, &swarm.capability_reg)
         } else {
             swarm
@@ -420,10 +427,11 @@ impl Swarm {
     pub fn bytes_to_policy(bytes: &mut Vec<u8>) -> HashMap<Policy, Requirement> {
         let policy_count = bytes.drain(0..1).next().unwrap();
         let mut policies = HashMap::with_capacity(policy_count as usize);
-        for i in 0..policy_count {
-            let policy_byte = bytes.drain(0..1).next().unwrap();
-            let policy = Policy::from(policy_byte);
-            let req_size = bytes.drain(0..1).next().unwrap();
+        // for i in 0..policy_count {
+        while !bytes.is_empty() {
+            // let policy_byte = bytes.drain(0..1).next().unwrap();
+            let policy = Policy::from(bytes);
+            // let req_size = bytes.drain(0..1).next().unwrap();
             let requirement = Requirement::from(bytes);
             policies.insert(policy, requirement);
         }

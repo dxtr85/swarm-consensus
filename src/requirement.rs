@@ -38,17 +38,17 @@ impl Requirement {
         }
     }
 
-    pub fn bytes(&self, bytes: &mut Vec<u8>) {
+    pub fn append_bytes_to(&self, bytes: &mut Vec<u8>) {
         match self {
             Self::And(r_l, r_r) => {
                 bytes.push(200);
-                r_l.bytes(bytes);
-                r_r.bytes(bytes)
+                r_l.append_bytes_to(bytes);
+                r_r.append_bytes_to(bytes)
             }
             Self::Or(r_l, r_r) => {
                 bytes.push(100);
-                r_l.bytes(bytes);
-                r_r.bytes(bytes)
+                r_l.append_bytes_to(bytes);
+                r_r.append_bytes_to(bytes)
             }
             Self::Has(_c) => {
                 bytes.push(50);

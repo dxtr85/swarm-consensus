@@ -2125,7 +2125,7 @@ impl Gnome {
                             &mut self.next_state.change_config,
                             ChangeConfig::None,
                         );
-                        println!("Me: {}, c-k: {:?}", self.id, change_config);
+                        // println!("Me: {}, c-k: {:?}", self.id, change_config);
                         match change_config {
                             ChangeConfig::AddBroadcast {
                                 id,
