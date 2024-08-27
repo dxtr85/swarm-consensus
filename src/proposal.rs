@@ -24,8 +24,19 @@ impl Data {
     pub fn bytes(self) -> Vec<u8> {
         self.0
     }
-    pub fn first_byte(&self) -> u8 {
+
+    pub fn ref_bytes(&self) -> &Vec<u8> {
+        &self.0
+    }
+
+     pub fn first_byte(&self) -> u8 {
         self.0[0]
+    }
+    pub fn second_byte(&self) -> u8 {
+        self.0[1]
+    }
+    pub fn third_byte(&self) -> u8 {
+        self.0[2]
     }
     pub fn len(&self) -> usize {
         self.0.len()
