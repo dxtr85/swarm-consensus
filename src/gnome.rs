@@ -1435,7 +1435,12 @@ impl Gnome {
             //     println!("New neighbor proposal");
             // }
             if let Ok(band) = self.band_receiver.try_recv() {
-                available_bandwith = band;
+                if band == 0 {
+                    // print!("R");
+                    self.send_noop_from_a_neighbor();
+                } else {
+                    available_bandwith = band;
+                }
                 // println!("Avail bandwith: {}", available_bandwith);
                 //TODO make use of available_bandwith during multicasting setup
             }
@@ -1573,6 +1578,15 @@ impl Gnome {
             self.fast_neighbors.push(neighbor);
         } else {
             self.new_neighbors.push(neighbor);
+        }
+    }
+    fn send_noop_from_a_neighbor(&self) {
+        if let Some(neighbor) = self.fast_neighbors.first() {
+            neighbor.send_no_op();
+        } else if let Some(neighbor) = self.refreshed_neighbors.first() {
+            neighbor.send_no_op();
+        } else if let Some(neighbor) = self.slow_neighbors.first() {
+            neighbor.send_no_op();
         }
     }
 
