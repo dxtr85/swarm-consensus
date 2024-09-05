@@ -8,8 +8,8 @@ use crate::policy::Policy;
 use crate::requirement::Requirement;
 use crate::Capabilities;
 use crate::CastContent;
+use crate::CastData;
 use crate::CastID;
-use crate::Data;
 use crate::GnomeId;
 use crate::Message;
 use crate::NetworkSettings;
@@ -19,6 +19,7 @@ use crate::Swarm;
 use crate::SwarmID;
 use crate::SwarmTime;
 use crate::SwarmType;
+use crate::SyncData;
 use std::collections::HashMap;
 use std::fmt::Display;
 
@@ -67,7 +68,7 @@ pub struct Neighbor {
     pub requested_data: VecDeque<NeighborResponse>,
     gnome_header: Header,
     gnome_neighborhood: Neighborhood,
-    active_unicasts: HashMap<CastID, Sender<Data>>,
+    active_unicasts: HashMap<CastID, Sender<CastData>>,
     active_broadcasts: HashMap<CastID, Sender<WrappedMessage>>,
     pub available_bandwith: u64,
     pub member_of_swarms: Vec<String>,
@@ -87,14 +88,14 @@ pub enum NeighborRequest {
     SubscribeRequest(bool, CastID),
     CreateNeighbor(GnomeId, String),
     SwarmJoinedInfo(String),
-    AppSyncRequest(u8, Data),
-    CustomRequest(u8, Data),
+    AppSyncRequest(u8, SyncData),
+    CustomRequest(u8, SyncData),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NeighborResponse {
     Listing(u8, Vec<BlockID>),
-    Block(BlockID, Data),
+    Block(BlockID, SyncData),
     Unicast(SwarmID, CastID),
     ForwardConnectResponse(NetworkSettings),
     ForwardConnectFailed,
@@ -120,8 +121,8 @@ pub enum NeighborResponse {
     BroadcastSync(u8, u8, Vec<(CastID, GnomeId)>),
     MulticastSync(u8, u8, Vec<(CastID, GnomeId)>),
     Subscribed(bool, CastID, GnomeId, Option<GnomeId>),
-    AppSync(u8, u16, u16, u16, Data),
-    CustomResponse(u8, Data),
+    AppSync(u8, u16, u16, u16, SyncData),
+    CustomResponse(u8, SyncData),
 }
 
 impl Neighbor {

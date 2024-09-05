@@ -100,7 +100,7 @@ fn gnome_message_exchange() {
     thread::sleep(Duration::from_millis(100));
     let msg_res = resp_receiver.try_recv();
     assert!(msg_res.is_err(), "User received unexpected message!");
-    let _ = req_sender.send(Request::AddData(Data(1)));
+    let _ = req_sender.send(Request::AddData(SyncData(1)));
 
     manager.turn(vec![Some(Message {
         swarm_time: SwarmTime(1),
@@ -143,7 +143,7 @@ fn gnome_message_exchange() {
     let unwrapped = rcvd.unwrap();
     assert_eq!(
         unwrapped,
-        Response::Block(BlockID(1), Data(1)),
+        Response::Block(BlockID(1), SyncData(1)),
         "User received unexpected response!"
     );
 

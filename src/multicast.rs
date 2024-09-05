@@ -3,7 +3,7 @@ use std::{
     sync::mpsc::{Receiver, Sender},
 };
 
-use crate::{CastID, Data, GnomeId, NeighborRequest, NeighborResponse, WrappedMessage};
+use crate::{CastData, CastID, GnomeId, NeighborRequest, NeighborResponse, WrappedMessage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CastType {
@@ -14,7 +14,7 @@ pub enum CastType {
 
 #[derive(Clone, Debug)]
 pub enum CastContent {
-    Data(Data),
+    Data(CastData),
     Request(NeighborRequest),
     Response(NeighborResponse),
 }
@@ -37,7 +37,7 @@ impl CastMessage {
     pub fn id(&self) -> CastID {
         self.id
     }
-    pub fn get_data(self) -> Option<Data> {
+    pub fn get_data(self) -> Option<CastData> {
         if let CastContent::Data(dat) = self.content {
             Some(dat)
         } else {
@@ -58,7 +58,7 @@ impl CastMessage {
             None
         }
     }
-    pub fn new_unicast(id: CastID, data: Data) -> Self {
+    pub fn new_unicast(id: CastID, data: CastData) -> Self {
         CastMessage {
             c_type: CastType::Unicast,
             id,
@@ -79,14 +79,14 @@ impl CastMessage {
             content: CastContent::Response(neighbor_response),
         }
     }
-    pub fn new_multicast(id: CastID, data: Data) -> Self {
+    pub fn new_multicast(id: CastID, data: CastData) -> Self {
         CastMessage {
             c_type: CastType::Multicast,
             id,
             content: CastContent::Data(data),
         }
     }
-    pub fn new_broadcast(id: CastID, data: Data) -> Self {
+    pub fn new_broadcast(id: CastID, data: CastData) -> Self {
         CastMessage {
             c_type: CastType::Broadcast,
             id,
@@ -109,7 +109,7 @@ pub struct Multicast {
     source: (GnomeId, Receiver<WrappedMessage>),
     alt_sources: Vec<GnomeId>,
     subscribers: HashMap<GnomeId, Sender<WrappedMessage>>,
-    to_user: Option<Sender<Data>>,
+    to_user: Option<Sender<CastData>>,
 }
 
 impl Multicast {
@@ -118,7 +118,7 @@ impl Multicast {
         source: (GnomeId, Receiver<WrappedMessage>),
         alt_sources: Vec<GnomeId>,
         subscribers: HashMap<GnomeId, Sender<WrappedMessage>>,
-        to_user: Option<Sender<Data>>,
+        to_user: Option<Sender<CastData>>,
     ) -> Self {
         Self {
             origin,

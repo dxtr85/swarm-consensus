@@ -22,13 +22,14 @@ pub use crate::swarm::Swarm;
 pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmTime;
 pub use crate::swarm::SwarmType;
+pub use data::CastData;
+pub use data::SyncData;
 pub use gnome_to_manager::GnomeToManager;
 pub use manager_to_gnome::ManagerToGnome;
 pub use message::BlockID;
 pub use message::Configuration;
 pub use message::{Header, Message, Payload, Signature, WrappedMessage};
 pub use neighbor::NeighborRequest;
-pub use proposal::Data;
 use std::net::IpAddr;
 mod neighbor;
 pub use crate::neighbor::Neighbor;
@@ -36,8 +37,8 @@ pub use crate::neighbor::NeighborResponse;
 pub use crate::neighbor::Neighborhood;
 pub use multicast::CastContent;
 pub use multicast::CastMessage;
+mod data;
 mod next_state;
-mod proposal;
 use crate::next_state::NextState;
 use std::fmt;
 use std::sync::mpsc::Receiver;
@@ -56,7 +57,7 @@ const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
 #[derive(Debug)]
 pub enum Request {
     UpdateAppRootHash(u64),
-    AddData(Data),
+    AddData(SyncData),
     AddNeighbor(Neighbor),
     DropNeighbor(GnomeId),
     ListNeighbors,
@@ -67,7 +68,7 @@ pub enum Request {
     StartUnicast(GnomeId),
     StartMulticast(Vec<GnomeId>),
     StartBroadcast,
-    Custom(u8, Data),
+    Custom(u8, SyncData),
     NetworkSettingsUpdate(bool, IpAddr, u16, Nat),
     SwarmNeighbors(String),
     // SetAddress(IpAddr),
@@ -80,21 +81,21 @@ pub struct CastID(pub u8);
 
 pub enum Response {
     AppDataSynced(bool),
-    AppSync(u8, u16, u16, u16, Data),
-    AppSyncInquiry(GnomeId, u8, Data),
-    Block(BlockID, Data),
+    AppSync(u8, u16, u16, u16, SyncData),
+    AppSyncInquiry(GnomeId, u8, SyncData),
+    Block(BlockID, SyncData),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(Vec<BlockID>),
-    UnicastOrigin(SwarmID, CastID, Sender<Data>),
-    Unicast(SwarmID, CastID, Receiver<Data>),
-    MulticastOrigin(SwarmID, CastID, Sender<Data>),
-    Multicast(SwarmID, CastID, Receiver<Data>),
-    BroadcastOrigin(SwarmID, CastID, Sender<Data>),
-    Broadcast(SwarmID, CastID, Receiver<Data>),
+    UnicastOrigin(SwarmID, CastID, Sender<CastData>),
+    Unicast(SwarmID, CastID, Receiver<CastData>),
+    MulticastOrigin(SwarmID, CastID, Sender<SyncData>),
+    Multicast(SwarmID, CastID, Receiver<CastData>),
+    BroadcastOrigin(SwarmID, CastID, Sender<CastData>),
+    Broadcast(SwarmID, CastID, Receiver<CastData>),
     Neighbors(String, Vec<GnomeId>),
     NewNeighbor(String, Neighbor),
     ToGnome(NeighborResponse),
-    Custom(u8, Data),
+    Custom(u8, SyncData),
 }
 
 impl fmt::Debug for Response {

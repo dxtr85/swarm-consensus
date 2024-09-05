@@ -12,8 +12,8 @@ use crate::neighbor::NeighborResponse;
 use crate::neighbor::Neighborhood;
 use crate::next_state::ChangeConfig;
 use crate::swarm::Swarm;
+use crate::CastData;
 use crate::CastID;
-use crate::Data;
 use crate::KeyRegistry;
 use crate::Message;
 use crate::Neighbor;
@@ -22,6 +22,7 @@ use crate::NextState;
 use crate::Request;
 use crate::Response;
 use crate::SwarmTime;
+use crate::SyncData;
 use crate::WrappedMessage;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
 use crate::DEFAULT_SWARM_DIAMETER;
@@ -224,7 +225,7 @@ struct ConnRequest {
 }
 #[derive(Clone)]
 enum Proposal {
-    Block(BlockID, Data),
+    Block(BlockID, SyncData),
     Config(Configuration),
 }
 impl Proposal {
@@ -274,7 +275,7 @@ impl Proposal {
                     Signature::Regular(gnome_id, signature_b)
                 };
 
-                let data = Data::new(bytes).unwrap();
+                let data = SyncData::new(bytes).unwrap();
                 (Header::Block(b_id), Payload::Block(b_id, signature, data))
             }
             Self::Config(config) => {
@@ -328,7 +329,7 @@ pub struct Gnome {
     neighbor_discovery: NeighborDiscovery,
     chill_out: (bool, Instant),
     chill_out_max: Duration,
-    data_converters: HashMap<(CastType, CastID), (Receiver<Data>, Sender<WrappedMessage>)>,
+    data_converters: HashMap<(CastType, CastID), (Receiver<CastData>, Sender<WrappedMessage>)>,
     sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
 }
 
@@ -2433,8 +2434,10 @@ impl Gnome {
     fn send_app_data_sync_request(&mut self) {
         // TODO
         if let Some(gnome_id) = self.neighbor_with_enough_bandwith(1024) {
-            let _ = self
-                .send_neighbor_request(gnome_id, NeighborRequest::AppSyncRequest(0, Data::empty()));
+            let _ = self.send_neighbor_request(
+                gnome_id,
+                NeighborRequest::AppSyncRequest(0, SyncData::empty()),
+            );
         }
     }
 
@@ -2888,7 +2891,7 @@ impl Gnome {
         &mut self,
         id: CastID,
         // b_cast: Multicast,
-        recv_d: Receiver<Data>,
+        recv_d: Receiver<CastData>,
         send_n: Sender<WrappedMessage>,
     ) {
         self.data_converters
@@ -2899,7 +2902,7 @@ impl Gnome {
         &mut self,
         id: CastID,
         // b_cast: Multicast,
-        recv_d: Receiver<Data>,
+        recv_d: Receiver<CastData>,
         send_n: Sender<WrappedMessage>,
     ) {
         self.data_converters

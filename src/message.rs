@@ -1,5 +1,5 @@
+use crate::data::SyncData;
 use crate::neighbor::Neighborhood;
-use crate::proposal::Data;
 // use crate::swarm::PubKey;
 use crate::CastID;
 use crate::CastMessage;
@@ -48,7 +48,7 @@ pub enum Payload {
     KeepAlive(u64),
     Bye,
     Reconfigure(Signature, Configuration),
-    Block(BlockID, Signature, Data),
+    Block(BlockID, Signature, SyncData),
     // Request(NeighborRequest),
     // Response(NeighborResponse),
     // Unicast(CastID, Data),
@@ -89,7 +89,7 @@ impl Payload {
     pub fn has_data(&self) -> bool {
         matches!(self, Payload::Block(_b, _sign, _d))
     }
-    pub fn id_and_data(self) -> Option<(BlockID, Data)> {
+    pub fn id_and_data(self) -> Option<(BlockID, SyncData)> {
         match self {
             Payload::Block(id, _sign, data) => Some((id, data)),
             // Payload::Unicast(_id, data) => Some(data),
@@ -391,7 +391,7 @@ impl Message {
             let conf = Configuration::from_bytes(bytes);
             self.payload = Payload::Reconfigure(signature, conf);
         } else if let Some((signature, bytes)) = sign_bytes_opt {
-            let data = Data::new(bytes).unwrap();
+            let data = SyncData::new(bytes).unwrap();
             let block_id = data.get_block_id();
             self.payload = Payload::Block(block_id, signature, data);
         } else {
@@ -428,7 +428,7 @@ impl Message {
             payload: Payload::Block(
                 BlockID(0),
                 Signature::Regular(GnomeId(0), vec![]),
-                Data::empty(),
+                SyncData::empty(),
             ),
         }
     }
