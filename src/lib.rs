@@ -95,6 +95,7 @@ pub enum Response {
     Neighbors(String, Vec<GnomeId>),
     NewNeighbor(String, Neighbor),
     ToGnome(NeighborResponse),
+    BCastData(CastID, CastData),
     Custom(u8, SyncData),
 }
 
@@ -112,6 +113,9 @@ impl fmt::Debug for Response {
             }
             Response::Block(prop_id, data) => {
                 write!(f, "{:?} {}", prop_id, data)
+            }
+            Response::BCastData(c_id, c_data) => {
+                write!(f, "BCastData {} (len: {})", c_id.0, c_data.len())
             }
             Response::DataInquiry(gnome_id, data_id) => {
                 write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)

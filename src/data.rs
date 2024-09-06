@@ -36,7 +36,13 @@ impl SyncData {
     pub fn new(contents: Vec<u8>) -> Result<Self, Vec<u8>> {
         // println!("new data: {:?}", contents);
         // if contents.len() > 1024 {
-        if contents.len() > 1168 {
+        // 42 bytes for IP/UPD headers
+        // 6 bytes (1 + 1 + 4 SwarmTime) Sync headers
+        // 256 bytes for signature
+        // 8 bytes for GnomeId (in signature TODO: rework)
+        // + 1168
+        // = 1480 (20 bytes buffer for optional headers)
+        if contents.len() > 1164 {
             return Err(contents);
         }
         // // Prefix is for later storing SwarmTime value before sign/verify
