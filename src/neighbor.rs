@@ -73,7 +73,7 @@ pub struct Neighbor {
     pub available_bandwith: u64,
     pub member_of_swarms: Vec<String>,
     timeouts: [u8; 8],
-    // pub pub_key_pem: String,
+    pub new_message_recieved: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,7 +166,7 @@ impl Neighbor {
             available_bandwith: 1024,
             member_of_swarms,
             timeouts: [0; 8],
-            // pub_key_pem,
+            new_message_recieved: false,
         }
     }
     pub fn get_shared_sender(
@@ -215,7 +215,7 @@ impl Neighbor {
             self.payload = response.payload.clone();
             self.neighborhood = response.neighborhood;
             self.swarm_time = response.swarm_time;
-
+            self.new_message_recieved = true;
             return Some(response);
         }
         None
@@ -396,14 +396,15 @@ impl Neighbor {
         ) = self.receiver.try_recv()
         {
             println!("{}  <  {}", self.id, message);
-            // if message.is_cast() {
-            //     println!("Unserved casting 1");
-            //     // self.send_casting(message.clone());
-            //     continue;
-            // }
+
+            if message.swarm_time.0 < last_accepted_message.swarm_time.0 {
+                println!("Old message, ignoring");
+                continue;
+            }
             if message.header == last_accepted_message.header
-                && message.neighborhood == Neighborhood(7)
-            // && message.payload == last_accepted_message.payload
+                && message.swarm_time.0 - last_accepted_message.swarm_time.0 <= 2
+                && message.neighborhood.0 as u32 >= self.swarm_diameter.0
+            // && message.neighborhood == Neighborhood(7)
             {
                 println!("Ignoring: {}", message);
                 if let Payload::KeepAlive(avail_bandwith) = message.payload {
@@ -413,6 +414,7 @@ impl Neighbor {
                 // self.round_start = message.swarm_time;
                 continue;
             }
+
             message_recvd = true;
             // if let Some(config) = last_accepted_reconf {
             //     if message.header == Header::Reconfigure
@@ -444,6 +446,7 @@ impl Neighbor {
                 let (signature, mut bytes) = sign_bytes_opt.unwrap();
                 if !self.verify_payload(self.round_start, swarm, &signature, &mut bytes) {
                     println!("Verification failed");
+                    // TODO: maybe it's too drastic of a measure?
                     drop_me = true;
                     return (message_recvd, false, new_proposal, drop_me);
                 } else {
@@ -475,6 +478,7 @@ impl Neighbor {
                 // }
             }
             sanity_passed = true;
+            self.new_message_recieved = true;
             self.swarm_time = swarm_time;
             match header {
                 Header::Sync => {
@@ -520,7 +524,6 @@ impl Neighbor {
                     // println!("Neighbor proposal recv: {:?}", id);
                     if let Header::Block(current_id) = self.header {
                         force_break = true;
-                        self.neighborhood = neighborhood;
                         if current_id == id {
                             self.prev_neighborhood = Some(self.neighborhood);
                             // if neighborhood.0 as u32 >= self.swarm_diameter.0 {
@@ -530,6 +533,7 @@ impl Neighbor {
                             self.prev_neighborhood = None;
                             self.header = header;
                         }
+                        self.neighborhood = neighborhood;
                     } else {
                         self.header = header;
                         new_proposal = true;
@@ -829,17 +833,19 @@ impl Neighbor {
                 //     "{} current: {:?} <= new: {:?}",
                 //     swarm_time, self.neighborhood, neighborhood
                 // );
-                self.neighborhood.0 <= neighborhood.0
+                // self.neighborhood.0 < neighborhood.0
+                true
             };
             if !hood_increased {
                 println!(
-                    "fail hood_increased {:?} {} {} ",
-                    self.prev_neighborhood, self.neighborhood, neighborhood
+                    "{} fail hood_increased prev:{:?} curr:{} recv:{} ",
+                    swarm_time, self.prev_neighborhood, self.neighborhood, neighborhood
                 );
             }
             if !hood_inc_limited {
                 println!(
-                    "fail hood_inc_limited   {} <= {}",
+                    "{} fail hood_inc_limited neighbor {} <= {} gnome",
+                    swarm_time,
                     neighborhood.0,
                     self.gnome_neighborhood.0 + 1
                 );

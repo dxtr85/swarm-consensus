@@ -66,6 +66,7 @@ pub struct NextState {
     pub last_accepted_message: Message,
     pub payload: Payload,
     all_neighbors_same_header: bool,
+    turn_update_with_a_message: bool,
 }
 
 impl NextState {
@@ -83,10 +84,28 @@ impl NextState {
             all_neighbors_same_header: true,
             last_accepted_message: Message::block(),
             payload: Payload::KeepAlive(1024),
+            turn_update_with_a_message: false,
         }
     }
 
-    pub fn update(&mut self, neighbor: &Neighbor) {
+    // TODO: I have to redesign this barely functioning logic,
+    // but I am not yet ready to do so - don't know how.
+    //
+    // We have a lot of stuff going on here:
+    // - neighbors come and go
+    // - there is local neighbor state
+    // - there is our gnome's state
+    // - and there are incoming messages from neighbors that can come out of order
+    //   or not at all
+    //
+    // We should only update from a neighbor if he has a new message: DONE
+    // We should not increase Neighborhood if no message was received this turn: DONE?
+    pub fn update(&mut self, neighbor: &mut Neighbor) {
+        if !neighbor.new_message_recieved {
+            return;
+        }
+        self.turn_update_with_a_message = true;
+        neighbor.new_message_recieved = false;
         // println!("Update {:?}", neighbor);
         let neighbor_st = neighbor.swarm_time;
 
@@ -178,6 +197,18 @@ impl NextState {
         // println!("Po wszystkim: {} {}", self.block_id, self.data);
     }
 
+    // fn next_swarm_time(&mut self) {
+    //     let old_prev_st = self.prev_swarm_time;
+    //     self.prev_swarm_time = self.swarm_time;
+    //     self.swarm_time = if self.swarm_time.0 == u32::MAX {
+    //         SwarmTime(0)
+    //     } else if old_prev_st == self.prev_swarm_time {
+    //         self.swarm_time.inc()
+    //     } else {
+    //         self.swarm_time
+    //     };
+    //     self.swarm_time_max = self.swarm_time.inc();
+    // }
     fn next_swarm_time(&mut self) {
         self.swarm_time = if self.swarm_time.0 == u32::MAX {
             SwarmTime(0)
@@ -189,22 +220,36 @@ impl NextState {
 
     // pub fn next_params(&self) -> (SwarmTime, Neighborhood, BlockID, Data) {
     pub fn next_params(&self) -> (SwarmTime, Neighborhood, Header, Payload) {
+        // if self.all_neighbors_same_header {
+        // println!("next_params 1 {}", self.swarm_time);
+        (
+            self.swarm_time.inc(),
+            self.get_next_nhood(),
+            self.header,
+            self.payload.clone(),
+        )
+        // } else {
+        //     // println!("next_params 2 {}", self.swarm_time);
+        //     (
+        //         self.swarm_time.inc(),
+        //         self.neighborhood,
+        //         self.header,
+        //         self.payload.clone(),
+        //     )
+        // }
+    }
+
+    fn get_next_nhood(&self) -> Neighborhood {
         if self.all_neighbors_same_header {
-            // println!("next_params 1 {}", self.swarm_time);
-            (
-                self.swarm_time.inc(),
-                self.neighborhood.inc(),
-                self.header,
-                self.payload.clone(),
-            )
+            if self.turn_update_with_a_message {
+                //     print!(">inc<");
+                self.neighborhood.inc()
+            } else {
+                //     print!(">no inc<");
+                self.neighborhood
+            }
         } else {
-            // println!("next_params 2 {}", self.swarm_time);
-            (
-                self.swarm_time.inc(),
-                self.neighborhood,
-                self.header,
-                self.payload.clone(),
-            )
+            self.neighborhood
         }
     }
 
@@ -212,6 +257,7 @@ impl NextState {
     pub fn reset_for_next_turn(&mut self, new_round: bool, header: Header, payload: Payload) {
         // println!("reset {}", self.swarm_time);
         self.next_swarm_time();
+        self.turn_update_with_a_message = false;
         // self.block_id = block_id;
         // self.data = data;
         self.header = header;

@@ -1494,12 +1494,12 @@ impl Gnome {
                 // } else
                 if self.chill_out.1.elapsed() >= self.chill_out_max {
                     // If self.chill_out.1 reaches 0 self._chill_out.0 =false and it's time to work.
-                    println!(
-                        "Chill out is over fast:{}, slow:{}, refr:{}",
-                        self.fast_neighbors.len(),
-                        self.slow_neighbors.len(),
-                        self.refreshed_neighbors.len()
-                    );
+                    // println!(
+                    //     "Chill out is over fast:{}, slow:{}, refr:{}",
+                    //     self.fast_neighbors.len(),
+                    //     self.slow_neighbors.len(),
+                    //     self.refreshed_neighbors.len()
+                    // );
                     self.chill_out.0 = false;
                     // When we end chill_out mode, we have to start new timer.
                     // println!("Reset timer");
@@ -1615,18 +1615,20 @@ impl Gnome {
         let keep_alive = message.set_payload(Payload::KeepAlive(available_bandwith));
         for neighbor in &mut self.fast_neighbors {
             if neighbor.header == message.header {
-                // eprintln!("{} >>> {}", self.id, keep_alive);
+                eprintln!("{} >>> {}", self.id, keep_alive);
                 // println!("Sending KA only");
                 neighbor.send_out(keep_alive.clone());
             } else {
-                // eprintln!("{} >>> {}", self.id, message);
+                eprintln!("{} >/> {}", self.id, message);
                 neighbor.send_out(message.clone());
             }
         }
         for neighbor in &mut self.slow_neighbors {
             if neighbor.header == message.header {
+                eprintln!("{} >s> {}", self.id, message);
                 neighbor.send_out(keep_alive.clone());
             } else {
+                eprintln!("{} >S> {}", self.id, message);
                 neighbor.send_out(message.clone());
             }
         }
@@ -1986,10 +1988,20 @@ impl Gnome {
             if sub >= self.swarm_diameter.0 + self.swarm_diameter.0 {
                 println!("Not updating neighborhood when catching up with swarm");
             } else {
+                // if n_neigh.0 > self.neighborhood.0 + 1 {
+                //     println!("too big Neghborhood increase!!!");
+                //     self.neighborhood = self.neighborhood.inc();
+                // } else {
                 self.neighborhood = n_neigh;
+                // }
             }
         } else {
+            // if n_neigh.0 > self.neighborhood.0 + 1 {
+            //     println!("too big Neghborhood increase2!!!");
+            //     self.neighborhood = self.neighborhood.inc();
+            // } else {
             self.neighborhood = n_neigh;
+            // }
         }
         self.swarm_time = n_st;
         // self.block_id = n_bid;
@@ -2240,10 +2252,10 @@ impl Gnome {
                     }
 
                     self.round_start = self.swarm_time;
-                    // println!("New round start: {}", self.round_start);
+                    println!("New round start: {}", self.round_start);
                     // self.next_state.last_accepted_block = self.block_id;
                 } else {
-                    panic!(
+                    println!(
                         "ERROR: Swarm diameter too small or {} was backdated! Rstart:{}",
                         self.header, self.round_start
                     );
@@ -2318,7 +2330,7 @@ impl Gnome {
             } else {
                 // Sync swarm time
                 // self.swarm_time = self.round_start + self.swarm_diameter;
-                // println!("Sync swarm time {}", self.swarm_time);
+                println!("Sync swarm time {}", self.swarm_time);
                 // self.next_state.swarm_time = self.swarm_time;
                 self.round_start = self.swarm_time;
                 self.next_state.last_accepted_message = self.prepare_message();
@@ -2584,7 +2596,7 @@ impl Gnome {
                     if self.round_start.0 == 0 {
                         self.next_state.swarm_time = neighbor.swarm_time;
                     }
-                    self.next_state.update(&neighbor);
+                    self.next_state.update(&mut neighbor);
                 }
             }
             if !drop_me {
@@ -2780,7 +2792,7 @@ impl Gnome {
                     if self.round_start.0 == 0 {
                         self.next_state.swarm_time = neighbor.swarm_time;
                     }
-                    self.next_state.update(&neighbor);
+                    self.next_state.update(&mut neighbor);
                 }
                 if !drop_me {
                     self.refreshed_neighbors.push(neighbor);
