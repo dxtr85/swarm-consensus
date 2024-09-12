@@ -145,8 +145,10 @@ impl Multicast {
         self.subscribers.insert(subscriber.0, subscriber.1);
     }
 
-    pub fn serve(&mut self) {
+    pub fn serve(&mut self) -> bool {
+        let mut any_data_processed = false;
         while let Ok(WrappedMessage::Cast(msg)) = self.source.1.try_recv() {
+            any_data_processed = true;
             // println!("Received a casting msg: {:?}", msg);
             for sender in self.subscribers.values() {
                 // println!("Wrapped send: {:?}", msg);
@@ -156,5 +158,6 @@ impl Multicast {
                 let _ = sender.send(msg.get_data().unwrap());
             }
         }
+        any_data_processed
     }
 }

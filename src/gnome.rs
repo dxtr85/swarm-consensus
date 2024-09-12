@@ -423,9 +423,12 @@ impl Gnome {
         gnome
     }
 
-    fn serve_user_data(&self) {
+    fn serve_user_data(&self) -> bool {
+        let mut any_data_processed = false;
         for ((c_type, c_id), (recv_d, send_m)) in &self.data_converters {
             while let Ok(data) = recv_d.try_recv() {
+                // println!("user data: {:?}",data);
+                any_data_processed = true;
                 let message = match c_type {
                     CastType::Broadcast => {
                         WrappedMessage::Cast(CastMessage::new_broadcast(*c_id, data))
@@ -447,6 +450,7 @@ impl Gnome {
                 // println!("Converted data send result: {:?}", r);
             }
         }
+        any_data_processed
     }
     fn serve_user_requests(&mut self, app_root_hash: &mut u64) -> (bool, bool) {
         let mut new_user_proposal = false;
@@ -653,8 +657,10 @@ impl Gnome {
         }
         (exit_app, new_user_proposal)
     }
-    fn serve_manager_requests(&mut self) {
+    fn serve_manager_requests(&mut self) -> bool {
+        let mut any_data_processed = false;
         while let Ok(request) = self.mgr_receiver.try_recv() {
+            any_data_processed = true;
             match request {
                 ManagerToGnome::ProvideNeighborsToSwarm(swarm_name, neighbor_id) => {
                     //TODO
@@ -685,6 +691,7 @@ impl Gnome {
                 }
             }
         }
+        any_data_processed
     }
     // ongoing requests should be used to track which neighbor is currently selected for
     // making a connection with another neighbor.
@@ -929,10 +936,12 @@ impl Gnome {
     // we also send back a reply to originating neighbor
     //
     // TODO: cover a case when queried neighbor already is connected to origin
-    fn serve_ongoing_requests(&mut self) {
+    fn serve_ongoing_requests(&mut self) -> bool {
+        let mut any_data_processed = false;
         let mut keys_to_remove: Vec<u8> = vec![];
         for (k, v) in &mut self.ongoing_requests {
             if v.response.is_some() {
+                any_data_processed = true;
                 println!("Sending response: {:?}", v.response);
                 let mut response_sent = false;
                 for neighbor in &mut self.fast_neighbors {
@@ -1012,25 +1021,29 @@ impl Gnome {
         for key in keys_to_remove {
             self.ongoing_requests.remove(&key);
         }
+        any_data_processed
     }
 
-    fn serve_neighbors_casts(&mut self) {
+    fn serve_neighbors_casts(&mut self) -> bool {
+        let mut any_data_processed = false;
         for neighbor in &mut self.fast_neighbors {
-            neighbor.try_recv_cast();
+            any_data_processed |= neighbor.try_recv_cast();
         }
         for neighbor in &mut self.slow_neighbors {
-            neighbor.try_recv_cast();
+            any_data_processed |= neighbor.try_recv_cast();
         }
         for neighbor in &mut self.refreshed_neighbors {
-            neighbor.try_recv_cast();
+            any_data_processed |= neighbor.try_recv_cast();
         }
+        any_data_processed
     }
-    fn serve_sync_requests(&mut self, app_sync_hash: u64) {
+    fn serve_sync_requests(&mut self, app_sync_hash: u64) -> bool {
+        let mut any_data_processed = false;
         // TODO: in order to function we need to always have
         //       actual value of app_sync_hash at hand
         //       this should be provided by Manager and stored by Gnome or better Swarm
         if self.new_neighbors.is_empty() {
-            return;
+            any_data_processed;
         }
         let message = self.prepare_message();
         let mut processed_neighbors = vec![];
@@ -1048,6 +1061,7 @@ impl Gnome {
                 _app_sync_hash,
             )) = neighbor.requests.pop_back()
             {
+                any_data_processed = true;
                 neighbor.swarm_time = message.swarm_time;
                 self.send_sync_responses(
                     app_sync_hash,
@@ -1067,7 +1081,9 @@ impl Gnome {
             }
         }
         self.new_neighbors = processed_neighbors;
+        any_data_processed
     }
+
     fn send_sync_responses(
         &self,
         app_sync_hash: u64,
@@ -1179,7 +1195,8 @@ impl Gnome {
         // self.refreshed_neighbors.push(neighbor);
     }
 
-    fn serve_neighbors_requests(&mut self, app_sync_hash: u64, refreshed: bool) {
+    fn serve_neighbors_requests(&mut self, app_sync_hash: u64, refreshed: bool) -> bool {
+        let mut any_data_processed = false;
         let mut neighbors = if refreshed {
             std::mem::take(&mut self.refreshed_neighbors)
         } else {
@@ -1189,6 +1206,7 @@ impl Gnome {
         let mut pending_ongoing_requests = vec![];
         for neighbor in &mut neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
+                any_data_processed = true;
                 // println!("Some neighbor request! {:?}", request);
                 // println!("Some neighbor request!");
                 match request {
@@ -1347,6 +1365,7 @@ impl Gnome {
         //             .send(Response::DataInquiry(neighbor.id, request));
         //     }
         // }
+        any_data_processed
     }
 
     // fn start_new_timer(
@@ -1410,16 +1429,56 @@ impl Gnome {
         self.timeout_duration = Duration::from_secs(16);
         // let mut _guard = self.start_new_timer(Duration::from_secs(16), timer_sender.clone(), None);
 
+        // A gnome's gotta sleep
+        let min_sleep_nsec: u64 = 1 << 7; //128nsec min
+        let max_sleep_nsec: u64 = 1 << 26; //~64msec max
+        let mut sleep_nsec: u64 = 1 << 25;
+        // set was_loop_iteration_busy  to true if:
+        // - we received a Sync message
+        // - we received a Cast message (incl. Neighbor Req/Res)
+        // - we received a ManagerRequest
+        // - user has sent us a request
+        // - we sent a Cast message
+        let mut was_loop_iteration_busy;
         loop {
+            was_loop_iteration_busy = false;
+            let sleep_time = Duration::from_nanos(sleep_nsec);
+            // println!("Sleeping for: {:?}", sleep_time);
+            std::thread::sleep(sleep_time);
+            // println!("Sleep is over");
             let (exit_app, new_user_proposal) = self.serve_user_requests(&mut app_sync_hash);
-            self.serve_user_data();
-            self.serve_manager_requests();
-            self.serve_sync_requests(app_sync_hash);
-            self.serve_neighbors_requests(app_sync_hash, true);
-            self.serve_neighbors_requests(app_sync_hash, false);
-            self.serve_ongoing_requests();
-            self.serve_neighbors_casts();
-            self.swarm.serve_casts();
+            was_loop_iteration_busy |= self.serve_user_data();
+            // if was_loop_iteration_busy {
+            //     println!("1");
+            // }
+            was_loop_iteration_busy |= self.serve_manager_requests();
+            // if was_loop_iteration_busy {
+            //     println!("2");
+            // }
+            was_loop_iteration_busy |= self.serve_sync_requests(app_sync_hash);
+            // if was_loop_iteration_busy {
+            //     println!("3");
+            // }
+            was_loop_iteration_busy |= self.serve_neighbors_requests(app_sync_hash, true);
+            // if was_loop_iteration_busy {
+            //     println!("4");
+            // }
+            was_loop_iteration_busy |= self.serve_neighbors_requests(app_sync_hash, false);
+            // if was_loop_iteration_busy {
+            //     println!("5");
+            // }
+            was_loop_iteration_busy |= self.serve_ongoing_requests();
+            // if was_loop_iteration_busy {
+            //     println!("6");
+            // }
+            was_loop_iteration_busy |= self.serve_neighbors_casts();
+            // if was_loop_iteration_busy {
+            //     println!("7");
+            // }
+            was_loop_iteration_busy |= self.swarm.serve_casts();
+            // if was_loop_iteration_busy {
+            //     println!("8");
+            // }
             // let refr_new_proposal = self.try_recv_refreshed();
             // print!(
             //     "F:{}s:{},r:{},n:{}",
@@ -1428,13 +1487,30 @@ impl Gnome {
             //     self.refreshed_neighbors.len(),
             //     self.new_neighbors.len()
             // );
-            let (_have_responsive_neighbors, slow_advance_to_next_turn, slow_new_proposal) =
-                self.try_recv(app_sync_hash, false);
-            let (have_responsive_neighbors, fast_advance_to_next_turn, fast_new_proposal) =
-                self.try_recv(app_sync_hash, true);
-            // if fast_new_proposal || slow_new_proposal {
-            //     println!("New neighbor proposal");
+            let (
+                _have_responsive_neighbors,
+                slow_advance_to_next_turn,
+                slow_new_proposal,
+                slow_any_data_processed,
+            ) = self.try_recv(app_sync_hash, false);
+            was_loop_iteration_busy |= slow_any_data_processed;
+            // if was_loop_iteration_busy {
+            //     println!("9");
             // }
+            let (
+                have_responsive_neighbors,
+                fast_advance_to_next_turn,
+                fast_new_proposal,
+                fast_any_data_processed,
+            ) = self.try_recv(app_sync_hash, true);
+            was_loop_iteration_busy |= fast_any_data_processed;
+            // if was_loop_iteration_busy {
+            //     println!("10");
+            // }
+
+            // We have to send NoOp every 128msec in order to
+            // trigger token admission on socket side
+            // That is why we can not sleep for longer than 128msec
             if let Ok(band) = self.band_receiver.try_recv() {
                 if band == 0 {
                     // print!("R");
@@ -1506,14 +1582,27 @@ impl Gnome {
                     self.send_immediate = true;
                     timer = Instant::now();
                     self.timeout_duration = Duration::from_millis(500);
-                    // _guard = self.start_new_timer(
-                    //     self.timeout_duration,
-                    //     timer_sender.clone(),
-                    //     Some(_guard),
-                    // );
-                    // continue;
-                    // println!("ela1 {:?}", timer.elapsed());
+                // _guard = self.start_new_timer(
+                //     self.timeout_duration,
+                //     timer_sender.clone(),
+                //     Some(_guard),
+                // );
+                // continue;
+                // println!("ela1 {:?}", timer.elapsed());
                 } else {
+                    if was_loop_iteration_busy {
+                        // print!("d ");
+                        sleep_nsec >>= 2;
+                        if sleep_nsec < min_sleep_nsec {
+                            sleep_nsec = min_sleep_nsec;
+                        }
+                    } else {
+                        sleep_nsec <<= 1;
+                        // print!("i ");
+                        if sleep_nsec > max_sleep_nsec {
+                            sleep_nsec = max_sleep_nsec;
+                        }
+                    }
                     continue;
                 }
                 // println!("ela2 {:?}", timer.elapsed());
@@ -1562,9 +1651,21 @@ impl Gnome {
             if exit_app {
                 break;
             };
-            // TODO: remove this once chill_out logic is implemented
-            // thread::sleep(Duration::from_millis(250));
-        }
+
+            if was_loop_iteration_busy {
+                sleep_nsec >>= 2;
+                // print!("d ");
+                if sleep_nsec < min_sleep_nsec {
+                    sleep_nsec = min_sleep_nsec;
+                }
+            } else {
+                sleep_nsec <<= 1;
+                // print!("i ");
+                if sleep_nsec > max_sleep_nsec {
+                    sleep_nsec = max_sleep_nsec;
+                }
+            }
+        } //loop
     }
 
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
@@ -2608,14 +2709,15 @@ impl Gnome {
         new_proposal_received
     }
 
-    fn try_recv(&mut self, app_sync_hash: u64, fast: bool) -> (bool, bool, bool) {
+    fn try_recv(&mut self, app_sync_hash: u64, fast: bool) -> (bool, bool, bool, bool) {
+        let mut any_data_processed = false;
         let n_len = if fast {
             self.fast_neighbors.len()
         } else {
             self.slow_neighbors.len()
         };
         if n_len == 0 {
-            return (false, false, false);
+            return (false, false, false, any_data_processed);
         }
         let mut looped = false;
         let mut new_proposal_received = false;
@@ -2633,6 +2735,7 @@ impl Gnome {
         for mut neighbor in loop_neighbors {
             looped = true;
             while let Some(response) = neighbor.user_responses.pop_back() {
+                any_data_processed = true;
                 match response {
                     Response::ToGnome(neighbor_response) => match neighbor_response {
                         NeighborResponse::ConnectResponse(id, net_set) => {
@@ -2787,6 +2890,7 @@ impl Gnome {
             }
             if served {
                 // println!("Served!");
+                any_data_processed = true;
                 if sanity_passed {
                     //TODO: this is wacky
                     if self.round_start.0 == 0 {
@@ -2816,7 +2920,12 @@ impl Gnome {
         let have_responsive_neighbors = !refreshed_empty || !fast_empty;
         if refreshed_empty && fast_empty && slow_empty {
             println!("Can not advance with no neighbors around");
-            (have_responsive_neighbors, false, new_proposal_received)
+            (
+                have_responsive_neighbors,
+                false,
+                new_proposal_received,
+                any_data_processed,
+            )
         } else {
             let advance_to_next_turn = if fast {
                 fast_empty && looped || new_proposal_received
@@ -2830,6 +2939,7 @@ impl Gnome {
                 have_responsive_neighbors,
                 advance_to_next_turn,
                 new_proposal_received,
+                any_data_processed,
             )
         }
     }

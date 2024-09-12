@@ -298,8 +298,10 @@ impl Neighbor {
         Err("Unexpected Cast message during SwarmSync".to_string())
     }
 
-    pub fn try_recv_cast(&mut self) {
+    pub fn try_recv_cast(&mut self) -> bool {
+        let mut any_data_processed = false;
         while let Ok(c_msg @ CastMessage { c_type, id, .. }) = self.cast_receiver.try_recv() {
+            any_data_processed = true;
             match c_type {
                 CastType::Broadcast => {
                     if let Some(sender) = self.active_broadcasts.get(&id) {
@@ -338,6 +340,7 @@ impl Neighbor {
                 }
             }
         }
+        any_data_processed
     }
 
     fn verify_payload(

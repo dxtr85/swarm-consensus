@@ -265,9 +265,11 @@ impl Swarm {
         }
     }
 
-    pub fn serve_casts(&mut self) {
-        self.serve_broadcasts();
+    pub fn serve_casts(&mut self) -> bool {
+        let mut any_data_processed = false;
+        any_data_processed |= self.serve_broadcasts();
         // self.serve_unicasts();
+        any_data_processed
     }
 
     pub fn broadcasts_count(&self) -> u8 {
@@ -454,10 +456,12 @@ impl Swarm {
         }
     }
 
-    fn serve_broadcasts(&mut self) {
+    fn serve_broadcasts(&mut self) -> bool {
+        let mut any_data_processed = false;
         for bcast in self.active_broadcasts.values_mut() {
-            bcast.serve();
+            any_data_processed |= bcast.serve();
         }
+        any_data_processed
     }
     // fn serve_unicasts(&mut self) {
     //     for (c_id, c_recv) in self.active_unicasts.items() {
