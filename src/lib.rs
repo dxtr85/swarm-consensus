@@ -1,6 +1,7 @@
 mod capabilities;
 mod gnome;
 mod gnome_to_manager;
+mod internal;
 mod key_registry;
 mod manager_to_gnome;
 mod policy;
@@ -16,6 +17,8 @@ pub use crate::gnome::Nat;
 pub use crate::gnome::NetworkSettings;
 pub use crate::gnome::PortAllocationRule;
 pub use crate::key_registry::KeyRegistry;
+pub use crate::neighbor::SwarmSyncRequestParams;
+pub use crate::neighbor::SwarmSyncResponse;
 pub use crate::policy::Policy;
 pub use crate::requirement::Requirement;
 pub use crate::swarm::Swarm;
@@ -55,7 +58,7 @@ const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
 // const MAX_PAYLOAD_SIZE: u32 = 1024;
 
 #[derive(Debug)]
-pub enum Request {
+pub enum ToGnome {
     UpdateAppRootHash(u64),
     AddData(SyncData),
     AddNeighbor(Neighbor),
@@ -79,9 +82,9 @@ pub enum Request {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub struct CastID(pub u8);
 
-pub enum Response {
+pub enum GnomeToApp {
     AppDataSynced(bool),
-    AppSync(u8, u16, u16, u16, SyncData),
+    AppSync(u8, u8, u16, u16, u16, SyncData),
     AppSyncInquiry(GnomeId, u8, SyncData),
     Block(BlockID, SyncData),
     DataInquiry(GnomeId, NeighborRequest),
@@ -96,61 +99,61 @@ pub enum Response {
     NewNeighbor(String, Neighbor),
     ToGnome(NeighborResponse),
     BCastData(CastID, CastData),
-    Custom(u8, SyncData),
+    Custom(u8, CastData),
 }
 
-impl fmt::Debug for Response {
+impl fmt::Debug for GnomeToApp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Response::AppDataSynced(is_synced) => {
+            GnomeToApp::AppDataSynced(is_synced) => {
                 write!(f, "AppDataSynced: {}", is_synced)
             }
-            Response::AppSync(_type, c_id, part_no, total, _data) => {
+            GnomeToApp::AppSync(_s_type, _d_type, c_id, part_no, total, _data) => {
                 write!(f, "AppSync[{}, {}/{}]", c_id, part_no, total)
             }
-            Response::AppSyncInquiry(_g_id, s_type, _data) => {
+            GnomeToApp::AppSyncInquiry(_g_id, s_type, _data) => {
                 write!(f, "AppSync[{}]", s_type)
             }
-            Response::Block(prop_id, data) => {
+            GnomeToApp::Block(prop_id, data) => {
                 write!(f, "{:?} {}", prop_id, data)
             }
-            Response::BCastData(c_id, c_data) => {
+            GnomeToApp::BCastData(c_id, c_data) => {
                 write!(f, "BCastData {} (len: {})", c_id.0, c_data.len())
             }
-            Response::DataInquiry(gnome_id, data_id) => {
+            GnomeToApp::DataInquiry(gnome_id, data_id) => {
                 write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)
             }
-            Response::Listing(data) => {
+            GnomeToApp::Listing(data) => {
                 write!(f, "Listing with {:?} entries", data.len())
             }
-            Response::Unicast(_sid, _cid, _rdata) => {
+            GnomeToApp::Unicast(_sid, _cid, _rdata) => {
                 write!(f, "Unicast {:?}", _cid)
             }
-            Response::UnicastOrigin(_sid, _cid, _sdata) => {
+            GnomeToApp::UnicastOrigin(_sid, _cid, _sdata) => {
                 write!(f, "Unicast source {:?}", _cid)
             }
-            Response::Multicast(_sid, _cid, _rdata) => {
+            GnomeToApp::Multicast(_sid, _cid, _rdata) => {
                 write!(f, "Multicast {:?}", _cid)
             }
-            Response::MulticastOrigin(_sid, _cid, _sdata) => {
+            GnomeToApp::MulticastOrigin(_sid, _cid, _sdata) => {
                 write!(f, "Multicast source {:?}", _cid)
             }
-            Response::Neighbors(_sid, _nid) => {
+            GnomeToApp::Neighbors(_sid, _nid) => {
                 write!(f, "Neighbors: {:?}", _nid)
             }
-            Response::NewNeighbor(sname, n) => {
+            GnomeToApp::NewNeighbor(sname, n) => {
                 write!(f, "{} has a new neighbor: {:?}", sname, n.id)
             }
-            Response::Broadcast(_sid, _cid, _rdata) => {
+            GnomeToApp::Broadcast(_sid, _cid, _rdata) => {
                 write!(f, "Broadcast {:?}", _cid)
             }
-            Response::BroadcastOrigin(_sid, _cid, _sdata) => {
+            GnomeToApp::BroadcastOrigin(_sid, _cid, _sdata) => {
                 write!(f, "Broadcast source {:?}", _cid)
             }
-            Response::ToGnome(neighbor_response) => {
+            GnomeToApp::ToGnome(neighbor_response) => {
                 write!(f, "ToGnome: {:?}", neighbor_response)
             }
-            Response::Custom(id, _sdata) => {
+            GnomeToApp::Custom(id, _sdata) => {
                 write!(f, "Custom response {}", id)
             }
         }
@@ -159,7 +162,7 @@ impl fmt::Debug for Response {
 
 pub struct NotificationBundle {
     pub swarm_name: String,
-    pub request_sender: Sender<Request>,
+    pub request_sender: Sender<ToGnome>,
     pub token_sender: Sender<u64>,
     pub network_settings_receiver: Receiver<NetworkSettings>,
 }

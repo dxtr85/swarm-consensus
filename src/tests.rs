@@ -18,7 +18,7 @@ impl TestManager {
     pub fn join_a_swarm(
         swarm_name: &str,
         neighbors_count: u64,
-    ) -> (TestManager, Sender<Request>, Receiver<Response>) {
+    ) -> (TestManager, Sender<ToGnome>, Receiver<GnomeToApp>) {
         let (send, _recv) = channel();
         let mut manager = Manager::new(GnomeId(0), None, send);
         let mut neighbors = Vec::with_capacity(neighbors_count as usize);
@@ -100,7 +100,7 @@ fn gnome_message_exchange() {
     thread::sleep(Duration::from_millis(100));
     let msg_res = resp_receiver.try_recv();
     assert!(msg_res.is_err(), "User received unexpected message!");
-    let _ = req_sender.send(Request::AddData(SyncData(1)));
+    let _ = req_sender.send(ToGnome::AddData(SyncData(1)));
 
     manager.turn(vec![Some(Message {
         swarm_time: SwarmTime(1),
@@ -143,7 +143,7 @@ fn gnome_message_exchange() {
     let unwrapped = rcvd.unwrap();
     assert_eq!(
         unwrapped,
-        Response::Block(BlockID(1), SyncData(1)),
+        GnomeToApp::Block(BlockID(1), SyncData(1)),
         "User received unexpected response!"
     );
 
@@ -164,10 +164,10 @@ fn gnome_message_exchange() {
     let n_request = NeighborRequest::ListingRequest(SwarmTime(0));
     assert_eq!(
         unwrapped,
-        Response::DataInquiry(g_id, n_request),
+        GnomeToApp::DataInquiry(g_id, n_request),
         "User received unexpected inquiry!"
     );
-    let _ = req_sender.send(Request::SendData(
+    let _ = req_sender.send(ToGnome::SendData(
         g_id,
         n_request,
         NeighborResponse::Listing(1, vec![BlockID(1)]),

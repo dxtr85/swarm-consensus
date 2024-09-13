@@ -11,9 +11,9 @@ use crate::CastContent;
 use crate::CastData;
 use crate::CastID;
 use crate::GnomeId;
+use crate::GnomeToApp;
 use crate::Message;
 use crate::NetworkSettings;
-use crate::Response;
 use crate::Signature;
 use crate::Swarm;
 use crate::SwarmID;
@@ -63,7 +63,7 @@ pub struct Neighbor {
     pub header: Header,
     pub payload: Payload,
     pub user_requests: VecDeque<NeighborRequest>,
-    pub user_responses: VecDeque<Response>,
+    pub user_responses: VecDeque<GnomeToApp>,
     pub requests: VecDeque<NeighborRequest>,
     pub requested_data: VecDeque<NeighborResponse>,
     gnome_header: Header,
@@ -77,52 +77,72 @@ pub struct Neighbor {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwarmSyncRequestParams {
+    // bools for:
+    pub sync_key_reg: bool,
+    pub sync_capability: bool,
+    pub sync_policy: bool,
+    pub sync_broadcast: bool,
+    pub sync_multicast: bool,
+    pub app_root_hash: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwarmSyncResponse {
+    pub chill_phase: u16,
+    pub founder: GnomeId,
+    pub swarm_time: SwarmTime,
+    pub swarm_type: SwarmType,
+    pub app_root_hash: u64,
+    pub key_reg_size: u8,                       // KeyRegistry size
+    pub capability_size: u8,                    // Capability size
+    pub policy_size: u8,                        // Policy size
+    pub broadcast_size: u8,                     // Broadcast size
+    pub multicast_size: u8,                     // Multicast size
+    pub more_key_reg_messages: bool,            // is_following Vec complete KeyReg?
+    pub key_reg_pairs: Vec<(GnomeId, Vec<u8>)>, // KeyReg pairs
+}
+//TODO: Move all upper layer Requests Responses into Custom wrap
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NeighborRequest {
-    ListingRequest(SwarmTime),
-    BlockRequest(u8, Box<[BlockID; 128]>),
+    ListingRequest(SwarmTime),             // Custom
+    BlockRequest(u8, Box<[BlockID; 128]>), // Custom
     UnicastRequest(SwarmID, Box<[CastID; 256]>),
     ForwardConnectRequest(NetworkSettings),
     ConnectRequest(u8, GnomeId, NetworkSettings),
-    // bools for: key reg, capability, policy, broadcast, multicast
-    SwarmSyncRequest(bool, bool, bool, bool, bool, u64),
+    SwarmSyncRequest(SwarmSyncRequestParams),
     SubscribeRequest(bool, CastID),
     CreateNeighbor(GnomeId, String),
     SwarmJoinedInfo(String),
-    AppSyncRequest(u8, SyncData),
-    CustomRequest(u8, SyncData),
+    AppSyncRequest(u8, SyncData), // Custom
+    Custom(u8, CastData),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NeighborResponse {
-    Listing(u8, Vec<BlockID>),
-    Block(BlockID, SyncData),
+    Listing(u8, Vec<BlockID>), // Custom
+    Block(BlockID, SyncData),  // Custom
     Unicast(SwarmID, CastID),
     ForwardConnectResponse(NetworkSettings),
     ForwardConnectFailed,
     ConnectResponse(u8, NetworkSettings),
     AlreadyConnected(u8),
-    SwarmSync(
-        u16,
-        GnomeId,
-        SwarmTime,
-        SwarmType,
-        u64,
-        u8,                      // KeyRegistry size
-        u8,                      // Capability size
-        u8,                      // Policy size
-        u8,                      // Broadcast size
-        u8,                      // Multicast size
-        bool,                    // is_following Vec complete KeyReg?
-        Vec<(GnomeId, Vec<u8>)>, // KeyReg pairs
-    ),
+    SwarmSync(SwarmSyncResponse),
     KeyRegistrySync(u8, u8, Vec<(GnomeId, Vec<u8>)>),
     CapabilitySync(u8, u8, Vec<(Capabilities, Vec<GnomeId>)>),
     PolicySync(u8, u8, Vec<(Policy, Requirement)>),
     BroadcastSync(u8, u8, Vec<(CastID, GnomeId)>),
     MulticastSync(u8, u8, Vec<(CastID, GnomeId)>),
     Subscribed(bool, CastID, GnomeId, Option<GnomeId>),
-    AppSync(u8, u16, u16, u16, SyncData),
-    CustomResponse(u8, SyncData),
+    AppSync(
+        u8,  //sync_type
+        u8,  //data_type
+        u16, //content_id
+        u16, //part_no
+        u16, //total
+        SyncData,
+    ), // Custom
+    Custom(u8, CastData),
 }
 
 impl Neighbor {
@@ -244,37 +264,37 @@ impl Neighbor {
                     //     u8,                      // Multicast size
                     //     Vec<(GnomeId, Vec<u8>)>, // KeyReg pairs
                     // ),
-                    ref n_resp @ NeighborResponse::SwarmSync(
-                        _chill_out_phase,
-                        _founder,
-                        swarm_time,
-                        _swarm_type,
-                        _app_sync_hash,
-                        _key_reg_size,
-                        _capa_reg_size,
-                        _poli_reg_size,
-                        _broadcast_reg_size,
-                        _multicast_reg_size,
-                        _more_key_coming,
-                        ref _key_reg_pairs,
+                    NeighborResponse::SwarmSync(
+                        swarm_sync_response, // _chill_out_phase,
+                                             // _founder,
+                                             // swarm_time,
+                                             // _swarm_type,
+                                             // _app_sync_hash,
+                                             // _key_reg_size,
+                                             // _capa_reg_size,
+                                             // _poli_reg_size,
+                                             // _broadcast_reg_size,
+                                             // _multicast_reg_size,
+                                             // _more_key_coming,
+                                             // ref _key_reg_pairs,
                     ),
                 ) = content
                 {
-                    self.swarm_time = swarm_time;
-                    self.start_new_round(swarm_time);
-                    return Ok(Some(n_resp.clone()));
+                    self.swarm_time = swarm_sync_response.swarm_time;
+                    self.start_new_round(swarm_sync_response.swarm_time);
+                    return Ok(Some(NeighborResponse::SwarmSync(swarm_sync_response)));
                 }
             } else if c_type == CastType::Unicast && CastID(255) == id {
                 if let CastContent::Request(NeighborRequest::SwarmSyncRequest(
-                    sync_key_reg,
-                    sync_caps,
-                    sync_pol,
-                    sync_bcasts,
-                    sync_mcasts,
-                    app_sync_hash,
+                    sync_req_params, // sync_key_reg,
+                                     // sync_caps,
+                                     // sync_pol,
+                                     // sync_bcasts,
+                                     // sync_mcasts,
+                                     // app_sync_hash,
                 )) = content
                 {
-                    if app_sync_hash != 0 {
+                    if sync_req_params.app_root_hash != 0 {
                         // TODO we need a more sophisticated sync method
                         // once we enable storing swarm data on disk this will run
                         // probably we should return either NeighborResponse or NeighborRequest?
@@ -644,66 +664,70 @@ impl Neighbor {
         match response {
             NeighborResponse::Listing(_count, listing) => self
                 .user_responses
-                .push_front(Response::Listing(listing.clone())),
+                .push_front(GnomeToApp::Listing(listing.clone())),
             NeighborResponse::Block(block_id, data) => {
                 self.user_responses
-                    .push_front(Response::Block(block_id, data));
+                    .push_front(GnomeToApp::Block(block_id, data));
             }
             NeighborResponse::Unicast(swarm_id, cast_id) => {
                 let (sender, receiver) = channel();
                 self.active_unicasts.insert(cast_id, sender);
                 self.user_responses
-                    .push_front(Response::Unicast(swarm_id, cast_id, receiver));
+                    .push_front(GnomeToApp::Unicast(swarm_id, cast_id, receiver));
             }
             NeighborResponse::ForwardConnectResponse(_network_settings) => {
                 //TODO send this to networking
-                self.user_responses.push_front(Response::ToGnome(response));
+                self.user_responses
+                    .push_front(GnomeToApp::ToGnome(response));
             }
             NeighborResponse::ForwardConnectFailed => {
-                self.user_responses.push_front(Response::ToGnome(response));
+                self.user_responses
+                    .push_front(GnomeToApp::ToGnome(response));
                 //TODO notify gnome
             }
             NeighborResponse::AlreadyConnected(_id) => {
-                self.user_responses.push_front(Response::ToGnome(response));
+                self.user_responses
+                    .push_front(GnomeToApp::ToGnome(response));
                 //TODO notify gnome
             }
             NeighborResponse::ConnectResponse(_id, _network_settings) => {
-                self.user_responses.push_front(Response::ToGnome(response));
+                self.user_responses
+                    .push_front(GnomeToApp::ToGnome(response));
                 //TODO send this to gnome.ongoing_requests
             }
             NeighborResponse::SwarmSync(
-                chill_phase,
-                founder,
-                swarm_time,
-                swarm_type,
-                app_sync_hash,
-                key_reg_size,
-                capability_reg_size,
-                policy_reg_size,
-                bcast_size,
-                mcast_size,
-                more_key_coming,
-                key_reg_pairs,
+                swarm_sync_response, // chill_phase,
+                                     // founder,
+                                     // swarm_time,
+                                     // swarm_type,
+                                     // app_sync_hash,
+                                     // key_reg_size,
+                                     // capability_reg_size,
+                                     // policy_reg_size,
+                                     // bcast_size,
+                                     // mcast_size,
+                                     // more_key_coming,
+                                     // key_reg_pairs,
             ) => {
                 self.user_responses
-                    .push_front(Response::ToGnome(NeighborResponse::SwarmSync(
-                        chill_phase,
-                        founder,
-                        swarm_time,
-                        swarm_type,
-                        app_sync_hash,
-                        key_reg_size,
-                        capability_reg_size,
-                        policy_reg_size,
-                        bcast_size,
-                        mcast_size,
-                        more_key_coming,
-                        key_reg_pairs,
+                    .push_front(GnomeToApp::ToGnome(NeighborResponse::SwarmSync(
+                        swarm_sync_response, // chill_phase,
+                                             // founder,
+                                             // swarm_time,
+                                             // swarm_type,
+                                             // app_sync_hash,
+                                             // key_reg_size,
+                                             // capability_reg_size,
+                                             // policy_reg_size,
+                                             // bcast_size,
+                                             // mcast_size,
+                                             // more_key_coming,
+                                             // key_reg_pairs,
                     )));
             }
             NeighborResponse::Subscribed(is_bcast, cast_id, origin_id, _none) => {
                 self.user_responses
-                    .push_front(Response::ToGnome(NeighborResponse::Subscribed(
+                    .push_front(GnomeToApp::ToGnome(NeighborResponse::Subscribed(
                         is_bcast,
                         cast_id,
                         origin_id,
@@ -711,44 +735,48 @@ impl Neighbor {
                     )));
             }
             NeighborResponse::KeyRegistrySync(part_no, total_parts_count, id_key_pairs) => {
-                self.user_responses.push_front(Response::ToGnome(
+                self.user_responses.push_front(GnomeToApp::ToGnome(
                     NeighborResponse::KeyRegistrySync(part_no, total_parts_count, id_key_pairs),
                 ));
             }
             NeighborResponse::CapabilitySync(part_no, total_parts_count, capa_ids_pairs) => {
-                self.user_responses.push_front(Response::ToGnome(
+                self.user_responses.push_front(GnomeToApp::ToGnome(
                     NeighborResponse::CapabilitySync(part_no, total_parts_count, capa_ids_pairs),
                 ));
             }
             NeighborResponse::PolicySync(part_no, total_parts_count, policy_req_pairs) => {
                 self.user_responses
-                    .push_front(Response::ToGnome(NeighborResponse::PolicySync(
+                    .push_front(GnomeToApp::ToGnome(NeighborResponse::PolicySync(
                         part_no,
                         total_parts_count,
                         policy_req_pairs,
                     )));
             }
             NeighborResponse::BroadcastSync(part_no, total_parts_count, cast_id_source_pairs) => {
-                self.user_responses
-                    .push_front(Response::ToGnome(NeighborResponse::BroadcastSync(
+                self.user_responses.push_front(GnomeToApp::ToGnome(
+                    NeighborResponse::BroadcastSync(
                         part_no,
                         total_parts_count,
                         cast_id_source_pairs,
-                    )));
+                    ),
+                ));
             }
             NeighborResponse::MulticastSync(part_no, total_parts_count, cast_id_source_pairs) => {
-                self.user_responses
-                    .push_front(Response::ToGnome(NeighborResponse::MulticastSync(
+                self.user_responses.push_front(GnomeToApp::ToGnome(
+                    NeighborResponse::MulticastSync(
                         part_no,
                         total_parts_count,
                         cast_id_source_pairs,
-                    )));
+                    ),
+                ));
             }
-            NeighborResponse::AppSync(sync_type, c_id, part_no, total, data) => self
-                .user_responses
-                .push_front(Response::AppSync(sync_type, c_id, part_no, total, data)),
-            NeighborResponse::CustomResponse(id, data) => {
-                self.user_responses.push_front(Response::Custom(id, data))
+            NeighborResponse::AppSync(sync_type, data_type, c_id, part_no, total, data) => {
+                self.user_responses.push_front(GnomeToApp::AppSync(
+                    sync_type, data_type, c_id, part_no, total, data,
+                ))
+            }
+            NeighborResponse::Custom(id, data) => {
+                self.user_responses.push_front(GnomeToApp::Custom(id, data))
             }
         }
     }
@@ -949,7 +977,7 @@ impl Neighbor {
             let (sender, receiver) = channel();
             self.active_unicasts.insert(cast_id, sender);
             self.user_responses
-                .push_front(Response::Unicast(swarm_id, cast_id, receiver));
+                .push_front(GnomeToApp::Unicast(swarm_id, cast_id, receiver));
         }
         self.send_out_cast(CastMessage::new_response(response));
     }

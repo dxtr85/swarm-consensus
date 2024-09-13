@@ -8,6 +8,9 @@ impl CastData {
     pub fn new(contents: Vec<u8>) -> Result<Self, Vec<u8>> {
         // println!("new data: {:?}", contents);
         // if contents.len() > 1024 {
+        // In future castings should be signed by 256-bit RSA = 64bytes
+        // and 43 bytes for IP/UDP/Sync layer
+        // =107 bytes gives 1471 bytes with some space for Optional IP headers
         if contents.len() > 1364 {
             return Err(contents);
         }

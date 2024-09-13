@@ -9,9 +9,9 @@ use crate::CapabiliTree;
 use crate::Capabilities;
 use crate::Gnome;
 use crate::GnomeId;
+use crate::GnomeToApp;
 use crate::Neighbor;
-use crate::Request;
-use crate::Response;
+use crate::ToGnome;
 use crate::{CastID, WrappedMessage};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -39,7 +39,7 @@ pub struct Swarm {
     pub id: SwarmID,
     pub swarm_type: SwarmType,
     pub founder: GnomeId,
-    pub sender: Sender<Request>,
+    pub sender: Sender<ToGnome>,
     active_unicasts: HashSet<CastID>,
     active_broadcasts: HashMap<CastID, Multicast>,
     active_multicasts: HashMap<CastID, Multicast>,
@@ -109,9 +109,9 @@ impl Swarm {
         network_settings: NetworkSettings,
         verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
-    ) -> (Sender<Request>, Receiver<Response>) {
-        let (sender, request_receiver) = channel::<Request>();
-        let (response_sender, receiver) = channel::<Response>();
+    ) -> (Sender<ToGnome>, Receiver<GnomeToApp>) {
+        let (sender, request_receiver) = channel::<ToGnome>();
+        let (response_sender, receiver) = channel::<GnomeToApp>();
         let mut policy_reg = HashMap::new();
         policy_reg.insert(Policy::Default, Requirement::None);
         policy_reg.insert(
