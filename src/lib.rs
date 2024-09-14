@@ -55,7 +55,6 @@ mod tests;
 
 const DEFAULT_NEIGHBORS_PER_GNOME: usize = 3;
 const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
-// const MAX_PAYLOAD_SIZE: u32 = 1024;
 
 #[derive(Debug)]
 pub enum ToGnome {
@@ -71,12 +70,8 @@ pub enum ToGnome {
     StartUnicast(GnomeId),
     StartMulticast(Vec<GnomeId>),
     StartBroadcast,
-    Custom(u8, SyncData),
     NetworkSettingsUpdate(bool, IpAddr, u16, Nat),
     SwarmNeighbors(String),
-    // SetAddress(IpAddr),
-    // SetPort(u16),
-    // SetNat(Nat),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -84,8 +79,6 @@ pub struct CastID(pub u8);
 
 pub enum GnomeToApp {
     AppDataSynced(bool),
-    AppSync(u8, u8, u16, u16, u16, SyncData),
-    AppSyncInquiry(GnomeId, u8, SyncData),
     Block(BlockID, SyncData),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(Vec<BlockID>),
@@ -99,7 +92,7 @@ pub enum GnomeToApp {
     NewNeighbor(String, Neighbor),
     ToGnome(NeighborResponse),
     BCastData(CastID, CastData),
-    Custom(u8, CastData),
+    Custom(bool, u8, GnomeId, CastData),
 }
 
 impl fmt::Debug for GnomeToApp {
@@ -107,12 +100,6 @@ impl fmt::Debug for GnomeToApp {
         match self {
             GnomeToApp::AppDataSynced(is_synced) => {
                 write!(f, "AppDataSynced: {}", is_synced)
-            }
-            GnomeToApp::AppSync(_s_type, _d_type, c_id, part_no, total, _data) => {
-                write!(f, "AppSync[{}, {}/{}]", c_id, part_no, total)
-            }
-            GnomeToApp::AppSyncInquiry(_g_id, s_type, _data) => {
-                write!(f, "AppSync[{}]", s_type)
             }
             GnomeToApp::Block(prop_id, data) => {
                 write!(f, "{:?} {}", prop_id, data)
@@ -153,8 +140,12 @@ impl fmt::Debug for GnomeToApp {
             GnomeToApp::ToGnome(neighbor_response) => {
                 write!(f, "ToGnome: {:?}", neighbor_response)
             }
-            GnomeToApp::Custom(id, _sdata) => {
-                write!(f, "Custom response {}", id)
+            GnomeToApp::Custom(is_request, id, gnome_id, _sdata) => {
+                if *is_request {
+                    write!(f, "Custom request {} from {}", id, gnome_id)
+                } else {
+                    write!(f, "Custom response {} from {}", id, gnome_id)
+                }
             }
         }
     }
@@ -166,21 +157,3 @@ pub struct NotificationBundle {
     pub token_sender: Sender<u64>,
     pub network_settings_receiver: Receiver<NetworkSettings>,
 }
-
-// static mut GNOME_ID: GnomeId = GnomeId(0);
-
-// fn gnome_id_dispenser() -> GnomeId {
-//     unsafe {
-//         let next_id = GNOME_ID;
-//         GNOME_ID = GnomeId(GNOME_ID.0 + 1);
-//         next_id
-//     }
-// }
-
-// pub fn start(
-//     gnome_id: GnomeId,
-//     network_settings: Option<NetworkSettings>,
-//     sender: Sender<NotificationBundle>,
-// ) -> Manager {
-//     Manager::new(gnome_id, network_settings, sender)
-// }

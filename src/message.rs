@@ -414,7 +414,7 @@ impl Message {
 
     pub fn bye() -> Message {
         Message {
-            swarm_time: SwarmTime(0),
+            swarm_time: SwarmTime(u32::MAX),
             neighborhood: Neighborhood(0),
             header: Header::Sync,
             payload: Payload::Bye,

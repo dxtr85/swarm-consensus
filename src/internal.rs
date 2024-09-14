@@ -1,5 +1,7 @@
-use crate::{CastID, GnomeId};
+use crate::{CastData, CastID, GnomeId, NeighborRequest, NeighborResponse};
 
-pub enum InternalMsg{
-    SubscribeBroadcast(CastID,GnomeId)
+pub enum InternalMsg {
+    SubscribeBroadcast(CastID, GnomeId),
+    RequestOut(GnomeId, NeighborRequest),
+    ResponseOut(GnomeId, NeighborResponse),
 }
