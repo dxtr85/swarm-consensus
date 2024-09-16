@@ -286,12 +286,14 @@ impl Proposal {
             }
             Self::Config(config) => {
                 let signature_b = sign(priv_key, round_start, &mut config.bytes()).unwrap();
+                // println!("Signature len: {}", signature_b.len());
                 let signature = if extend {
                     Signature::Extended(gnome_id, pubkey_bytes, signature_b)
                 } else {
                     Signature::Regular(gnome_id, signature_b)
                 };
                 (
+                    // TODO: we need to rework gid
                     Header::Reconfigure(config.as_ct(), config.as_gid()),
                     Payload::Reconfigure(signature, config),
                 )
@@ -428,12 +430,15 @@ impl Gnome {
         gnome
     }
 
+    //TODO: we should probably add identifiers to internal messages
+    //      and have them progress on a step by step basis somehow
     fn serve_internal(&mut self) -> bool {
         let mut any_data_processed = false;
         while let Ok(internal) = self.recv_internal.try_recv() {
             any_data_processed = true;
             match internal {
-                InternalMsg::SubscribeBroadcast(id, origin) => {
+                InternalMsg::SubscribeCast(is_bcast, id, origin) => {
+                    // TODO: we have to support also multicast
                     if let Some(source) = self.neighbor_with_enough_bandwith(1) {
                         println!("Subscribing to BCast: {}", id.0);
                         let (send_n, recv_n) = channel();
@@ -441,12 +446,9 @@ impl Gnome {
                         // TODO: bandwith threshold should not be a fixed value
                         if self.send_neighbor_request(
                             source,
-                            NeighborRequest::SubscribeRequest(true, id),
+                            NeighborRequest::SubscribeRequest(is_bcast, id),
                         ) && self.activate_broadcast_at_neighbor(source, id, send_n)
                         {
-                            // TODO: we need to create channel to actually pass messages
-                            //       to user
-                            //       and to subscribers
                             let b_cast = Multicast::new(
                                 origin,
                                 (source, recv_n),
@@ -460,7 +462,38 @@ impl Gnome {
                                     .send(GnomeToApp::Broadcast(self.swarm.id, id, recv_d));
                         }
                     } else {
-                        println!("Unable to subscribe broadcast");
+                        println!("Unable to subscribe a broadcast");
+                    }
+                }
+                InternalMsg::UnsubscribeCast(is_bcast, c_id) => {
+                    if let Some((n_id, subs)) =
+                        self.swarm.unsubscribe_cast(self.id, is_bcast, &c_id)
+                    {
+                        self.send_neighbor_request(
+                            n_id,
+                            NeighborRequest::UnsubscribeRequest(is_bcast, c_id),
+                        );
+                        for sub in subs {
+                            println!("Sending SDrain to: {}", sub);
+                            self.send_neighbor_request(
+                                sub,
+                                NeighborRequest::SourceDrained(is_bcast, c_id),
+                            );
+                        }
+                    }
+                }
+                InternalMsg::FindNewCastSource(is_bcast, cast_id, old_source) => {
+                    println!("Looking for new casting source");
+                    let alt_sources = self.swarm.get_alt_sources(is_bcast, &cast_id, old_source);
+                    //TODO: pick alternative source
+                    if !alt_sources.is_empty() {
+                        if let Some(new_source) = self.select_best_alternative(alt_sources) {
+                            let _ = self
+                                .send_internal
+                                .send(InternalMsg::SubscribeCast(is_bcast, cast_id, new_source));
+                        }
+                    } else {
+                        println!("Unable to find alternative source.")
                     }
                 }
                 InternalMsg::RequestOut(gnome_id, request) => {
@@ -616,6 +649,18 @@ impl Gnome {
                         new_user_proposal = true;
                     }
                     // println!("vvv USER vvv REQ {}", data);
+                }
+                ToGnome::EndBroadcast(c_id) => {
+                    println!("Received EndBroadcast user request");
+                    self.proposals
+                        .push_front(Proposal::Config(Configuration::EndBroadcast(self.id, c_id)));
+                    new_user_proposal = true;
+                }
+                ToGnome::UnsubscribeBroadcast(c_id) => {
+                    println!("Received UnsubscribeBroadcast user request");
+                    let _ = self
+                        .send_internal
+                        .send(InternalMsg::UnsubscribeCast(true, c_id));
                 }
                 ToGnome::StartMulticast(_) => {
                     todo!()
@@ -1279,8 +1324,24 @@ impl Gnome {
                                 is_bcast, cast_id, origin, None,
                             ));
                         } else {
-                            // TODO: send response with failure indication
+                            // We can not subscribe so we request our neighbor to
+                            // keep searching, excluding us
+                            neighbor
+                                .request_data(NeighborRequest::SourceDrained(is_bcast, cast_id));
                         }
+                    }
+                    NeighborRequest::UnsubscribeRequest(is_bcast, cast_id) => {
+                        println!("UnsubscribeRequest {}", cast_id.0);
+                        self.swarm
+                            .remove_subscriber(is_bcast, &cast_id, neighbor.id);
+                    }
+                    NeighborRequest::SourceDrained(is_bcast, cast_id) => {
+                        println!("SourceDrained {}", cast_id.0);
+                        let _ = self.send_internal.send(InternalMsg::FindNewCastSource(
+                            is_bcast,
+                            cast_id,
+                            neighbor.id,
+                        ));
                     }
                     NeighborRequest::CreateNeighbor(gnome_id, swarm_name) => {
                         // println!("CreateNeighbor");
@@ -1429,7 +1490,23 @@ impl Gnome {
                 //TODO make use of available_bandwith during multicasting setup
             }
             let advance_to_next_turn = fast_advance_to_next_turn || slow_advance_to_next_turn;
-            let new_proposal = new_user_proposal || fast_new_proposal || slow_new_proposal;
+            let mut new_proposal = new_user_proposal || fast_new_proposal || slow_new_proposal;
+
+            // TODO: when round ends drop slow neighbors with a bye message
+            // Those neighbors will need to start over again
+            if !new_proposal && !fast_advance_to_next_turn && !self.slow_neighbors.is_empty() {
+                print!("GSN ");
+                std::thread::sleep(Duration::from_nanos(sleep_nsec >> 1));
+                let (
+                    _have_responsive_neighbors,
+                    _slow_advance_to_next_turn,
+                    slow_new_proposal,
+                    slow_any_data_processed,
+                ) = self.try_recv(app_sync_hash, false);
+                was_loop_iteration_busy |= slow_any_data_processed;
+                new_proposal |= slow_new_proposal;
+            }
+
             // || refr_new_proposal;
             // TODO: here we need to make use of self.chill_out attribute
             // Following needs to be implemented for cases like (Forward)ConnectRequests.
@@ -1683,6 +1760,8 @@ impl Gnome {
             None
         };
         // TODO: make use of capability_size, policy_size, b_cast_size, m_cast_size, more_keys_follow
+        // TODO: in case we join a swarm which has a *cast originating from our gnome
+        //       we need to initialize all necessary piping to be able to send through it
         if let Some(NeighborResponse::SwarmSync(mut swarm_sync_response)) = response_opt {
             println!(
                 "App sync hash remote: {}",
@@ -1811,7 +1890,34 @@ impl Gnome {
         false
     }
 
-    fn subscribe_multicast(&mut self, id: CastID, origin: GnomeId) {}
+    fn select_best_alternative(&self, alt_sources: Vec<GnomeId>) -> Option<GnomeId> {
+        if alt_sources.is_empty() {
+            return None;
+        }
+        let mut curr_pick = alt_sources[0];
+        let mut curr_bandwith = 0;
+        for neighbor in &self.refreshed_neighbors {
+            let n_id = neighbor.id;
+            if alt_sources.contains(&n_id) {
+                let n_bandwith = neighbor.available_bandwith;
+                if n_bandwith > curr_bandwith {
+                    curr_pick = n_id;
+                    curr_bandwith = n_bandwith;
+                }
+            }
+        }
+        for neighbor in &self.fast_neighbors {
+            let n_id = neighbor.id;
+            if alt_sources.contains(&n_id) {
+                let n_bandwith = neighbor.available_bandwith;
+                if n_bandwith > curr_bandwith {
+                    curr_pick = n_id;
+                    curr_bandwith = n_bandwith;
+                }
+            }
+        }
+        Some(curr_pick)
+    }
 
     fn neighbor_with_highest_bandwith(&self) -> GnomeId {
         println!("Searching among {} neighbors", self.fast_neighbors.len());
@@ -1889,6 +1995,7 @@ impl Gnome {
                         &self.priv_key_pem,
                         self.pub_key_bytes.clone(),
                     );
+                    // println!("No need extending: {}", self.payload.has_signature());
                 } else if !proposal_can_extend {
                     // 2. extend = true, can not be extended
                     // 2 requires us to send a special Reconfiguration message
@@ -1943,6 +2050,15 @@ impl Gnome {
                         self.next_state.change_config = ChangeConfig::InsertPubkey {
                             id: *id,
                             key: key.clone(),
+                            turn_ended: false,
+                        };
+                    } else if let Payload::Reconfigure(
+                        _sign,
+                        Configuration::EndBroadcast(_g_id, c_id),
+                    ) = &self.payload
+                    {
+                        self.next_state.change_config = ChangeConfig::RemoveBroadcast {
+                            id: *c_id,
                             turn_ended: false,
                         };
                     }
@@ -2019,48 +2135,66 @@ impl Gnome {
                             } => {
                                 let mut subscribers: HashMap<GnomeId, Sender<WrappedMessage>> =
                                     self.get_neighbor_ids_and_senders();
-                                subscribers.retain(|&gid, _s| !filtered_neighbors.contains(&gid));
-                                let (send_n, recv_n) = channel();
-                                let (send_d, recv_d) = channel();
+                                // println!("origin: {}", origin);
+                                // println!("subs before filter: {:?}", subscribers);
+                                subscribers.retain(|&gid, _s| {
+                                    !filtered_neighbors.contains(&gid)
+                                        &&gid != origin //This is covered
+                                        &&gid != source
+                                });
+                                // println!("subs after filter: {:?}", subscribers);
+                                // println!("filtered neighbors: {:?}", filtered_neighbors);
+                                let (wrapped_message_sender, wrapped_message_receiver) = channel();
+                                let (cast_data_sender, cast_data_receiver) = channel();
                                 if self.id == origin {
                                     println!("I am origin!");
-                                    // TODO: need to handle Data from recv_d and
-                                    //       push it into send_n
+                                    let (internal_cast_data_sender, internal_cast_data_receiver) =
+                                        channel();
                                     let b_cast = Multicast::new(
                                         origin,
-                                        (source, recv_n),
+                                        (source, wrapped_message_receiver),
                                         filtered_neighbors,
                                         subscribers,
-                                        None,
+                                        Some(internal_cast_data_sender),
                                     );
 
-                                    self.insert_originating_broadcast(id, recv_d, send_n);
+                                    self.insert_originating_broadcast(
+                                        id,
+                                        cast_data_receiver,
+                                        wrapped_message_sender,
+                                    );
                                     self.swarm.insert_broadcast(id, b_cast);
                                     let _res = self.sender.send(GnomeToApp::BroadcastOrigin(
                                         self.swarm.id,
                                         id,
-                                        send_d,
+                                        cast_data_sender,
+                                        internal_cast_data_receiver,
                                     ));
-                                } else if self.activate_broadcast_at_neighbor(source, id, send_n) {
-                                    // TODO: we need to create channel to actually pass messages
-                                    //       to user
-                                    //       and to subscribers
+                                } else if self.activate_broadcast_at_neighbor(
+                                    source,
+                                    id,
+                                    wrapped_message_sender,
+                                ) {
                                     let b_cast = Multicast::new(
                                         origin,
-                                        (source, recv_n),
+                                        (source, wrapped_message_receiver),
                                         filtered_neighbors,
                                         subscribers,
-                                        Some(send_d),
+                                        Some(cast_data_sender),
                                     );
                                     self.swarm.insert_broadcast(id, b_cast);
                                     let _res = self.sender.send(GnomeToApp::Broadcast(
                                         self.swarm.id,
                                         id,
-                                        recv_d,
+                                        cast_data_receiver,
                                     ));
                                 } else {
                                     println!("Unable to activate broadcast");
                                 }
+                            }
+                            ChangeConfig::RemoveBroadcast { id, .. } => {
+                                let _ = self.swarm.remove_cast(true, &id);
+                                self.remove_originating_broadcast(id);
                             }
                             ChangeConfig::InsertPubkey { id, key, .. } => {
                                 // This is done automatically
@@ -2399,16 +2533,17 @@ impl Gnome {
                         }
                         NeighborResponse::BroadcastSync(chunk_no, total_chunks, mut pairs) => {
                             while let Some((c_id, origin)) = pairs.pop() {
-                                // TODO: do we really want to subscribe to all broadcasts?
                                 self.send_internal
-                                    .send(InternalMsg::SubscribeBroadcast(c_id, origin))
+                                    .send(InternalMsg::SubscribeCast(true, c_id, origin))
                                     .unwrap();
                             }
                         }
                         NeighborResponse::MulticastSync(chunk_no, total_chunks, mut pairs) => {
                             while let Some((c_id, origin)) = pairs.pop() {
                                 // TODO: do we really want to subscribe to all multicasts?
-                                self.subscribe_multicast(c_id, origin);
+                                // self.send_internal
+                                //     .send(InternalMsg::SubscribeCast(false, c_id, origin))
+                                //     .unwrap();
                             }
                         }
                         other => {
@@ -2557,6 +2692,10 @@ impl Gnome {
     ) {
         self.data_converters
             .insert((CastType::Broadcast, id), (recv_d, send_n));
+    }
+
+    fn remove_originating_broadcast(&mut self, id: CastID) {
+        let _ = self.data_converters.remove(&(CastType::Broadcast, id));
     }
 
     fn activate_broadcast_at_neighbor(

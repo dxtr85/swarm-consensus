@@ -23,6 +23,10 @@ pub enum ChangeConfig {
         filtered_neighbors: Vec<GnomeId>,
         turn_ended: bool,
     },
+    RemoveBroadcast {
+        id: CastID,
+        turn_ended: bool,
+    },
 }
 
 impl ChangeConfig {
@@ -30,6 +34,9 @@ impl ChangeConfig {
         match *self {
             Self::None => {}
             Self::AddBroadcast {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
+            Self::RemoveBroadcast {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::InsertPubkey {
@@ -181,8 +188,10 @@ impl NextState {
             if neighbor.header.is_reconfigure() {
                 if let Payload::Reconfigure(ref _signature, ref config) = neighbor.payload {
                     match config {
-                        Configuration::StartBroadcast(_g_id, _c_id) => {
-                            self.change_config.add_filtered_neighbor(neighbor.id);
+                        Configuration::StartBroadcast(g_id, _c_id) => {
+                            if neighbor.id.0 != g_id.0 {
+                                self.change_config.add_filtered_neighbor(neighbor.id);
+                            }
                         }
                         _ => {
                             println!("Unhandled config update");

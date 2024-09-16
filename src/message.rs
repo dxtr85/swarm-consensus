@@ -115,7 +115,7 @@ impl Payload {
 pub enum Configuration {
     StartBroadcast(GnomeId, CastID),
     ChangeBroadcastOrigin(GnomeId, CastID),
-    EndBroadcast(CastID),
+    EndBroadcast(GnomeId, CastID),
     StartMulticast(GnomeId, CastID),
     ChangeMulticastOrigin(GnomeId, CastID),
     EndMulticast(CastID),
@@ -130,7 +130,7 @@ impl Configuration {
         match *self {
             Self::StartBroadcast(_gid, _cid) => 254,
             Self::ChangeBroadcastOrigin(_gid, _cid) => 253,
-            Self::EndBroadcast(_cid) => 252,
+            Self::EndBroadcast(_gid, _cid) => 252,
             Self::StartMulticast(_gid, _cid) => 251,
             Self::ChangeMulticastOrigin(_gid, _cid) => 250,
             Self::EndMulticast(_cid) => 249,
@@ -148,7 +148,7 @@ impl Configuration {
         match *self {
             Self::StartBroadcast(gid, _cid) => gid,
             Self::ChangeBroadcastOrigin(gid, _cid) => gid,
-            Self::EndBroadcast(_cid) => GnomeId(0),
+            Self::EndBroadcast(gid, _cid) => gid,
             Self::StartMulticast(gid, _cid) => gid,
             Self::ChangeMulticastOrigin(gid, _cid) => gid,
             Self::EndMulticast(_cid) => GnomeId(0),
@@ -164,7 +164,7 @@ impl Configuration {
         match self {
             Self::StartBroadcast(_gid, _cid) => 10,
             Self::ChangeBroadcastOrigin(_gid, _cid) => 10,
-            Self::EndBroadcast(_cid) => 2,
+            Self::EndBroadcast(_gid, _cid) => 2,
             Self::StartMulticast(_gid, _cid) => 10,
             Self::ChangeMulticastOrigin(_gid, _cid) => 10,
             Self::EndMulticast(_cid) => 2,
@@ -191,7 +191,10 @@ impl Configuration {
                 let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
                 Self::ChangeBroadcastOrigin(GnomeId(gnome_id), CastID(value[9]))
             }
-            252 => Self::EndBroadcast(CastID(value[1])),
+            252 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                Self::EndBroadcast(GnomeId(gnome_id), CastID(value[9]))
+            }
             251 => {
                 let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
                 Self::StartMulticast(GnomeId(gnome_id), CastID(value[9]))
@@ -240,7 +243,12 @@ impl Configuration {
                 }
                 content_bytes.push(cid.0);
             }
-            Self::EndBroadcast(cid) => {
+            Self::EndBroadcast(gid, cid) => {
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
+                }
                 content_bytes.push(cid.0);
             }
             Self::StartMulticast(gid, cid) => {

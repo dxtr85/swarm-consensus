@@ -109,7 +109,7 @@ pub struct Multicast {
     source: (GnomeId, Receiver<WrappedMessage>),
     alt_sources: Vec<GnomeId>,
     subscribers: HashMap<GnomeId, Sender<WrappedMessage>>,
-    to_user: Option<Sender<CastData>>,
+    to_app: Option<Sender<CastData>>,
 }
 
 impl Multicast {
@@ -118,14 +118,14 @@ impl Multicast {
         source: (GnomeId, Receiver<WrappedMessage>),
         alt_sources: Vec<GnomeId>,
         subscribers: HashMap<GnomeId, Sender<WrappedMessage>>,
-        to_user: Option<Sender<CastData>>,
+        to_app: Option<Sender<CastData>>,
     ) -> Self {
         Self {
             origin,
             source,
             alt_sources,
             subscribers,
-            to_user,
+            to_app,
         }
     }
     // pub fn subscribers(&self) -> Vec<(GnomeId,Sender<Message>)> {
@@ -137,6 +137,13 @@ impl Multicast {
     pub fn origin(&self) -> GnomeId {
         self.origin
     }
+    pub fn subscribers(&self) -> Vec<GnomeId> {
+        let mut subs = Vec::with_capacity(self.subscribers.len());
+        for sub in self.subscribers.keys() {
+            subs.push(*sub)
+        }
+        subs
+    }
     pub fn set_source(&mut self, source: (GnomeId, Receiver<WrappedMessage>)) {
         self.source = source;
     }
@@ -145,17 +152,48 @@ impl Multicast {
         self.subscribers.insert(subscriber.0, subscriber.1);
     }
 
+    pub fn remove_subscriber(&mut self, subscriber: &GnomeId) -> Option<Sender<WrappedMessage>> {
+        self.subscribers.remove(subscriber)
+    }
+
+    pub fn dont_send_to_app(&mut self) {
+        self.to_app = None;
+    }
+    pub fn get_alt_sources(&mut self, old_source: GnomeId) -> Vec<GnomeId> {
+        let prev_sources = std::mem::replace(&mut self.alt_sources, vec![]);
+        for alt_s in prev_sources {
+            if alt_s == old_source {
+                continue;
+            }
+            self.alt_sources.push(alt_s);
+        }
+        self.alt_sources.clone()
+    }
+
     pub fn serve(&mut self) -> bool {
         let mut any_data_processed = false;
         while let Ok(WrappedMessage::Cast(msg)) = self.source.1.try_recv() {
-            any_data_processed = true;
             // println!("Received a casting msg: {:?}", msg);
             for sender in self.subscribers.values() {
+                any_data_processed = true;
                 // println!("Wrapped send: {:?}", msg);
                 let _ = sender.send(WrappedMessage::Cast(msg.clone()));
             }
-            if let Some(sender) = &self.to_user {
-                let _ = sender.send(msg.get_data().unwrap());
+            // TODO: we can Unsubscribe from a cast when to_app is None
+            //       and subscribers.len()>0 when we want to save bandwith
+            if let Some(sender) = &self.to_app {
+                let res = sender.send(msg.get_data().unwrap());
+                if res.is_err() {
+                    //TODO: unsubscribe - or we can keep this cast
+                    // since we are not forwarding to anyone it does
+                    // not cost us bandwith, only some CPU cycles
+                    // if !any_data_processed {
+                    // }
+                    println!("User not interested in bcast.");
+                    self.to_app = None;
+                } else {
+                    any_data_processed = true;
+                }
             }
         }
         any_data_processed

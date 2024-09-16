@@ -109,6 +109,9 @@ pub enum NeighborRequest {
     ConnectRequest(u8, GnomeId, NetworkSettings),
     SwarmSyncRequest(SwarmSyncRequestParams),
     SubscribeRequest(bool, CastID),
+    UnsubscribeRequest(bool, CastID), // We send this when no longer interested in bcast
+    SourceDrained(bool, CastID),      // We send this to our subscribers to indicate they
+    // have to find another source for given cast, give them some time to do so
     CreateNeighbor(GnomeId, String),
     SwarmJoinedInfo(String),
     Custom(u8, CastData),
@@ -314,7 +317,7 @@ impl Neighbor {
     ) -> bool {
         match *signature {
             Signature::Regular(gid, ref sign) => {
-                println!("Regular signature verification...");
+                println!("Regular signature verification... gid: {}", gid);
                 if let Some(pubkey_bytes) = swarm.key_reg.get(gid) {
                     (swarm.verify)(gid, &pubkey_bytes, round_start, bytes, sign)
                 } else {

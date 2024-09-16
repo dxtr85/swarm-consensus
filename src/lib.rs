@@ -70,6 +70,8 @@ pub enum ToGnome {
     StartUnicast(GnomeId),
     StartMulticast(Vec<GnomeId>),
     StartBroadcast,
+    EndBroadcast(CastID),
+    UnsubscribeBroadcast(CastID),
     NetworkSettingsUpdate(bool, IpAddr, u16, Nat),
     SwarmNeighbors(String),
 }
@@ -86,7 +88,7 @@ pub enum GnomeToApp {
     Unicast(SwarmID, CastID, Receiver<CastData>),
     MulticastOrigin(SwarmID, CastID, Sender<SyncData>),
     Multicast(SwarmID, CastID, Receiver<CastData>),
-    BroadcastOrigin(SwarmID, CastID, Sender<CastData>),
+    BroadcastOrigin(SwarmID, CastID, Sender<CastData>, Receiver<CastData>),
     Broadcast(SwarmID, CastID, Receiver<CastData>),
     Neighbors(String, Vec<GnomeId>),
     NewNeighbor(String, Neighbor),
@@ -134,7 +136,7 @@ impl fmt::Debug for GnomeToApp {
             GnomeToApp::Broadcast(_sid, _cid, _rdata) => {
                 write!(f, "Broadcast {:?}", _cid)
             }
-            GnomeToApp::BroadcastOrigin(_sid, _cid, _sdata) => {
+            GnomeToApp::BroadcastOrigin(_sid, _cid, _sdata, _rdata) => {
                 write!(f, "Broadcast source {:?}", _cid)
             }
             GnomeToApp::ToGnome(neighbor_response) => {

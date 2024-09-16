@@ -1,7 +1,9 @@
 use crate::{CastData, CastID, GnomeId, NeighborRequest, NeighborResponse};
 
 pub enum InternalMsg {
-    SubscribeBroadcast(CastID, GnomeId),
+    SubscribeCast(bool, CastID, GnomeId),
+    UnsubscribeCast(bool, CastID),
     RequestOut(GnomeId, NeighborRequest),
     ResponseOut(GnomeId, NeighborResponse),
+    FindNewCastSource(bool, CastID, GnomeId),
 }

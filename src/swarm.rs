@@ -204,6 +204,56 @@ impl Swarm {
         self.active_broadcasts.insert(cast_id, broadcast);
     }
 
+    //TODO: we may only wish to unsubscribe from our own cast,
+    //      while still sending to others
+    pub fn unsubscribe_cast(
+        &mut self,
+        own_gnome_id: GnomeId,
+        is_bcast: bool,
+        cast_id: &CastID,
+    ) -> Option<(GnomeId, Vec<GnomeId>)> {
+        if is_bcast {
+            if let Some(mut cast) = self.active_broadcasts.remove(cast_id) {
+                if own_gnome_id == cast.origin() {
+                    cast.dont_send_to_app();
+                    self.active_broadcasts.insert(*cast_id, cast);
+                    None
+                } else {
+                    Some((cast.origin(), cast.subscribers()))
+                }
+            } else {
+                None
+            }
+        } else if let Some(mut cast) = self.active_multicasts.remove(cast_id) {
+            if own_gnome_id == cast.origin() {
+                cast.dont_send_to_app();
+                self.active_multicasts.insert(*cast_id, cast);
+                None
+            } else {
+                Some((cast.origin(), cast.subscribers()))
+            }
+        } else {
+            None
+        }
+    }
+    pub fn remove_cast(
+        &mut self,
+        is_bcast: bool,
+        cast_id: &CastID,
+    ) -> Option<(GnomeId, Vec<GnomeId>)> {
+        if is_bcast {
+            if let Some(cast) = self.active_broadcasts.remove(cast_id) {
+                Some((cast.source(), cast.subscribers()))
+            } else {
+                None
+            }
+        } else if let Some(cast) = self.active_multicasts.remove(cast_id) {
+            Some((cast.source(), cast.subscribers()))
+        } else {
+            None
+        }
+    }
+
     pub fn insert_capability(&mut self, cap: Capabilities, mut id_list: Vec<GnomeId>) {
         id_list.reverse();
         if let Some(tree) = self.capability_reg.get_mut(&cap) {
@@ -316,6 +366,38 @@ impl Swarm {
         }
     }
 
+    pub fn remove_subscriber(&mut self, is_bcast: bool, cast_id: &CastID, sub_id: GnomeId) -> bool {
+        if is_bcast {
+            if let Some(bcast) = self.active_broadcasts.get_mut(cast_id) {
+                bcast.remove_subscriber(&sub_id).is_some()
+            } else {
+                false
+            }
+        } else if let Some(mcast) = self.active_multicasts.get_mut(cast_id) {
+            mcast.remove_subscriber(&sub_id).is_some()
+        } else {
+            false
+        }
+    }
+
+    pub fn get_alt_sources(
+        &mut self,
+        is_bcast: bool,
+        cast_id: &CastID,
+        old_source: GnomeId,
+    ) -> Vec<GnomeId> {
+        if is_bcast {
+            if let Some(bcast) = self.active_broadcasts.get_mut(cast_id) {
+                bcast.get_alt_sources(old_source)
+            } else {
+                vec![]
+            }
+        } else if let Some(mcast) = self.active_multicasts.get_mut(cast_id) {
+            mcast.get_alt_sources(old_source)
+        } else {
+            vec![]
+        }
+    }
     pub fn check_config_policy(&self, gnome_id: &GnomeId, c_id: u8, swarm: &Swarm) -> bool {
         let policy = self.config_to_policy(c_id);
         if let Some(req) = swarm.policy_reg.get(&policy) {
