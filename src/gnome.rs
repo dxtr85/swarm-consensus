@@ -247,11 +247,7 @@ impl Proposal {
     pub fn can_be_extended(&self) -> bool {
         match self {
             Self::Block(_bid, data) => data.len() <= 900,
-            Self::Config(_conf) => {
-                // Until now config size is no bigger than 10 bytes
-                // _conf.len()<=900
-                true
-            }
+            Self::Config(conf) => conf.len() <= 900,
         }
     }
 
@@ -294,7 +290,7 @@ impl Proposal {
                 };
                 (
                     // TODO: we need to rework gid
-                    Header::Reconfigure(config.as_ct(), config.as_gid()),
+                    Header::Reconfigure(config.as_ct(), config.as_gid(gnome_id)),
                     Payload::Reconfigure(signature, config),
                 )
             }
@@ -572,6 +568,12 @@ impl Gnome {
                     self.proposals.push_front(Proposal::Block(b_id, data));
                     new_user_proposal = true;
                     // println!("vvv USER vvv REQ {}", data);
+                }
+                ToGnome::Reconfigure(value, s_data) => {
+                    println!("Gnome received reconfigure request");
+                    self.proposals
+                        .push_front(Proposal::Config(Configuration::UserDefined(value, s_data)));
+                    new_user_proposal = true;
                 }
                 ToGnome::AddNeighbor(neighbor) => {
                     println!("{} ADD\tadd a new neighbor", neighbor.id);
@@ -1987,6 +1989,7 @@ impl Gnome {
                 // Now we need to cover cases
                 // 1. extend = false
                 if !extend {
+                    println!("No need extending");
                     (self.header, self.payload) = proposal.clone().to_header_payload(
                         &self.sign,
                         self.id,
@@ -2059,6 +2062,16 @@ impl Gnome {
                     {
                         self.next_state.change_config = ChangeConfig::RemoveBroadcast {
                             id: *c_id,
+                            turn_ended: false,
+                        };
+                    } else if let Payload::Reconfigure(
+                        _sign,
+                        Configuration::UserDefined(id, s_data),
+                    ) = &self.payload
+                    {
+                        self.next_state.change_config = ChangeConfig::Custom {
+                            id: *id,
+                            s_data: s_data.clone(),
                             turn_ended: false,
                         };
                     }
@@ -2199,6 +2212,11 @@ impl Gnome {
                             ChangeConfig::InsertPubkey { id, key, .. } => {
                                 // This is done automatically
                                 // self.swarm.key_reg.insert(id, key);
+                            }
+                            ChangeConfig::Custom { id, s_data, .. } => {
+                                // This is done automatically
+                                println!("Custom Reconfig-{} to serve", id);
+                                let _res = self.sender.send(GnomeToApp::Reconfig(id, s_data));
                             }
                             ChangeConfig::None => {}
                         }

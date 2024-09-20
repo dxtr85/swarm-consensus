@@ -74,6 +74,7 @@ pub enum ToGnome {
     UnsubscribeBroadcast(CastID),
     NetworkSettingsUpdate(bool, IpAddr, u16, Nat),
     SwarmNeighbors(String),
+    Reconfigure(u8, SyncData),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -95,6 +96,7 @@ pub enum GnomeToApp {
     ToGnome(NeighborResponse),
     BCastData(CastID, CastData),
     Custom(bool, u8, GnomeId, CastData),
+    Reconfig(u8, SyncData),
 }
 
 impl fmt::Debug for GnomeToApp {
@@ -148,6 +150,9 @@ impl fmt::Debug for GnomeToApp {
                 } else {
                     write!(f, "Custom response {} from {}", id, gnome_id)
                 }
+            }
+            GnomeToApp::Reconfig(id, _s_data) => {
+                write!(f, "Reconfig: {}", id)
             }
         }
     }

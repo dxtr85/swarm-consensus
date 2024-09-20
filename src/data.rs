@@ -33,7 +33,7 @@ impl CastData {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
 pub struct SyncData(Vec<u8>);
 impl SyncData {
     pub fn new(contents: Vec<u8>) -> Result<Self, Vec<u8>> {

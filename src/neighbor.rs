@@ -317,7 +317,22 @@ impl Neighbor {
     ) -> bool {
         match *signature {
             Signature::Regular(gid, ref sign) => {
-                println!("Regular signature verification... gid: {}", gid);
+                // println!(
+                //     "Regular signature verification... gid: {}, blen: {}\nVerify head: ",
+                //     gid,
+                //     bytes.len()
+                // );
+                // for i in 0..20 {
+                //     if let Some(byte) = bytes.get(i) {
+                //         print!("{}-", byte);
+                //     }
+                // }
+                // println!("Verify tail: ");
+                // for i in bytes.len() - 20..bytes.len() {
+                //     if let Some(byte) = bytes.get(i) {
+                //         print!("{}-", byte);
+                //     }
+                // }
                 if let Some(pubkey_bytes) = swarm.key_reg.get(gid) {
                     (swarm.verify)(gid, &pubkey_bytes, round_start, bytes, sign)
                 } else {

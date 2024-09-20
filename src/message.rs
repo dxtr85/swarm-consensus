@@ -123,8 +123,9 @@ pub enum Configuration {
     DeleteGroup,
     ModifyGroup,
     InsertPubkey(GnomeId, Vec<u8>),
-    UserDefined(u8),
+    UserDefined(u8, SyncData),
 }
+
 impl Configuration {
     pub fn header_byte(&self) -> u8 {
         match *self {
@@ -138,25 +139,28 @@ impl Configuration {
             Self::DeleteGroup => 247,
             Self::ModifyGroup => 246,
             Self::InsertPubkey(_gid, ref _pub_key) => 245,
-            Self::UserDefined(other) => other,
+            Self::UserDefined(other, ref _s_data) => other,
         }
+    }
+    pub fn is_user_defined(&self) -> bool {
+        matches!(self, Self::UserDefined(_id, _sd))
     }
     pub fn as_ct(&self) -> ConfigType {
         self.header_byte() as ConfigType
     }
-    pub fn as_gid(&self) -> GnomeId {
+    pub fn as_gid(&self, g_id: GnomeId) -> GnomeId {
         match *self {
             Self::StartBroadcast(gid, _cid) => gid,
             Self::ChangeBroadcastOrigin(gid, _cid) => gid,
             Self::EndBroadcast(gid, _cid) => gid,
             Self::StartMulticast(gid, _cid) => gid,
             Self::ChangeMulticastOrigin(gid, _cid) => gid,
-            Self::EndMulticast(_cid) => GnomeId(0),
-            Self::CreateGroup => GnomeId(0),
-            Self::DeleteGroup => GnomeId(0),
-            Self::ModifyGroup => GnomeId(0),
+            Self::EndMulticast(_cid) => g_id,
+            Self::CreateGroup => g_id,
+            Self::DeleteGroup => g_id,
+            Self::ModifyGroup => g_id,
             Self::InsertPubkey(gid, ref _pub_key) => gid,
-            Self::UserDefined(_other) => GnomeId(0),
+            Self::UserDefined(_other, ref _s_data) => g_id,
         }
     }
 
@@ -172,7 +176,7 @@ impl Configuration {
             Self::DeleteGroup => 1,
             Self::ModifyGroup => 1,
             Self::InsertPubkey(_gid, pub_key) => 9 + pub_key.len(),
-            Self::UserDefined(_other) => 1,
+            Self::UserDefined(_other, ref s_data) => s_data.len() + 1,
         }
     }
 
@@ -212,7 +216,7 @@ impl Configuration {
                 value.drain(0..9);
                 Self::InsertPubkey(GnomeId(gnome_id), value)
             }
-            other => Self::UserDefined(other),
+            other => Self::UserDefined(other, SyncData::new(value[1..].into()).unwrap()),
         }
     }
     pub fn bytes(&self) -> Vec<u8> {
@@ -221,6 +225,7 @@ impl Configuration {
         for byte in self.content_bytes(true) {
             result_vec.push(byte);
         }
+        // println!("Bytes len: {}", result_vec.len());
         result_vec
     }
 
@@ -289,8 +294,8 @@ impl Configuration {
                     content_bytes.push(*b);
                 }
             }
-            Self::UserDefined(_other) => {
-                //TODO!
+            Self::UserDefined(_other, ref sync_data) => {
+                content_bytes.append(&mut sync_data.clone().bytes())
             }
         }
         content_bytes
@@ -308,8 +313,10 @@ pub enum Signature {
 impl Signature {
     pub fn header_byte(&self) -> u8 {
         if matches!(*self, Signature::Regular(_gid, _)) {
+            // println!("0");
             0
         } else {
+            // println!("255");
             255
         }
     }

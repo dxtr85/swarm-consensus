@@ -7,6 +7,7 @@ use crate::GnomeId;
 use crate::Message;
 use crate::Neighbor;
 use crate::SwarmTime;
+use crate::SyncData;
 
 #[derive(Debug)]
 pub enum ChangeConfig {
@@ -27,6 +28,11 @@ pub enum ChangeConfig {
         id: CastID,
         turn_ended: bool,
     },
+    Custom {
+        id: u8,
+        s_data: SyncData,
+        turn_ended: bool,
+    },
 }
 
 impl ChangeConfig {
@@ -40,6 +46,9 @@ impl ChangeConfig {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::InsertPubkey {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
+            Self::Custom {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
         }
@@ -172,6 +181,13 @@ impl NextState {
                             self.change_config = ChangeConfig::InsertPubkey {
                                 id: *id,
                                 key: key.clone(),
+                                turn_ended: false,
+                            };
+                        }
+                        Configuration::UserDefined(id, s_data) => {
+                            self.change_config = ChangeConfig::Custom {
+                                id: *id,
+                                s_data: s_data.clone(),
                                 turn_ended: false,
                             };
                         }
