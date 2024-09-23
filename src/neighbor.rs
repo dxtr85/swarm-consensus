@@ -298,7 +298,7 @@ impl Neighbor {
                             if let Some(sender) = self.active_unicasts.get(&id) {
                                 let _ = sender.send(c_msg.get_data().unwrap());
                             } else {
-                                println!("Could not find Unicast with id: {:?}", id);
+                                eprintln!("Could not find Unicast with id: {:?}", id);
                             }
                         }
                     }
@@ -340,7 +340,7 @@ impl Neighbor {
                 }
             } //TODO
             Signature::Extended(gid, ref pubkey_bytes, ref sign) => {
-                println!("Extended signature verification...");
+                eprintln!("Extended signature verification...");
                 (swarm.verify)(gid, pubkey_bytes, round_start, bytes, sign)
             }
         }
@@ -365,10 +365,10 @@ impl Neighbor {
             },
         ) = self.receiver.try_recv()
         {
-            println!("{}  <  {}", self.id, message);
+            eprintln!("{}  <  {}", self.id, message);
 
             if message.swarm_time.0 < last_accepted_message.swarm_time.0 {
-                println!("Old message, ignoring");
+                eprintln!("Old message, ignoring");
                 continue;
             }
             if message.header == last_accepted_message.header
@@ -376,7 +376,7 @@ impl Neighbor {
                 && message.neighborhood.0 as u32 >= self.swarm_diameter.0
             // && message.neighborhood == Neighborhood(7)
             {
-                println!("Ignoring: {}", message);
+                eprintln!("Ignoring: {}", message);
                 if let Payload::KeepAlive(avail_bandwith) = message.payload {
                     self.available_bandwith = avail_bandwith;
                 }
@@ -503,7 +503,7 @@ impl Neighbor {
                             println!("This is not possible too");
                         }
                         Header::Reconfigure(_ct, _gid) => {
-                            println!("Sending Block in Reconfigure header is not allowed");
+                            eprintln!("Sending Block in Reconfigure header is not allowed");
                         }
                     };
                 }
@@ -528,12 +528,12 @@ impl Neighbor {
     fn verify_policy(&self, message: &Message, swarm: &Swarm) -> bool {
         match message.header {
             Header::Reconfigure(c_id, ref gnome_id) => {
-                println!("Verify Reconfigure policy...");
+                eprintln!("Verify Reconfigure policy...");
                 swarm.check_config_policy(gnome_id, c_id, swarm)
             }
             Header::Block(_b_id) => {
                 if let Payload::Block(_bid, ref _sign, ref data) = message.payload {
-                    println!("Verify Data policy...");
+                    eprintln!("Verify Data policy...");
                     match _sign {
                         Signature::Regular(gnome_id, _s) => {
                             swarm.check_data_policy(gnome_id, swarm, data.first_byte())
@@ -547,7 +547,7 @@ impl Neighbor {
                 }
             }
             _ => {
-                println!("Verify policy should not be called on {:?}", message);
+                eprintln!("Verify policy should not be called on {:?}", message);
                 true
             }
         }
@@ -671,7 +671,7 @@ impl Neighbor {
         header: &Header,
     ) -> bool {
         if self.swarm_time > *swarm_time {
-            println!(
+            eprintln!(
                 "Received a message with older swarm_time {} than previous {}!",
                 swarm_time, self.swarm_time
             );
@@ -712,13 +712,13 @@ impl Neighbor {
                 true
             };
             if !hood_increased {
-                println!(
+                eprintln!(
                     "{} fail hood_increased prev:{:?} curr:{} recv:{} ",
                     swarm_time, self.prev_neighborhood, self.neighborhood, neighborhood
                 );
             }
             if !hood_inc_limited {
-                println!(
+                eprintln!(
                     "{} fail hood_inc_limited neighbor {} <= {} gnome",
                     swarm_time,
                     neighborhood.0,
@@ -731,7 +731,7 @@ impl Neighbor {
             let no_backdating =
                 *swarm_time - self.round_start < (self.swarm_diameter + self.swarm_diameter);
             if !no_backdating {
-                println!(
+                eprintln!(
                     "backdating: {}-{}<{}",
                     swarm_time, self.round_start, self.swarm_diameter
                 );
