@@ -6,4 +6,5 @@ use crate::SwarmID;
 pub enum GnomeToManager {
     NeighboringSwarm(SwarmID, GnomeId, String),
     AddNeighborToSwarm(SwarmID, String, Neighbor),
+    Disconnected,
 }

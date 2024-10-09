@@ -726,8 +726,9 @@ impl Gnome {
         }
         (exit_app, new_user_proposal)
     }
-    fn serve_manager_requests(&mut self) -> bool {
+    fn serve_manager_requests(&mut self) -> (bool, bool) {
         let mut any_data_processed = false;
+        let mut bye = false;
         while let Ok(request) = self.mgr_receiver.try_recv() {
             any_data_processed = true;
             match request {
@@ -756,11 +757,14 @@ impl Gnome {
                     //TODO
                 }
                 ManagerToGnome::Disconnect => {
-                    //TODO
+                    self.bye_all();
+                    let _ = self.mgr_sender.send(GnomeToManager::Disconnected);
+                    bye = true;
+                    return (any_data_processed, bye);
                 }
             }
         }
-        any_data_processed
+        (any_data_processed, bye)
     }
     // ongoing requests should be used to track which neighbor is currently selected for
     // making a connection with another neighbor.
@@ -864,6 +868,19 @@ impl Gnome {
         }
     }
 
+    fn bye_all(&mut self) {
+        eprintln!("Sending bye to all Neighbors…");
+        let bye = Message::bye();
+        for neighbor in &mut self.fast_neighbors {
+            neighbor.send_out(bye.clone());
+        }
+        for neighbor in &mut self.slow_neighbors {
+            neighbor.send_out(bye.clone());
+        }
+        for neighbor in &mut self.refreshed_neighbors {
+            neighbor.send_out(bye.clone());
+        }
+    }
     fn serve_connect_request(
         &mut self,
         id: u8,
@@ -1445,10 +1462,12 @@ impl Gnome {
             // println!("Sleeping for: {:?}", sleep_time);
             std::thread::sleep(sleep_time);
             // println!("Sleep is over");
-            let (exit_app, new_user_proposal) = self.serve_user_requests(&mut app_sync_hash);
+            let (mut exit_app, new_user_proposal) = self.serve_user_requests(&mut app_sync_hash);
             was_loop_iteration_busy |= self.serve_internal();
             was_loop_iteration_busy |= self.serve_user_data();
-            was_loop_iteration_busy |= self.serve_manager_requests();
+            let (mgr_busy, bye) = self.serve_manager_requests();
+            exit_app |= bye;
+            was_loop_iteration_busy |= mgr_busy;
             was_loop_iteration_busy |= self.serve_sync_requests(app_sync_hash);
             was_loop_iteration_busy |= self.serve_neighbors_requests(app_sync_hash, true);
             was_loop_iteration_busy |= self.serve_neighbors_requests(app_sync_hash, false);
@@ -1492,22 +1511,22 @@ impl Gnome {
                 //TODO make use of available_bandwith during multicasting setup
             }
             let advance_to_next_turn = fast_advance_to_next_turn || slow_advance_to_next_turn;
-            let mut new_proposal = new_user_proposal || fast_new_proposal || slow_new_proposal;
+            let new_proposal = new_user_proposal || fast_new_proposal || slow_new_proposal;
 
             // TODO: when round ends drop slow neighbors with a bye message
             // Those neighbors will need to start over again
-            if !new_proposal && !fast_advance_to_next_turn && !self.slow_neighbors.is_empty() {
-                eprint!("GSN ");
-                std::thread::sleep(Duration::from_nanos(sleep_nsec >> 1));
-                let (
-                    _have_responsive_neighbors,
-                    _slow_advance_to_next_turn,
-                    slow_new_proposal,
-                    slow_any_data_processed,
-                ) = self.try_recv(app_sync_hash, false);
-                was_loop_iteration_busy |= slow_any_data_processed;
-                new_proposal |= slow_new_proposal;
-            }
+            // if !new_proposal && !fast_advance_to_next_turn && !self.slow_neighbors.is_empty() {
+            //     eprint!("GSN ");
+            //     std::thread::sleep(Duration::from_nanos(sleep_nsec >> 1));
+            //     let (
+            //         _have_responsive_neighbors,
+            //         _slow_advance_to_next_turn,
+            //         slow_new_proposal,
+            //         slow_any_data_processed,
+            //     ) = self.try_recv(app_sync_hash, false);
+            //     was_loop_iteration_busy |= slow_any_data_processed;
+            //     new_proposal |= slow_new_proposal;
+            // }
 
             // || refr_new_proposal;
             // TODO: here we need to make use of self.chill_out attribute
@@ -1563,12 +1582,9 @@ impl Gnome {
                 }
             }
 
+            //TODO: following conditional logic is a terrible mess, it begs for refactoring
             let timeout = timer.elapsed() >= self.timeout_duration;
-            if advance_to_next_turn || self.send_immediate || timeout && have_responsive_neighbors
-            // && !(self.fast_neighbors.is_empty()
-            //     && self.slow_neighbors.is_empty()
-            //     && self.refreshed_neighbors.is_empty())
-            {
+            if advance_to_next_turn || self.send_immediate || timeout && have_responsive_neighbors {
                 self.update_state();
                 if !new_proposal && !self.send_immediate {
                     // println!("swap&send");
@@ -1590,6 +1606,7 @@ impl Gnome {
                 timer = Instant::now();
                 self.timeout_duration = Duration::from_millis(500);
             }
+
             if exit_app {
                 break;
             };
@@ -1608,6 +1625,7 @@ impl Gnome {
                 }
             }
         } //loop
+        eprintln!("Gnome is done");
     }
     pub fn has_neighbor(&self, id: GnomeId) -> bool {
         for neighbor in &self.slow_neighbors {
@@ -1980,10 +1998,15 @@ impl Gnome {
         }
         self.swarm_time = n_st;
         self.header = n_head;
-        // println!("Set payload: {:?}", n_payload);
+
         self.payload = n_payload;
-        if self.header == Header::Sync {
+        if self.header == Header::Sync
+            && self.round_start > SwarmTime(0)
+            && self.neighborhood.0 <= 1
+        {
             if let Some(mut proposal) = self.proposals.pop_back() {
+                // We are submitting new proposal, so we have to reset NHood
+                self.neighborhood = Neighborhood(0);
                 let extend = !self.swarm.key_reg.has_key(self.id);
                 let proposal_can_extend = proposal.can_be_extended();
                 // Now we need to cover cases
@@ -2091,7 +2114,8 @@ impl Gnome {
             if !self.slow_neighbors.is_empty() {
                 // TODO: we need to store it as gnome's attribute and allow for
                 //       user to change it (default is 87.5%)
-                let drop_treshold: u8 = 7 * self.swarm_diameter.0 as u8;
+                // let drop_treshold: u8 = 7 * self.swarm_diameter.0 as u8;
+                let drop_treshold: u8 = 0;
                 let mut slow_neighbors = std::mem::take(&mut self.slow_neighbors);
                 while let Some(mut neighbor) = slow_neighbors.pop() {
                     neighbor.shift_timeout();
