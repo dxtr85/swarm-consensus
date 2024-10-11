@@ -1,10 +1,13 @@
 use crate::GnomeId;
 use crate::Neighbor;
 use crate::SwarmID;
+use crate::SwarmName;
 
 #[derive(Debug)]
 pub enum GnomeToManager {
-    NeighboringSwarm(SwarmID, GnomeId, String),
-    AddNeighborToSwarm(SwarmID, String, Neighbor),
+    FounderDetermined(SwarmID, GnomeId),
+    NeighboringSwarm(SwarmID, GnomeId, SwarmName),
+    AddNeighborToSwarm(SwarmID, SwarmName, Neighbor),
+    ActiveNeighbors(SwarmID, Vec<GnomeId>),
     Disconnected,
 }

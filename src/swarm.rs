@@ -34,8 +34,54 @@ pub enum SwarmType {
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub struct SwarmID(pub u8);
 
-pub struct Swarm {
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct SwarmName {
+    pub founder: GnomeId,
     pub name: String,
+}
+
+impl SwarmName {
+    pub fn new(founder: GnomeId, name: String) -> Result<Self, ()> {
+        // TODO: or maybe max len == 55 so that entire SwarmName does not exceed 64 bytes?
+        if name.len() > 119 {
+            Err(())
+        } else {
+            Ok(SwarmName { founder, name })
+        }
+    }
+    pub fn from(v: Vec<u8>) -> Result<Self, ()> {
+        eprintln!("SwarmName from {} bytes: {:?}", v.len(), v);
+        if v.len() != 9 + v[8] as usize {
+            Err(())
+        } else {
+            let founder: GnomeId = GnomeId(u64::from_be_bytes([
+                v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
+            ]));
+            let name = String::from_utf8(v[9..].try_into().unwrap()).unwrap();
+            Ok(SwarmName { founder, name })
+        }
+    }
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let name_len = self.name.len();
+        let mut bytes = Vec::with_capacity(9 + name_len);
+        for byte in self.founder.0.to_be_bytes() {
+            bytes.push(byte);
+        }
+        bytes.push(name_len as u8);
+        for byte in self.name.clone().into_bytes() {
+            bytes.push(byte);
+        }
+        bytes
+    }
+}
+impl fmt::Display for SwarmName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.founder, self.name)
+    }
+}
+
+pub struct Swarm {
+    pub name: SwarmName,
     pub id: SwarmID,
     pub swarm_type: SwarmType,
     pub founder: GnomeId,
@@ -95,7 +141,7 @@ pub struct Swarm {
 
 impl Swarm {
     pub fn join(
-        name: String,
+        name: SwarmName,
         app_sync_hash: u64,
         id: SwarmID,
         gnome_id: GnomeId,
@@ -412,6 +458,7 @@ impl Swarm {
     }
     pub fn set_founder(&mut self, gnome_id: GnomeId) {
         self.founder = gnome_id;
+        self.name.founder = gnome_id;
         let mut tree = CapabiliTree::create();
         tree.insert(gnome_id);
         self.capability_reg.insert(Capabilities::Founder, tree);

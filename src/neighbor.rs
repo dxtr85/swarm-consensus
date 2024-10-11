@@ -17,6 +17,7 @@ use crate::NetworkSettings;
 use crate::Signature;
 use crate::Swarm;
 use crate::SwarmID;
+use crate::SwarmName;
 use crate::SwarmTime;
 use crate::SwarmType;
 use crate::SyncData;
@@ -50,7 +51,7 @@ pub struct Neighbor {
     cast_receiver: Receiver<CastMessage>,
     pub sender: Sender<WrappedMessage>,
     shared_sender: Sender<(
-        String,
+        SwarmName,
         Sender<Message>,
         Sender<CastMessage>,
         Receiver<WrappedMessage>,
@@ -71,7 +72,7 @@ pub struct Neighbor {
     active_unicasts: HashMap<CastID, Sender<CastData>>,
     active_broadcasts: HashMap<CastID, Sender<WrappedMessage>>,
     pub available_bandwith: u64,
-    pub member_of_swarms: Vec<String>,
+    pub member_of_swarms: Vec<SwarmName>,
     timeouts: [u8; 8],
     pub new_message_recieved: bool,
 }
@@ -91,6 +92,7 @@ pub struct SwarmSyncResponse {
     pub chill_phase: u16,
     pub founder: GnomeId,
     pub swarm_time: SwarmTime,
+    pub round_start: SwarmTime,
     pub swarm_type: SwarmType,
     pub app_root_hash: u64,
     pub key_reg_size: u8,
@@ -112,8 +114,8 @@ pub enum NeighborRequest {
     UnsubscribeRequest(bool, CastID), // We send this when no longer interested in bcast
     SourceDrained(bool, CastID),      // We send this to our subscribers to indicate they
     // have to find another source for given cast, give them some time to do so
-    CreateNeighbor(GnomeId, String),
-    SwarmJoinedInfo(String),
+    CreateNeighbor(GnomeId, SwarmName),
+    SwarmJoinedInfo(SwarmName),
     Custom(u8, CastData),
 }
 
@@ -141,14 +143,14 @@ impl Neighbor {
         cast_receiver: Receiver<CastMessage>,
         sender: Sender<WrappedMessage>,
         shared_sender: Sender<(
-            String,
+            SwarmName,
             Sender<Message>,
             Sender<CastMessage>,
             Receiver<WrappedMessage>,
         )>,
         swarm_time: SwarmTime,
         swarm_diameter: SwarmTime,
-        member_of_swarms: Vec<String>,
+        member_of_swarms: Vec<SwarmName>,
     ) -> Self {
         Neighbor {
             id,
@@ -180,7 +182,7 @@ impl Neighbor {
     pub fn get_shared_sender(
         &self,
     ) -> Sender<(
-        String,
+        SwarmName,
         Sender<Message>,
         Sender<CastMessage>,
         Receiver<WrappedMessage>,
@@ -192,7 +194,7 @@ impl Neighbor {
     // new swarm that Gnome want's to share with Neighbor
     pub fn clone_to_swarm(
         &self,
-        swarm_name: String,
+        swarm_name: SwarmName,
         send: Sender<Message>,
         c_send: Sender<CastMessage>,
         recv: Receiver<WrappedMessage>,

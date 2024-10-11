@@ -21,6 +21,7 @@ use crate::Message;
 use crate::Neighbor;
 use crate::NeighborRequest;
 use crate::NextState;
+use crate::SwarmName;
 use crate::SwarmSyncResponse;
 use crate::SwarmTime;
 use crate::SyncData;
@@ -38,7 +39,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 use std::time::Instant;
 
-#[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialOrd, Ord, Eq, Debug, Hash)]
 pub struct GnomeId(pub u64);
 impl GnomeId {
     pub fn bytes(&self) -> [u8; 8] {
@@ -52,6 +53,12 @@ impl GnomeId {
     }
     pub fn is_any(&self) -> bool {
         self.0 == 0
+    }
+}
+
+impl PartialEq for GnomeId {
+    fn eq(&self, other: &GnomeId) -> bool {
+        self.is_any() || other.is_any() || self.0 == other.0
     }
 }
 impl fmt::Display for GnomeId {
@@ -735,9 +742,16 @@ impl Gnome {
                 ManagerToGnome::ProvideNeighborsToSwarm(swarm_name, neighbor_id) => {
                     //TODO
                     eprintln!(
-                        "Gnome {} received neighbor request for {}",
-                        self.swarm.name, swarm_name
+                        "Gnome {} received neighbor request for {} eq: {}",
+                        self.id.0,
+                        swarm_name.founder.0,
+                        swarm_name.founder.0 == self.id.0
                     );
+                    // if !swarm_name.founder.is_any() && swarm_name.founder == self.id {
+                    if swarm_name.founder.0 == self.id.0 {
+                        eprintln!("ignoring loop");
+                        continue;
+                    }
                     self.send_neighbor_request(
                         neighbor_id,
                         NeighborRequest::CreateNeighbor(self.id, swarm_name),
@@ -749,9 +763,10 @@ impl Gnome {
                         NeighborRequest::CreateNeighbor(self.id, self.swarm.name.clone()),
                     ));
                     self.add_neighbor(neighbor);
+                    self.notify_mgr_about_neighbors();
                 }
-                ManagerToGnome::SwarmJoined(swarm_name) => {
-                    self.notify_neighbors_about_new_swarm(swarm_name);
+                ManagerToGnome::SwarmJoined(swarm_name, n_ids) => {
+                    self.notify_neighbors_about_new_swarm(swarm_name, n_ids);
                 }
                 ManagerToGnome::Status => {
                     //TODO
@@ -800,9 +815,11 @@ impl Gnome {
             return;
         }
         let mut id: u8 = 0;
+        eprintln!("Have enough neighbors for ongoing requests");
         while self.ongoing_requests.contains_key(&id) {
             id += 1;
         }
+        eprintln!("Ongoing count: {}", id);
         let mut queried_neighbor: Option<GnomeId> = None;
         for neigh in &mut self.fast_neighbors {
             if neigh.id != origin {
@@ -843,19 +860,25 @@ impl Gnome {
         self.ongoing_requests.insert(id, or);
     }
 
-    fn notify_neighbors_about_new_swarm(&mut self, swarm_name: String) {
+    fn notify_neighbors_about_new_swarm(&mut self, swarm_name: SwarmName, n_ids: Vec<GnomeId>) {
         let req = NeighborRequest::SwarmJoinedInfo(swarm_name);
         for neighbor in &mut self.fast_neighbors {
-            neighbor.request_data(req.clone());
+            if n_ids.contains(&neighbor.id) {
+                neighbor.request_data(req.clone());
+            }
         }
         for neighbor in &mut self.slow_neighbors {
-            neighbor.request_data(req.clone());
+            if n_ids.contains(&neighbor.id) {
+                neighbor.request_data(req.clone());
+            }
         }
         for neighbor in &mut self.refreshed_neighbors {
-            neighbor.request_data(req.clone());
+            if n_ids.contains(&neighbor.id) {
+                neighbor.request_data(req.clone());
+            }
         }
     }
-    fn request_neighbors_for_swarm(&mut self, swarm_name: String) {
+    fn request_neighbors_for_swarm(&mut self, swarm_name: SwarmName) {
         let req = NeighborRequest::CreateNeighbor(self.id, swarm_name.clone());
         for neighbor in &mut self.fast_neighbors {
             neighbor.request_data(req.clone());
@@ -1180,8 +1203,9 @@ impl Gnome {
 
         let sync_response = SwarmSyncResponse {
             chill_phase,
-            founder: self.swarm.founder,
+            founder: self.swarm.name.founder,
             swarm_time: self.swarm_time,
+            round_start: self.round_start,
             swarm_type: self.swarm.swarm_type,
             app_root_hash: app_sync_hash,
             key_reg_size: self.swarm.key_reg.byte(),
@@ -1296,7 +1320,7 @@ impl Gnome {
                         pending_ongoing_requests.push((neighbor.id, network_settings));
                     }
                     NeighborRequest::ConnectRequest(id, gnome_id, network_settings) => {
-                        // println!("ConnReq");
+                        eprintln!("ConnReq");
                         if let Some(response) =
                             self.serve_connect_request(id, neighbor.id, gnome_id, network_settings)
                         {
@@ -1324,7 +1348,7 @@ impl Gnome {
                         neighbor.start_new_round(self.swarm_time);
                     }
                     NeighborRequest::SwarmJoinedInfo(swarm_name) => {
-                        // println!("SwarmJoinedInfo");
+                        eprintln!("SwarmJoinedInfo {}", swarm_name);
                         let _ = self.mgr_sender.send(GnomeToManager::NeighboringSwarm(
                             self.swarm.id,
                             neighbor.id,
@@ -1434,6 +1458,7 @@ impl Gnome {
             self.serve_manager_requests();
         }
         eprintln!("Have neighbors!");
+        self.notify_mgr_about_neighbors();
         let mut available_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
             band
         } else {
@@ -1601,7 +1626,7 @@ impl Gnome {
                     // TODO: figure out some better algo
                     && available_bandwith > 256
                 {
-                    self.query_for_new_neighbors();
+                    // self.query_for_new_neighbors();
                 }
                 timer = Instant::now();
                 self.timeout_duration = Duration::from_millis(500);
@@ -1646,14 +1671,33 @@ impl Gnome {
         false
     }
 
+    fn notify_mgr_about_neighbors(&self) {
+        let s_id = self.swarm.id;
+        let mut n_ids = vec![];
+        // for neighbor in &self.slow_neighbors {
+        //     }
+        // }
+        for neighbor in &self.fast_neighbors {
+            n_ids.push(neighbor.id);
+        }
+        for neighbor in &self.refreshed_neighbors {
+            n_ids.push(neighbor.id);
+        }
+        let _ = self
+            .mgr_sender
+            .send(GnomeToManager::ActiveNeighbors(s_id, n_ids));
+    }
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
+        eprintln!("add_neighbor");
         let neighbor_already_exists = self.has_neighbor(neighbor.id);
         for swarm_name in &neighbor.member_of_swarms {
-            let _ = self.mgr_sender.send(GnomeToManager::NeighboringSwarm(
-                self.swarm.id,
-                neighbor.id,
-                swarm_name.clone(),
-            ));
+            if !swarm_name.founder.is_any() {
+                let _ = self.mgr_sender.send(GnomeToManager::NeighboringSwarm(
+                    self.swarm.id,
+                    neighbor.id,
+                    swarm_name.clone(),
+                ));
+            }
         }
         if neighbor_already_exists {
             eprintln!("Replacing a neighbor");
@@ -1791,7 +1835,7 @@ impl Gnome {
                 swarm_sync_response.app_root_hash == app_root_hash,
             ));
             eprintln!(
-                "Setting founder from: {} to {}",
+                "1 Setting founder from: {} to {}",
                 self.swarm.founder, swarm_sync_response.founder
             );
             self.swarm.set_founder(swarm_sync_response.founder);
@@ -1799,8 +1843,12 @@ impl Gnome {
             self.swarm.key_reg =
                 KeyRegistry::from(&mut vec![swarm_sync_response.key_reg_size, 0, 0]);
             self.swarm_time = swarm_sync_response.swarm_time;
-            self.round_start = swarm_sync_response.swarm_time;
+            self.round_start = swarm_sync_response.round_start;
             self.next_state.swarm_time = swarm_sync_response.swarm_time;
+            let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
+                self.swarm.id,
+                self.swarm.founder,
+            ));
             while let Some((g_id, pubkey)) = swarm_sync_response.key_reg_pairs.pop() {
                 self.swarm.key_reg.insert(g_id, pubkey);
             }
@@ -1815,22 +1863,28 @@ impl Gnome {
             }
         } else if response_opt.is_none() {
             let _ = self.sender.send(GnomeToApp::AppDataSynced(true));
-            if remote_id.0 > 0 {
+            if remote_id.0 > 0 && self.swarm.name.founder.is_any() {
                 // TODO: both of us want to Sync to empty Swarm
                 //       we need to determine who is Founder
                 if self.id > remote_id {
                     eprintln!(
-                        "Setting founder from: {} to {}",
+                        "2 Setting founder from: {} to {}",
                         self.swarm.founder, self.id
                     );
                     self.swarm.set_founder(self.id);
                 } else {
                     eprintln!(
-                        "Setting founder from: {} to {}",
+                        "3 Setting founder from: {} to {}",
                         self.swarm.founder, remote_id
                     );
                     self.swarm.set_founder(remote_id);
                 }
+                let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
+                    self.swarm.id,
+                    self.swarm.founder,
+                ));
+            } else {
+                eprintln!("Unable to determine Founder");
             }
             // println!("Sync response: {}", response);
             self.send_all(available_bandwith);
@@ -2501,9 +2555,11 @@ impl Gnome {
                                 self.chill_out.0 = false;
                             }
                             eprintln!(
-                                "Setting founder from {} to {}",
+                                "4 Setting founder from {} to {}",
                                 self.swarm.founder, swarm_sync_response.founder
                             );
+                            self.swarm_time = swarm_sync_response.swarm_time;
+                            self.round_start = swarm_sync_response.round_start;
                             self.swarm.set_founder(swarm_sync_response.founder);
                             self.swarm.swarm_type = swarm_sync_response.swarm_type;
                             self.swarm.key_reg = KeyRegistry::from(&mut vec![
@@ -2511,6 +2567,7 @@ impl Gnome {
                                 0,
                                 0,
                             ]);
+                            self.next_state.swarm_time = swarm_sync_response.swarm_time;
                             while let Some((id, pubkey)) = swarm_sync_response.key_reg_pairs.pop() {
                                 self.swarm.key_reg.insert(id, pubkey);
                             }

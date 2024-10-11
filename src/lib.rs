@@ -23,6 +23,7 @@ pub use crate::policy::Policy;
 pub use crate::requirement::Requirement;
 pub use crate::swarm::Swarm;
 pub use crate::swarm::SwarmID;
+pub use crate::swarm::SwarmName;
 pub use crate::swarm::SwarmTime;
 pub use crate::swarm::SwarmType;
 pub use data::CastData;
@@ -73,7 +74,7 @@ pub enum ToGnome {
     EndBroadcast(CastID),
     UnsubscribeBroadcast(CastID),
     NetworkSettingsUpdate(bool, IpAddr, u16, Nat),
-    SwarmNeighbors(String),
+    SwarmNeighbors(SwarmName),
     Reconfigure(u8, SyncData),
 }
 
@@ -91,8 +92,8 @@ pub enum GnomeToApp {
     Multicast(SwarmID, CastID, Receiver<CastData>),
     BroadcastOrigin(SwarmID, CastID, Sender<CastData>, Receiver<CastData>),
     Broadcast(SwarmID, CastID, Receiver<CastData>),
-    Neighbors(String, Vec<GnomeId>),
-    NewNeighbor(String, Neighbor),
+    Neighbors(SwarmName, Vec<GnomeId>),
+    NewNeighbor(SwarmName, Neighbor),
     ToGnome(NeighborResponse),
     BCastData(CastID, CastData),
     Custom(bool, u8, GnomeId, CastData),
@@ -159,7 +160,7 @@ impl fmt::Debug for GnomeToApp {
 }
 
 pub struct NotificationBundle {
-    pub swarm_name: String,
+    pub swarm_name: SwarmName,
     pub request_sender: Sender<ToGnome>,
     pub token_sender: Sender<u64>,
     pub network_settings_receiver: Receiver<NetworkSettings>,
