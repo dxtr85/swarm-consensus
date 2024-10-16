@@ -612,7 +612,7 @@ impl Gnome {
                     }
                     let _ = self
                         .sender
-                        .send(GnomeToApp::Neighbors(self.swarm.name.clone(), n_ids));
+                        .send(GnomeToApp::Neighbors(self.swarm.id, n_ids));
                 }
                 ToGnome::StartUnicast(gnome_id) => {
                     // println!("Received StartUnicast {:?}", gnome_id);
@@ -1683,6 +1683,10 @@ impl Gnome {
         for neighbor in &self.refreshed_neighbors {
             n_ids.push(neighbor.id);
         }
+        //TODO: maybe we should not send to beth App & Gnome mgr?
+        let _ = self
+            .sender
+            .send(GnomeToApp::Neighbors(self.swarm.id, n_ids.clone()));
         let _ = self
             .mgr_sender
             .send(GnomeToManager::ActiveNeighbors(s_id, n_ids));
@@ -1739,6 +1743,12 @@ impl Gnome {
 
     pub fn send_all(&mut self, available_bandwith: u64) {
         let message = self.prepare_message();
+        // TODO: we need to send something in case policy is not fullfilled
+        // now we send an invalid message over the network
+        // for all of our peers to drop us. We are also wasting bandwith.
+        if !message.header.is_sync() && !self.swarm.verify_policy(&message) {
+            eprintln!("Should not send, policy not fulfilled!");
+        }
         let keep_alive = message.set_payload(Payload::KeepAlive(available_bandwith));
         for neighbor in &mut self.fast_neighbors {
             if neighbor.header == message.header {
@@ -1836,7 +1846,7 @@ impl Gnome {
             ));
             eprintln!(
                 "1 Setting founder from: {} to {}",
-                self.swarm.founder, swarm_sync_response.founder
+                self.swarm.name.founder, swarm_sync_response.founder
             );
             self.swarm.set_founder(swarm_sync_response.founder);
             self.swarm.swarm_type = swarm_sync_response.swarm_type;
@@ -1847,7 +1857,7 @@ impl Gnome {
             self.next_state.swarm_time = swarm_sync_response.swarm_time;
             let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
                 self.swarm.id,
-                self.swarm.founder,
+                self.swarm.name.founder,
             ));
             while let Some((g_id, pubkey)) = swarm_sync_response.key_reg_pairs.pop() {
                 self.swarm.key_reg.insert(g_id, pubkey);
@@ -1869,20 +1879,22 @@ impl Gnome {
                 if self.id > remote_id {
                     eprintln!(
                         "2 Setting founder from: {} to {}",
-                        self.swarm.founder, self.id
+                        self.swarm.name.founder, self.id
                     );
                     self.swarm.set_founder(self.id);
                 } else {
                     eprintln!(
                         "3 Setting founder from: {} to {}",
-                        self.swarm.founder, remote_id
+                        self.swarm.name.founder, remote_id
                     );
                     self.swarm.set_founder(remote_id);
                 }
                 let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
                     self.swarm.id,
-                    self.swarm.founder,
+                    self.swarm.name.founder,
                 ));
+            } else if !self.swarm.name.founder.is_any() {
+                self.swarm.set_founder(self.swarm.name.founder);
             } else {
                 eprintln!("Unable to determine Founder");
             }
@@ -2556,7 +2568,7 @@ impl Gnome {
                             }
                             eprintln!(
                                 "4 Setting founder from {} to {}",
-                                self.swarm.founder, swarm_sync_response.founder
+                                self.swarm.name.founder, swarm_sync_response.founder
                             );
                             self.swarm_time = swarm_sync_response.swarm_time;
                             self.round_start = swarm_sync_response.round_start;

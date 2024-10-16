@@ -413,8 +413,8 @@ impl Neighbor {
                 } else {
                     message.pack(r_st, r_n, r_header, is_config, Some((signature, bytes)));
                 }
-                if !self.verify_policy(&message, swarm) {
-                    println!("Policy not fulfilled");
+                if !swarm.verify_policy(&message) {
+                    eprintln!("Policy not fulfilled");
                     drop_me = true;
                     return (message_recvd, false, new_proposal, drop_me);
                 }
@@ -527,33 +527,6 @@ impl Neighbor {
         (message_recvd, sanity_passed, new_proposal, drop_me)
     }
 
-    fn verify_policy(&self, message: &Message, swarm: &Swarm) -> bool {
-        match message.header {
-            Header::Reconfigure(c_id, ref gnome_id) => {
-                eprintln!("Verify Reconfigure policy...");
-                swarm.check_config_policy(gnome_id, c_id, swarm)
-            }
-            Header::Block(_b_id) => {
-                if let Payload::Block(_bid, ref _sign, ref data) = message.payload {
-                    eprintln!("Verify Data policy...");
-                    match _sign {
-                        Signature::Regular(gnome_id, _s) => {
-                            swarm.check_data_policy(gnome_id, swarm, data.first_byte())
-                        }
-                        Signature::Extended(gnome_id, _p, _s) => {
-                            swarm.check_data_policy(gnome_id, swarm, data.first_byte())
-                        }
-                    }
-                } else {
-                    false
-                }
-            }
-            _ => {
-                eprintln!("Verify policy should not be called on {:?}", message);
-                true
-            }
-        }
-    }
     fn serve_neighbor_response(&mut self, response: NeighborResponse) {
         match response {
             NeighborResponse::Unicast(swarm_id, cast_id) => {

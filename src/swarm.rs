@@ -2,6 +2,8 @@ use crate::gnome::NetworkSettings;
 use crate::gnome_to_manager::GnomeToManager;
 use crate::key_registry::KeyRegistry;
 use crate::manager_to_gnome::ManagerToGnome;
+use crate::message::Header;
+use crate::message::Payload;
 use crate::multicast::Multicast;
 use crate::policy::Policy;
 use crate::requirement::Requirement;
@@ -10,7 +12,9 @@ use crate::Capabilities;
 use crate::Gnome;
 use crate::GnomeId;
 use crate::GnomeToApp;
+use crate::Message;
 use crate::Neighbor;
+use crate::Signature;
 use crate::ToGnome;
 use crate::{CastID, WrappedMessage};
 use std::collections::HashMap;
@@ -84,7 +88,7 @@ pub struct Swarm {
     pub name: SwarmName,
     pub id: SwarmID,
     pub swarm_type: SwarmType,
-    pub founder: GnomeId,
+    // pub founder: GnomeId,
     pub sender: Sender<ToGnome>,
     active_unicasts: HashSet<CastID>,
     active_broadcasts: HashMap<CastID, Multicast>,
@@ -159,19 +163,19 @@ impl Swarm {
         let (sender, request_receiver) = channel::<ToGnome>();
         let (response_sender, receiver) = channel::<GnomeToApp>();
         let mut policy_reg = HashMap::new();
-        policy_reg.insert(Policy::Default, Requirement::None);
-        policy_reg.insert(
-            Policy::DataWithFirstByte(0),
-            Requirement::Has(Capabilities::Founder),
-        );
+        policy_reg.insert(Policy::Default, Requirement::Has(Capabilities::Founder));
+        // policy_reg.insert(
+        //     Policy::DataWithFirstByte(0),
+        //     Requirement::Has(Capabilities::Founder),
+        // );
         // policy_reg.insert(Policy::Data, Requirement::Has(Capabilities::Admin));
-        policy_reg.insert(Policy::Data, Requirement::None);
+        // policy_reg.insert(Policy::Data, Requirement::None);
 
         let swarm = Swarm {
             name,
             id,
             swarm_type: SwarmType::Catalog,
-            founder: GnomeId(0),
+            // founder: GnomeId(0),
             sender: sender.clone(),
             active_unicasts: HashSet::new(),
             active_broadcasts: HashMap::new(),
@@ -221,7 +225,33 @@ impl Swarm {
 
         (sender, receiver)
     }
-
+    pub fn verify_policy(&self, message: &Message) -> bool {
+        match message.header {
+            Header::Reconfigure(c_id, ref gnome_id) => {
+                eprintln!("Verify Reconfigure policy...");
+                self.check_config_policy(gnome_id, c_id)
+            }
+            Header::Block(_b_id) => {
+                if let Payload::Block(_bid, ref _sign, ref data) = message.payload {
+                    eprintln!("Verify Data policy...");
+                    match _sign {
+                        Signature::Regular(gnome_id, _s) => {
+                            self.check_data_policy(gnome_id, data.first_byte())
+                        }
+                        Signature::Extended(gnome_id, _p, _s) => {
+                            self.check_data_policy(gnome_id, data.first_byte())
+                        }
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => {
+                eprintln!("Verify policy should not be called on {:?}", message);
+                true
+            }
+        }
+    }
     pub fn is_unicast_id_available(&self, cast_id: CastID) -> bool {
         !self.active_unicasts.contains(&cast_id)
     }
@@ -444,36 +474,36 @@ impl Swarm {
             vec![]
         }
     }
-    pub fn check_config_policy(&self, gnome_id: &GnomeId, c_id: u8, swarm: &Swarm) -> bool {
+    pub fn check_config_policy(&self, gnome_id: &GnomeId, c_id: u8) -> bool {
         let policy = self.config_to_policy(c_id);
-        if let Some(req) = swarm.policy_reg.get(&policy) {
-            req.is_fullfilled(gnome_id, &swarm.capability_reg)
+        if let Some(req) = self.policy_reg.get(&policy) {
+            req.is_fullfilled(gnome_id, &self.capability_reg)
         } else {
-            swarm
-                .policy_reg
+            self.policy_reg
                 .get(&Policy::Default)
                 .unwrap()
-                .is_fullfilled(gnome_id, &swarm.capability_reg)
+                .is_fullfilled(gnome_id, &self.capability_reg)
         }
     }
     pub fn set_founder(&mut self, gnome_id: GnomeId) {
-        self.founder = gnome_id;
         self.name.founder = gnome_id;
         let mut tree = CapabiliTree::create();
         tree.insert(gnome_id);
         self.capability_reg.insert(Capabilities::Founder, tree);
     }
-    pub fn check_data_policy(&self, gnome_id: &GnomeId, swarm: &Swarm, first_byte: u8) -> bool {
-        if let Some(req) = swarm.policy_reg.get(&Policy::DataWithFirstByte(first_byte)) {
-            req.is_fullfilled(gnome_id, &swarm.capability_reg)
-        } else if let Some(req) = swarm.policy_reg.get(&Policy::Data) {
-            req.is_fullfilled(gnome_id, &swarm.capability_reg)
+    pub fn check_data_policy(&self, gnome_id: &GnomeId, first_byte: u8) -> bool {
+        if let Some(req) = self.policy_reg.get(&Policy::DataWithFirstByte(first_byte)) {
+            eprintln!("poli 1");
+            req.is_fullfilled(gnome_id, &self.capability_reg)
+        } else if let Some(req) = self.policy_reg.get(&Policy::Data) {
+            eprintln!("poli 2");
+            req.is_fullfilled(gnome_id, &self.capability_reg)
         } else {
-            swarm
-                .policy_reg
+            eprintln!("poli 3");
+            self.policy_reg
                 .get(&Policy::Default)
                 .unwrap()
-                .is_fullfilled(gnome_id, &swarm.capability_reg)
+                .is_fullfilled(gnome_id, &self.capability_reg)
         }
     }
 

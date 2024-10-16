@@ -92,7 +92,7 @@ pub enum GnomeToApp {
     Multicast(SwarmID, CastID, Receiver<CastData>),
     BroadcastOrigin(SwarmID, CastID, Sender<CastData>, Receiver<CastData>),
     Broadcast(SwarmID, CastID, Receiver<CastData>),
-    Neighbors(SwarmName, Vec<GnomeId>),
+    Neighbors(SwarmID, Vec<GnomeId>),
     NewNeighbor(SwarmName, Neighbor),
     ToGnome(NeighborResponse),
     BCastData(CastID, CastData),
