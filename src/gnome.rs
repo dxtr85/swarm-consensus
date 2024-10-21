@@ -892,7 +892,7 @@ impl Gnome {
     }
 
     fn bye_all(&mut self) {
-        eprintln!("Sending bye to all Neighbors…");
+        eprintln!("Sending bye to all {:?} Neighbors…", self.swarm.id);
         let bye = Message::bye();
         for neighbor in &mut self.fast_neighbors {
             neighbor.send_out(bye.clone());
