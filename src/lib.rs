@@ -41,6 +41,7 @@ pub use crate::neighbor::NeighborResponse;
 pub use crate::neighbor::Neighborhood;
 pub use multicast::CastContent;
 pub use multicast::CastMessage;
+pub use multicast::CastType;
 mod data;
 mod next_state;
 use crate::next_state::NextState;

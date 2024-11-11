@@ -54,7 +54,7 @@ impl SwarmName {
         }
     }
     pub fn from(v: Vec<u8>) -> Result<Self, ()> {
-        eprintln!("SwarmName from {} bytes: {:?}", v.len(), v);
+        // eprintln!("SwarmName from {} bytes: {:?}", v.len(), v);
         if v.len() != 9 + v[8] as usize {
             Err(())
         } else {
@@ -233,7 +233,7 @@ impl Swarm {
             }
             Header::Block(_b_id) => {
                 if let Payload::Block(_bid, ref _sign, ref data) = message.payload {
-                    eprintln!("Verify Data policy...");
+                    // eprintln!("Verify Data policy...");
                     match _sign {
                         Signature::Regular(gnome_id, _s) => {
                             self.check_data_policy(gnome_id, data.first_byte())
@@ -493,13 +493,13 @@ impl Swarm {
     }
     pub fn check_data_policy(&self, gnome_id: &GnomeId, first_byte: u8) -> bool {
         if let Some(req) = self.policy_reg.get(&Policy::DataWithFirstByte(first_byte)) {
-            eprintln!("poli 1");
+            // eprintln!("poli 1");
             req.is_fullfilled(gnome_id, &self.capability_reg)
         } else if let Some(req) = self.policy_reg.get(&Policy::Data) {
-            eprintln!("poli 2");
+            // eprintln!("poli 2");
             req.is_fullfilled(gnome_id, &self.capability_reg)
         } else {
-            eprintln!("poli 3");
+            // eprintln!("poli 3");
             self.policy_reg
                 .get(&Policy::Default)
                 .unwrap()

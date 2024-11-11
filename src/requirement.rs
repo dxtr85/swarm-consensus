@@ -65,11 +65,11 @@ impl Requirement {
     ) -> bool {
         match self {
             Requirement::None => {
-                eprintln!("Req: None ");
+                // eprintln!("Req: None ");
                 true
             }
             Requirement::Has(capa) => {
-                eprintln!("Req: Has({:?})", capa);
+                // eprintln!("Req: Has({:?})", capa);
                 if let Some(tree) = caps.get(capa) {
                     tree.contains(gnome_id)
                 } else {
@@ -77,11 +77,11 @@ impl Requirement {
                 }
             }
             Requirement::And(req_one, req_two) => {
-                eprintln!("Req: And");
+                // eprintln!("Req: And");
                 req_one.is_fullfilled(gnome_id, caps) && req_two.is_fullfilled(gnome_id, caps)
             }
             Requirement::Or(req_one, req_two) => {
-                eprintln!("Req: Or");
+                // eprintln!("Req: Or");
                 req_one.is_fullfilled(gnome_id, caps) || req_two.is_fullfilled(gnome_id, caps)
             }
         }

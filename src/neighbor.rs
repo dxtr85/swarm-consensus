@@ -246,6 +246,10 @@ impl Neighbor {
                 if let CastContent::Request(NeighborRequest::SwarmSyncRequest(sync_req_params)) =
                     content
                 {
+                    eprintln!(
+                        "Neighbor Received SwarmSyncRequest with hash: {}",
+                        sync_req_params.app_root_hash
+                    );
                     if sync_req_params.app_root_hash != 0 {
                         // TODO we need a more sophisticated sync method
                         // once we enable storing swarm data on disk this will run
@@ -254,6 +258,8 @@ impl Neighbor {
                         // lol
                         panic!("Received SwarmSyncRequest with non zero app_sync_hash!");
                     }
+                } else {
+                    eprintln!("Received unexpected SSRequest content:\n {:?}", content);
                 }
                 return Ok(None);
             };
@@ -342,7 +348,7 @@ impl Neighbor {
                 }
             } //TODO
             Signature::Extended(gid, ref pubkey_bytes, ref sign) => {
-                eprintln!("Extended signature verification...");
+                // eprintln!("Extended signature verification...");
                 (swarm.verify)(gid, pubkey_bytes, round_start, bytes, sign)
             }
         }
@@ -378,7 +384,7 @@ impl Neighbor {
                 && message.neighborhood.0 as u32 >= self.swarm_diameter.0
             // && message.neighborhood == Neighborhood(7)
             {
-                eprintln!("Ignoring: {}", message);
+                // eprintln!("Ignoring: {}", message);
                 if let Payload::KeepAlive(avail_bandwith) = message.payload {
                     self.available_bandwith = avail_bandwith;
                 }
@@ -743,7 +749,7 @@ impl Neighbor {
     pub fn send_out_cast(&mut self, message: CastMessage) {
         // println!("Sending: {:?}", message);
         let _res = self.sender.send(WrappedMessage::Cast(message));
-        // println!("result: {:?}", res);
+        // eprintln!("Cast send result: {:?}", _res);
     }
 
     pub fn send_out(&mut self, message: Message) {

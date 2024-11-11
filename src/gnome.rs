@@ -39,7 +39,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 use std::time::Instant;
 
-#[derive(Clone, Copy, PartialOrd, Ord, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialOrd, PartialEq, Ord, Eq, Debug, Hash)]
 pub struct GnomeId(pub u64);
 impl GnomeId {
     pub fn bytes(&self) -> [u8; 8] {
@@ -56,11 +56,11 @@ impl GnomeId {
     }
 }
 
-impl PartialEq for GnomeId {
-    fn eq(&self, other: &GnomeId) -> bool {
-        self.is_any() || other.is_any() || self.0 == other.0
-    }
-}
+// impl PartialEq for GnomeId {
+//     fn eq(&self, other: &GnomeId) -> bool {
+//         self.is_any() || other.is_any() || self.0 == other.0
+//     }
+// }
 impl fmt::Display for GnomeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GID-{:x}", self.0)
@@ -583,7 +583,10 @@ impl Gnome {
                     new_user_proposal = true;
                 }
                 ToGnome::AddNeighbor(neighbor) => {
-                    eprintln!("{} ADD\tadd a new neighbor", neighbor.id);
+                    eprintln!(
+                        "{} ADD\tadd a new neighbor to {}",
+                        neighbor.id, self.swarm.name
+                    );
                     self.add_neighbor(neighbor);
                 }
                 ToGnome::SwarmNeighbors(swarm_name) => {
@@ -740,28 +743,56 @@ impl Gnome {
             any_data_processed = true;
             match request {
                 ManagerToGnome::ProvideNeighborsToSwarm(swarm_name, neighbor_id) => {
-                    //TODO
+                    //TODO: here mgr decides locally to join an existing remote swarm
+                    //      and asks existing gnome to clone a neighbor for that swarm
+                    // <---- SwarmJoinedInfo from remote Neighbor
+                    // ----> CreateNeighbor to remote (WE ARE HERE)
+                    //       (----> remote internal CreateNeighbor for new channel creation,
+                    //              remote instantiates new channel and clones itself)
+                    //
                     eprintln!(
-                        "Gnome {} received neighbor request for {} eq: {}",
-                        self.id.0,
-                        swarm_name.founder.0,
+                        "Gnome {} received neighbor request for {}. Am I founder?: {}",
+                        self.swarm.name,
+                        swarm_name,
                         swarm_name.founder.0 == self.id.0
                     );
-                    // if !swarm_name.founder.is_any() && swarm_name.founder == self.id {
-                    if swarm_name.founder.0 == self.id.0 {
-                        eprintln!("ignoring loop");
-                        continue;
+                    let (s1, r1) = channel();
+                    let (s2, r2) = channel();
+                    let (s3, r3) = channel();
+                    if let Some(shared_sender) = self.get_shared_sender(neighbor_id) {
+                        let new_neighbor = Neighbor::from_id_channel_time(
+                            neighbor_id,
+                            r1,
+                            r2,
+                            s3,
+                            shared_sender,
+                            SwarmTime(0),
+                            self.swarm_diameter, //TODO
+                            vec![],
+                        );
+                        new_neighbor.clone_to_swarm(swarm_name.clone(), s1, s2, r3);
+                        self.send_noop_from_a_neighbor();
+                        eprintln!(
+                            "Gnome {} requesting add cloned {} to {}",
+                            self.swarm.name, new_neighbor.id, swarm_name
+                        );
+                        let _resp = self.mgr_sender.send(GnomeToManager::AddNeighborToSwarm(
+                            self.swarm.id,
+                            swarm_name,
+                            new_neighbor,
+                        ));
                     }
-                    self.send_neighbor_request(
-                        neighbor_id,
-                        NeighborRequest::CreateNeighbor(self.id, swarm_name),
-                    );
                 }
                 ManagerToGnome::AddNeighbor(mut neighbor) => {
-                    eprintln!("Gnome adding a new neighbor to {}", self.swarm.name);
+                    eprintln!(
+                        "Gnome adding {} neighbor to {}",
+                        neighbor.id, self.swarm.name
+                    );
+                    // eprintln!("Send CN {} foor {}", neighbor.id, self.swarm.name);
                     neighbor.send_out_cast(CastMessage::new_request(
                         NeighborRequest::CreateNeighbor(self.id, self.swarm.name.clone()),
                     ));
+                    self.send_noop_from_a_neighbor();
                     self.add_neighbor(neighbor);
                     self.notify_mgr_about_neighbors();
                 }
@@ -879,6 +910,7 @@ impl Gnome {
         }
     }
     fn request_neighbors_for_swarm(&mut self, swarm_name: SwarmName) {
+        // eprintln!("Send CN 3");
         let req = NeighborRequest::CreateNeighbor(self.id, swarm_name.clone());
         for neighbor in &mut self.fast_neighbors {
             neighbor.request_data(req.clone());
@@ -1138,17 +1170,22 @@ impl Gnome {
         let message = self.prepare_message();
         let mut processed_neighbors = vec![];
         while let Some(mut neighbor) = self.new_neighbors.pop() {
-            // println!("Serving Sync Swarm request");
+            // eprintln!("Serving Sync Swarm request");
             neighbor.try_recv_cast();
+            // eprintln!("SSReq 1");
             if let Some(NeighborRequest::SwarmSyncRequest(SwarmSyncRequestParams {
                 sync_key_reg,
                 sync_capability,
                 sync_policy,
                 sync_broadcast,
                 sync_multicast,
-                app_root_hash: _,
+                app_root_hash: remote_app_root_hash,
             })) = neighbor.requests.pop_back()
             {
+                eprintln!(
+                    "Remote hash: {}, my hash: {}",
+                    remote_app_root_hash, app_sync_hash
+                );
                 any_data_processed = true;
                 neighbor.swarm_time = message.swarm_time;
                 self.send_sync_responses(
@@ -1184,7 +1221,14 @@ impl Gnome {
         let m_count = self.swarm.multicasts_count();
 
         let chill_phase = if self.chill_out.0 {
-            (self.chill_out_max - self.chill_out.1.elapsed()).as_millis() as u16
+            // eprintln!(
+            //     "Max: {:?}, elapsed: {:?}",
+            //     self.chill_out_max,
+            //     self.chill_out.1.elapsed()
+            // );
+            (self.chill_out_max.checked_sub(self.chill_out.1.elapsed()))
+                .unwrap_or(Duration::ZERO)
+                .as_millis() as u16
         } else {
             0
         };
@@ -1278,9 +1322,16 @@ impl Gnome {
         }
     }
 
-    fn serve_neighbors_requests(&mut self, app_sync_hash: u64, refreshed: bool) -> bool {
+    fn serve_neighbors_requests(
+        &mut self,
+        app_sync_hash: u64,
+        refreshed: bool,
+        slow: bool,
+    ) -> bool {
         let mut any_data_processed = false;
-        let mut neighbors = if refreshed {
+        let mut neighbors = if slow {
+            std::mem::take(&mut self.slow_neighbors)
+        } else if refreshed {
             std::mem::take(&mut self.refreshed_neighbors)
         } else {
             std::mem::take(&mut self.fast_neighbors)
@@ -1289,8 +1340,6 @@ impl Gnome {
         for neighbor in &mut neighbors {
             if let Some(request) = neighbor.requests.pop_back() {
                 any_data_processed = true;
-                // println!("Some neighbor request! {:?}", request);
-                // println!("Some neighbor request!");
                 match request {
                     NeighborRequest::UnicastRequest(_swarm_id, cast_ids) => {
                         let (send_d, recv_d) = channel();
@@ -1335,6 +1384,7 @@ impl Gnome {
                         sync_multicast,
                         app_root_hash: _,
                     }) => {
+                        // eprintln!("SSReq 2");
                         self.send_sync_responses(
                             app_sync_hash,
                             sync_key_reg,
@@ -1386,8 +1436,12 @@ impl Gnome {
                             neighbor.id,
                         ));
                     }
+                    //Gnome received a request from a neighbor
                     NeighborRequest::CreateNeighbor(gnome_id, swarm_name) => {
-                        // println!("CreateNeighbor");
+                        eprintln!(
+                            "Gnome (from {}) Received CreateNeighbor {} for {}",
+                            self.swarm.name, gnome_id, swarm_name
+                        );
                         // Here we have received a request on existing channel
                         // this request is from a remote neighbor that wants
                         // to join another swarm
@@ -1407,6 +1461,7 @@ impl Gnome {
                         let (s1, r1) = channel();
                         let (s2, r2) = channel();
                         let (s3, r3) = channel();
+                        // eprintln!("Send CN 4 +NoOp");
                         let _ = s2.send(CastMessage::new_request(NeighborRequest::CreateNeighbor(
                             self.id,
                             swarm_name.clone(),
@@ -1438,7 +1493,9 @@ impl Gnome {
                 }
             }
         }
-        let _ = if refreshed {
+        let _ = if slow {
+            std::mem::replace(&mut self.slow_neighbors, neighbors)
+        } else if refreshed {
             std::mem::replace(&mut self.refreshed_neighbors, neighbors)
         } else {
             std::mem::replace(&mut self.fast_neighbors, neighbors)
@@ -1451,13 +1508,16 @@ impl Gnome {
     }
 
     pub fn do_your_job(mut self, mut app_sync_hash: u64) {
-        eprintln!("Waiting for user/network to provide some Neighbors...");
+        eprintln!(
+            "Waiting for user/network to provide some Neighbors for {}...",
+            self.swarm.name
+        );
         while self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
             // println!("in while");
             let _ = self.serve_user_requests(&mut app_sync_hash);
             self.serve_manager_requests();
         }
-        eprintln!("Have neighbors!");
+        eprintln!("{} have neighbors!", self.swarm.name);
         self.notify_mgr_about_neighbors();
         let mut available_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
             band
@@ -1494,8 +1554,18 @@ impl Gnome {
             exit_app |= bye;
             was_loop_iteration_busy |= mgr_busy;
             was_loop_iteration_busy |= self.serve_sync_requests(app_sync_hash);
-            was_loop_iteration_busy |= self.serve_neighbors_requests(app_sync_hash, true);
-            was_loop_iteration_busy |= self.serve_neighbors_requests(app_sync_hash, false);
+            if !self.refreshed_neighbors.is_empty() {
+                was_loop_iteration_busy |=
+                    self.serve_neighbors_requests(app_sync_hash, true, false);
+            }
+            if !self.fast_neighbors.is_empty() {
+                was_loop_iteration_busy |=
+                    self.serve_neighbors_requests(app_sync_hash, false, false);
+            }
+            if !self.slow_neighbors.is_empty() {
+                was_loop_iteration_busy |=
+                    self.serve_neighbors_requests(app_sync_hash, false, true);
+            }
             was_loop_iteration_busy |= self.serve_ongoing_requests();
             was_loop_iteration_busy |= self.serve_neighbors_casts();
             was_loop_iteration_busy |= self.swarm.serve_casts();
@@ -1670,6 +1740,39 @@ impl Gnome {
         }
         false
     }
+    fn get_shared_sender(
+        &self,
+        neighbor_id: GnomeId,
+    ) -> Option<
+        Sender<(
+            SwarmName,
+            Sender<Message>,
+            Sender<CastMessage>,
+            Receiver<WrappedMessage>,
+        )>,
+    > {
+        for neighbor in &self.fast_neighbors {
+            if neighbor.id == neighbor_id {
+                return Some(neighbor.get_shared_sender());
+            }
+        }
+        for neighbor in &self.refreshed_neighbors {
+            if neighbor.id == neighbor_id {
+                return Some(neighbor.get_shared_sender());
+            }
+        }
+        for neighbor in &self.slow_neighbors {
+            if neighbor.id == neighbor_id {
+                return Some(neighbor.get_shared_sender());
+            }
+        }
+        for neighbor in &self.new_neighbors {
+            if neighbor.id == neighbor_id {
+                return Some(neighbor.get_shared_sender());
+            }
+        }
+        None
+    }
 
     fn notify_mgr_about_neighbors(&self) {
         let s_id = self.swarm.id;
@@ -1683,7 +1786,7 @@ impl Gnome {
         for neighbor in &self.refreshed_neighbors {
             n_ids.push(neighbor.id);
         }
-        //TODO: maybe we should not send to beth App & Gnome mgr?
+        //TODO: maybe we should not send to both App & Gnome mgr?
         let _ = self
             .sender
             .send(GnomeToApp::Neighbors(self.swarm.id, n_ids.clone()));
@@ -1692,7 +1795,7 @@ impl Gnome {
             .send(GnomeToManager::ActiveNeighbors(s_id, n_ids));
     }
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
-        eprintln!("add_neighbor");
+        // eprintln!("add_neighbor");
         let neighbor_already_exists = self.has_neighbor(neighbor.id);
         for swarm_name in &neighbor.member_of_swarms {
             if !swarm_name.founder.is_any() {
@@ -1704,9 +1807,11 @@ impl Gnome {
             }
         }
         if neighbor_already_exists {
-            eprintln!("Replacing a neighbor");
+            // eprintln!("NOT Replacing a neighbor");
             self.drop_neighbor(neighbor.id);
-        } else if self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
+            // self.fast_neighbors.push(neighbor);
+        }
+        if self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
             self.fast_neighbors.push(neighbor);
         } else {
             self.new_neighbors.push(neighbor);
@@ -1790,9 +1895,13 @@ impl Gnome {
     //       We apply those parameters to our state and continue to loop.
     //       If we receive any other message we set ChillOut to false and continue.
     fn presync_with_swarm(&mut self, available_bandwith: u64, app_root_hash: u64) {
+        eprintln!("In presync, hash: {}", app_root_hash);
         let mut remote_id = GnomeId(0);
         let response_opt = if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
-            // println!("{} >S> {}", neighbor.id, message);
+            eprintln!(
+                "Sending {} SyncReq to {} (hash: {})",
+                self.swarm.name, neighbor.id, app_root_hash
+            );
             neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
                 SwarmSyncRequestParams {
                     sync_key_reg: true,
@@ -1813,6 +1922,10 @@ impl Gnome {
                 None
             }
         } else if let Some(neighbor) = self.slow_neighbors.iter_mut().next() {
+            eprintln!(
+                "Slow {} Sending SwarmSyncRequest with hash: {}",
+                neighbor.id, app_root_hash
+            );
             neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
                 SwarmSyncRequestParams {
                     sync_key_reg: true,
@@ -1831,6 +1944,7 @@ impl Gnome {
                 None
             }
         } else {
+            eprintln!("Not Sending SwarmSyncRequest - no neighbors",);
             None
         };
         // TODO: make use of capability_size, policy_size, b_cast_size, m_cast_size, more_keys_follow
@@ -1872,14 +1986,15 @@ impl Gnome {
                 self.chill_out.0 = false;
             }
         } else if response_opt.is_none() {
-            let _ = self.sender.send(GnomeToApp::AppDataSynced(true));
+            let synced = app_root_hash == 0;
+            let _ = self.sender.send(GnomeToApp::AppDataSynced(synced));
             if remote_id.0 > 0 && self.swarm.name.founder.is_any() {
                 // TODO: both of us want to Sync to empty Swarm
                 //       we need to determine who is Founder
                 if self.id > remote_id {
                     eprintln!(
-                        "2 Setting founder from: {} to {}",
-                        self.swarm.name.founder, self.id
+                        "2 {} Setting founder from: {} to {}",
+                        synced, self.swarm.name.founder, self.id
                     );
                     self.swarm.set_founder(self.id);
                 } else {
@@ -2188,7 +2303,10 @@ impl Gnome {
                     if neighbor.timeouts_count() < drop_treshold {
                         self.slow_neighbors.push(neighbor);
                     } else {
-                        eprintln!("DROP {} as drop threshold exceeded", neighbor.id);
+                        eprintln!(
+                            "{} DROP {} as drop threshold exceeded",
+                            self.swarm.name, neighbor.id
+                        );
                     }
                 }
             }
@@ -2398,6 +2516,7 @@ impl Gnome {
                     self.my_proposal = Some(proposal);
                     self.send_immediate = true;
                 } else {
+                    // eprintln!("Starting to chill… 1");
                     self.header = Header::Sync;
                     self.payload = Payload::KeepAlive(available_bandwith);
                     self.chill_out.0 = true;
@@ -2463,6 +2582,7 @@ impl Gnome {
                     self.my_proposal = Some(proposal);
                     self.send_immediate = true;
                 } else {
+                    // eprintln!("Starting to chill… 2");
                     self.chill_out.0 = true;
                     self.chill_out.1 = Instant::now();
                 }
@@ -2662,7 +2782,7 @@ impl Gnome {
                         }
                     },
                     _ => {
-                        eprintln!("Got response: {:?}\nunderscore", response);
+                        // eprintln!("Got response: {:?}\nunderscore", response);
                         let _ = self.sender.send(response);
                     }
                 }
@@ -2691,7 +2811,7 @@ impl Gnome {
                 if !drop_me {
                     self.refreshed_neighbors.push(neighbor);
                 } else {
-                    eprintln!("Dropping neighbor {}", neighbor.id);
+                    eprintln!("{} Dropping neighbor {}", self.swarm.name, neighbor.id);
                     continue;
                 }
             } else if !drop_me {
@@ -2701,7 +2821,7 @@ impl Gnome {
                     self.slow_neighbors.push(neighbor);
                 }
             } else {
-                eprintln!("Dropping neighbor");
+                eprintln!("{} Dropping  neighbor {}", self.swarm.name, neighbor.id);
             }
         }
         let refreshed_empty = self.refreshed_neighbors.is_empty();
@@ -2709,7 +2829,8 @@ impl Gnome {
         let slow_empty = self.slow_neighbors.is_empty();
         let have_responsive_neighbors = !refreshed_empty || !fast_empty;
         if refreshed_empty && fast_empty && slow_empty {
-            eprintln!("Can not advance with no neighbors around");
+            eprintln!("Can not advance with no neighbors around\n\n\n\n");
+            self.chill_out.0 = false;
             (
                 have_responsive_neighbors,
                 false,
