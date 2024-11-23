@@ -239,17 +239,18 @@ impl Neighbor {
                     content
                 {
                     self.swarm_time = swarm_sync_response.swarm_time;
-                    self.start_new_round(swarm_sync_response.swarm_time);
+                    // self.round_start = swarm_sync_response.round_start;
+                    self.start_new_round(swarm_sync_response.round_start);
                     return Ok(Some(NeighborResponse::SwarmSync(swarm_sync_response)));
                 }
             } else if c_type == CastType::Unicast && CastID(255) == id {
                 if let CastContent::Request(NeighborRequest::SwarmSyncRequest(sync_req_params)) =
                     content
                 {
-                    eprintln!(
-                        "Neighbor Received SwarmSyncRequest with hash: {}",
-                        sync_req_params.app_root_hash
-                    );
+                    // eprintln!(
+                    //     "Neighbor Received SwarmSyncRequest with hash: {}",
+                    //     sync_req_params.app_root_hash
+                    // );
                     if sync_req_params.app_root_hash != 0 {
                         // TODO we need a more sophisticated sync method
                         // once we enable storing swarm data on disk this will run
@@ -342,8 +343,10 @@ impl Neighbor {
                 //     }
                 // }
                 if let Some(pubkey_bytes) = swarm.key_reg.get(gid) {
+                    eprintln!("key found in reg {}", round_start);
                     (swarm.verify)(gid, &pubkey_bytes, round_start, bytes, sign)
                 } else {
+                    eprintln!("no key found in reg!");
                     false
                 }
             } //TODO
@@ -412,7 +415,7 @@ impl Neighbor {
                 let (r_st, r_n, r_header, is_config, sign_bytes_opt) = tested_message.unpack();
                 let (signature, mut bytes) = sign_bytes_opt.unwrap();
                 if !self.verify_payload(self.round_start, swarm, &signature, &mut bytes) {
-                    println!("Verification failed");
+                    eprintln!("Verification failed {}", self.round_start);
                     // TODO: maybe it's too drastic of a measure?
                     drop_me = true;
                     return (message_recvd, false, new_proposal, drop_me);

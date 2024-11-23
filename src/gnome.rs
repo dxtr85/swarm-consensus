@@ -1240,6 +1240,7 @@ impl Gnome {
             } else {
                 vec![]
             };
+            eprintln!("SyncResponse with key reg pairs len: {}", first_chunk.len());
             (more_keys, first_chunk, chunks)
         } else {
             (false, vec![], vec![])
@@ -1895,7 +1896,7 @@ impl Gnome {
     //       We apply those parameters to our state and continue to loop.
     //       If we receive any other message we set ChillOut to false and continue.
     fn presync_with_swarm(&mut self, available_bandwith: u64, app_root_hash: u64) {
-        eprintln!("In presync, hash: {}", app_root_hash);
+        // eprintln!("In presync, hash: {}", app_root_hash);
         let mut remote_id = GnomeId(0);
         let response_opt = if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
             eprintln!(
@@ -1952,16 +1953,18 @@ impl Gnome {
         //       we need to initialize all necessary piping to be able to send through it
         if let Some(NeighborResponse::SwarmSync(mut swarm_sync_response)) = response_opt {
             eprintln!(
-                "App sync hash remote: {}",
-                swarm_sync_response.app_root_hash
+                "App sync hash remote: {} ST: {} Round: {}",
+                swarm_sync_response.app_root_hash,
+                swarm_sync_response.swarm_time,
+                swarm_sync_response.round_start
             );
             let _ = self.sender.send(GnomeToApp::AppDataSynced(
                 swarm_sync_response.app_root_hash == app_root_hash,
             ));
-            eprintln!(
-                "1 Setting founder from: {} to {}",
-                self.swarm.name.founder, swarm_sync_response.founder
-            );
+            // eprintln!(
+            //     "1 Setting founder from: {} to {}",
+            //     self.swarm.name.founder, swarm_sync_response.founder
+            // );
             self.swarm.set_founder(swarm_sync_response.founder);
             self.swarm.swarm_type = swarm_sync_response.swarm_type;
             self.swarm.key_reg =
@@ -1992,16 +1995,16 @@ impl Gnome {
                 // TODO: both of us want to Sync to empty Swarm
                 //       we need to determine who is Founder
                 if self.id > remote_id {
-                    eprintln!(
-                        "2 {} Setting founder from: {} to {}",
-                        synced, self.swarm.name.founder, self.id
-                    );
+                    // eprintln!(
+                    //     "2 {} Setting founder from: {} to {}",
+                    //     synced, self.swarm.name.founder, self.id
+                    // );
                     self.swarm.set_founder(self.id);
                 } else {
-                    eprintln!(
-                        "3 Setting founder from: {} to {}",
-                        self.swarm.name.founder, remote_id
-                    );
+                    // eprintln!(
+                    //     "3 Setting founder from: {} to {}",
+                    //     self.swarm.name.founder, remote_id
+                    // );
                     self.swarm.set_founder(remote_id);
                 }
                 let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
@@ -2011,7 +2014,7 @@ impl Gnome {
             } else if !self.swarm.name.founder.is_any() {
                 self.swarm.set_founder(self.swarm.name.founder);
             } else {
-                eprintln!("Unable to determine Founder");
+                // eprintln!("Unable to determine Founder");
             }
             // println!("Sync response: {}", response);
             self.send_all(available_bandwith);
