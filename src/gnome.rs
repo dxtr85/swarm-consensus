@@ -602,7 +602,7 @@ impl Gnome {
                     self.drop_neighbor(n_id);
                 }
                 ToGnome::ListNeighbors => {
-                    eprintln!("List neighbors request");
+                    // eprintln!("List neighbors request");
                     let mut n_ids = vec![];
                     for n in &self.fast_neighbors {
                         n_ids.push(n.id);
@@ -1985,7 +1985,7 @@ impl Gnome {
                 self.chill_out.1 = Instant::now() - self.chill_out_max
                     + Duration::from_millis(swarm_sync_response.chill_phase as u64);
             } else {
-                eprintln!("no chill ");
+                // eprintln!("no chill ");
                 self.chill_out.0 = false;
             }
         } else if response_opt.is_none() {
@@ -2124,11 +2124,11 @@ impl Gnome {
     }
 
     fn neighbor_with_highest_bandwith(&self) -> GnomeId {
-        eprintln!("Searching among {} neighbors", self.fast_neighbors.len());
+        // eprintln!("Searching among {} neighbors", self.fast_neighbors.len());
         let mut gnome_id = GnomeId::any();
         let mut curr_max_band = 0;
         for neighbor in &self.fast_neighbors {
-            eprintln!("N band: {}", neighbor.available_bandwith);
+            // eprintln!("N band: {}", neighbor.available_bandwith);
             if neighbor.available_bandwith >= curr_max_band {
                 gnome_id = neighbor.id;
                 curr_max_band = neighbor.available_bandwith;
@@ -2138,7 +2138,7 @@ impl Gnome {
     }
 
     fn neighbor_with_enough_bandwith(&self, min_bandwith: u64) -> Option<GnomeId> {
-        eprintln!("Searching among {} neighbors", self.fast_neighbors.len());
+        // eprintln!("Searching among {} neighbors", self.fast_neighbors.len());
         for neighbor in &self.fast_neighbors {
             eprintln!("N band: {}", neighbor.available_bandwith);
             if neighbor.available_bandwith >= min_bandwith {
@@ -2686,7 +2686,7 @@ impl Gnome {
                                 self.chill_out.1 = Instant::now() - self.chill_out_max
                                     + Duration::from_millis(swarm_sync_response.chill_phase as u64);
                             } else {
-                                eprintln!("no chill ");
+                                // eprintln!("no chill ");
                                 self.chill_out.0 = false;
                             }
                             eprintln!(

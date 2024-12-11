@@ -22,14 +22,14 @@ fn insert8(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 8])
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
     for elem in &mut array[1..] {
         if temp.0 == gnome_id || temp.0 .0 == 0 {
-            eprintln!("Inserted: {}", gnome_id);
+            // eprintln!("Inserted: {}", gnome_id);
             break;
         }
         temp = std::mem::replace(elem, temp);
     }
-    for (id, _key) in array {
-        eprintln!("Key: {}", id);
-    }
+    // for (id, _key) in array {
+    //     eprintln!("Key: {}", id);
+    // }
 }
 fn insert32(gnome_id: GnomeId, key: Vec<u8>, array: &mut [(GnomeId, Vec<u8>); 32]) {
     let mut temp = std::mem::replace(&mut array[0], (gnome_id, key));
@@ -638,7 +638,7 @@ impl KeyRegistry {
     }
 
     pub fn insert(&mut self, gnome_id: GnomeId, key: Vec<u8>) {
-        eprintln!("Inserting key for {}", gnome_id);
+        // eprintln!("Inserting key for {}", gnome_id);
         match self {
             Self::Reg8(arr) => insert8(gnome_id, key, arr.deref_mut()),
             Self::Reg32(arr) => insert32(gnome_id, key, arr.deref_mut()),
