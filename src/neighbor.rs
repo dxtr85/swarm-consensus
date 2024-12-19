@@ -84,7 +84,7 @@ pub struct SwarmSyncRequestParams {
     pub sync_policy: bool,
     pub sync_broadcast: bool,
     pub sync_multicast: bool,
-    pub app_root_hash: u64,
+    // pub app_root_hash: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,7 +94,7 @@ pub struct SwarmSyncResponse {
     pub swarm_time: SwarmTime,
     pub round_start: SwarmTime,
     pub swarm_type: SwarmType,
-    pub app_root_hash: u64,
+    // pub app_root_hash: u64,
     pub key_reg_size: u8,
     pub capability_size: u8,
     pub policy_size: u8,
@@ -251,14 +251,14 @@ impl Neighbor {
                     //     "Neighbor Received SwarmSyncRequest with hash: {}",
                     //     sync_req_params.app_root_hash
                     // );
-                    if sync_req_params.app_root_hash != 0 {
-                        // TODO we need a more sophisticated sync method
-                        // once we enable storing swarm data on disk this will run
-                        // probably we should return either NeighborResponse or NeighborRequest?
-                        // -> Result<Option<NeighborResponse>, Option<NeighborRequest>>
-                        // lol
-                        panic!("Received SwarmSyncRequest with non zero app_sync_hash!");
-                    }
+                    // if sync_req_params.app_root_hash != 0 {
+                    //     // TODO we need a more sophisticated sync method
+                    //     // once we enable storing swarm data on disk this will run
+                    //     // probably we should return either NeighborResponse or NeighborRequest?
+                    //     // -> Result<Option<NeighborResponse>, Option<NeighborRequest>>
+                    //     // lol
+                    //     panic!("Received SwarmSyncRequest with non zero app_sync_hash!");
+                    // }
                 } else {
                     eprintln!("Received unexpected SSRequest content:\n {:?}", content);
                 }

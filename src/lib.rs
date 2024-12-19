@@ -60,7 +60,7 @@ const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
 
 #[derive(Debug)]
 pub enum ToGnome {
-    UpdateAppRootHash(u64),
+    // UpdateAppRootHash(u64),
     AddData(SyncData),
     AddNeighbor(Neighbor),
     DropNeighbor(GnomeId),
@@ -83,7 +83,7 @@ pub enum ToGnome {
 pub struct CastID(pub u8);
 
 pub enum GnomeToApp {
-    AppDataSynced(bool),
+    SwarmReady,
     Block(BlockID, SyncData),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(Vec<BlockID>),
@@ -104,8 +104,8 @@ pub enum GnomeToApp {
 impl fmt::Debug for GnomeToApp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GnomeToApp::AppDataSynced(is_synced) => {
-                write!(f, "AppDataSynced: {}", is_synced)
+            GnomeToApp::SwarmReady => {
+                write!(f, "SwarmReady")
             }
             GnomeToApp::Block(prop_id, data) => {
                 write!(f, "{:?} {}", prop_id, data)

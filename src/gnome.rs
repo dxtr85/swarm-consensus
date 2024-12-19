@@ -550,17 +550,16 @@ impl Gnome {
         }
         any_data_processed
     }
-    fn serve_user_requests(&mut self, app_root_hash: &mut u64) -> (bool, bool) {
+    fn serve_user_requests(&mut self) -> (bool, bool) {
         let mut new_user_proposal = false;
         let mut exit_app = false;
         if let Ok(request) = self.receiver.try_recv() {
             match request {
                 ToGnome::Disconnect => exit_app = true,
-                ToGnome::UpdateAppRootHash(new_hash) => {
-                    // println!("Gnome updating root hash to {}", new_hash);
-                    *app_root_hash = new_hash;
-                }
-
+                // ToGnome::UpdateAppRootHash(new_hash) => {
+                //     // println!("Gnome updating root hash to {}", new_hash);
+                //     *app_root_hash = new_hash;
+                // }
                 ToGnome::Status => {
                     eprintln!(
                         "Status: {} {} {}\t\t neighbors: {}",
@@ -1159,7 +1158,7 @@ impl Gnome {
         }
         any_data_processed
     }
-    fn serve_sync_requests(&mut self, app_sync_hash: u64) -> bool {
+    fn serve_sync_requests(&mut self) -> bool {
         let mut any_data_processed = false;
         // TODO: in order to function we need to always have
         //       actual value of app_sync_hash at hand
@@ -1179,17 +1178,17 @@ impl Gnome {
                 sync_policy,
                 sync_broadcast,
                 sync_multicast,
-                app_root_hash: remote_app_root_hash,
+                // app_root_hash: remote_app_root_hash,
             })) = neighbor.requests.pop_back()
             {
-                eprintln!(
-                    "Remote hash: {}, my hash: {}",
-                    remote_app_root_hash, app_sync_hash
-                );
+                // eprintln!(
+                //     "Remote hash: {}, my hash: {}",
+                //     remote_app_root_hash, app_sync_hash
+                // );
                 any_data_processed = true;
                 neighbor.swarm_time = message.swarm_time;
                 self.send_sync_responses(
-                    app_sync_hash,
+                    // app_sync_hash,
                     sync_key_reg,
                     sync_capability,
                     sync_policy,
@@ -1208,7 +1207,7 @@ impl Gnome {
 
     fn send_sync_responses(
         &self,
-        app_sync_hash: u64,
+        // app_sync_hash: u64,
         sync_key_reg: bool,
         sync_capability: bool,
         sync_policy: bool,
@@ -1240,7 +1239,11 @@ impl Gnome {
             } else {
                 vec![]
             };
-            eprintln!("SyncResponse with key reg pairs len: {}", first_chunk.len());
+            eprintln!(
+                "SyncResponse  with key reg pairs len: {}",
+                // app_sync_hash,
+                first_chunk.len()
+            );
             (more_keys, first_chunk, chunks)
         } else {
             (false, vec![], vec![])
@@ -1252,7 +1255,7 @@ impl Gnome {
             swarm_time: self.swarm_time,
             round_start: self.round_start,
             swarm_type: self.swarm.swarm_type,
-            app_root_hash: app_sync_hash,
+            // app_root_hash: app_sync_hash,
             key_reg_size: self.swarm.key_reg.byte(),
             capability_size: self.swarm.capability_reg.len() as u8,
             policy_size: self.swarm.policy_reg.len() as u8,
@@ -1325,7 +1328,7 @@ impl Gnome {
 
     fn serve_neighbors_requests(
         &mut self,
-        app_sync_hash: u64,
+        // app_sync_hash: u64,
         refreshed: bool,
         slow: bool,
     ) -> bool {
@@ -1383,11 +1386,11 @@ impl Gnome {
                         sync_policy,
                         sync_broadcast,
                         sync_multicast,
-                        app_root_hash: _,
+                        // app_root_hash: _,
                     }) => {
                         // eprintln!("SSReq 2");
                         self.send_sync_responses(
-                            app_sync_hash,
+                            // app_sync_hash,
                             sync_key_reg,
                             sync_capability,
                             sync_policy,
@@ -1508,14 +1511,14 @@ impl Gnome {
         any_data_processed
     }
 
-    pub fn do_your_job(mut self, mut app_sync_hash: u64) {
+    pub fn do_your_job(mut self) {
         eprintln!(
             "Waiting for user/network to provide some Neighbors for {}...",
             self.swarm.name
         );
         while self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
             // println!("in while");
-            let _ = self.serve_user_requests(&mut app_sync_hash);
+            let _ = self.serve_user_requests();
             self.serve_manager_requests();
         }
         eprintln!("{} have neighbors!", self.swarm.name);
@@ -1527,7 +1530,7 @@ impl Gnome {
         };
         available_bandwith = 1024;
         eprintln!("Avail bandwith: {}", available_bandwith);
-        self.presync_with_swarm(available_bandwith, app_sync_hash);
+        self.presync_with_swarm(available_bandwith);
         let mut timer = Instant::now();
         self.timeout_duration = Duration::from_secs(16);
 
@@ -1548,24 +1551,21 @@ impl Gnome {
             // println!("Sleeping for: {:?}", sleep_time);
             std::thread::sleep(sleep_time);
             // println!("Sleep is over");
-            let (mut exit_app, new_user_proposal) = self.serve_user_requests(&mut app_sync_hash);
+            let (mut exit_app, new_user_proposal) = self.serve_user_requests();
             was_loop_iteration_busy |= self.serve_internal();
             was_loop_iteration_busy |= self.serve_user_data();
             let (mgr_busy, bye) = self.serve_manager_requests();
             exit_app |= bye;
             was_loop_iteration_busy |= mgr_busy;
-            was_loop_iteration_busy |= self.serve_sync_requests(app_sync_hash);
+            was_loop_iteration_busy |= self.serve_sync_requests();
             if !self.refreshed_neighbors.is_empty() {
-                was_loop_iteration_busy |=
-                    self.serve_neighbors_requests(app_sync_hash, true, false);
+                was_loop_iteration_busy |= self.serve_neighbors_requests(true, false);
             }
             if !self.fast_neighbors.is_empty() {
-                was_loop_iteration_busy |=
-                    self.serve_neighbors_requests(app_sync_hash, false, false);
+                was_loop_iteration_busy |= self.serve_neighbors_requests(false, false);
             }
             if !self.slow_neighbors.is_empty() {
-                was_loop_iteration_busy |=
-                    self.serve_neighbors_requests(app_sync_hash, false, true);
+                was_loop_iteration_busy |= self.serve_neighbors_requests(false, true);
             }
             was_loop_iteration_busy |= self.serve_ongoing_requests();
             was_loop_iteration_busy |= self.serve_neighbors_casts();
@@ -1583,14 +1583,14 @@ impl Gnome {
                 slow_advance_to_next_turn,
                 slow_new_proposal,
                 slow_any_data_processed,
-            ) = self.try_recv(app_sync_hash, false);
+            ) = self.try_recv(false);
             was_loop_iteration_busy |= slow_any_data_processed;
             let (
                 have_responsive_neighbors,
                 fast_advance_to_next_turn,
                 fast_new_proposal,
                 fast_any_data_processed,
-            ) = self.try_recv(app_sync_hash, true);
+            ) = self.try_recv(true);
             was_loop_iteration_busy |= fast_any_data_processed;
 
             // We have to send NoOp every 128msec in order to
@@ -1895,14 +1895,14 @@ impl Gnome {
     //       and also how many iterations of ChillOut mode are currently left.
     //       We apply those parameters to our state and continue to loop.
     //       If we receive any other message we set ChillOut to false and continue.
-    fn presync_with_swarm(&mut self, available_bandwith: u64, app_root_hash: u64) {
+    fn presync_with_swarm(&mut self, available_bandwith: u64) {
         // eprintln!("In presync, hash: {}", app_root_hash);
         let mut remote_id = GnomeId(0);
         let response_opt = if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
-            eprintln!(
-                "Sending {} SyncReq to {} (hash: {})",
-                self.swarm.name, neighbor.id, app_root_hash
-            );
+            // eprintln!(
+            //     "Sending {} SyncReq to {} (hash: {})",
+            //     self.swarm.name, neighbor.id, app_root_hash
+            // );
             neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
                 SwarmSyncRequestParams {
                     sync_key_reg: true,
@@ -1910,7 +1910,7 @@ impl Gnome {
                     sync_policy: true,
                     sync_broadcast: true,
                     sync_multicast: true,
-                    app_root_hash,
+                    // app_root_hash,
                 },
             )));
             if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
@@ -1923,10 +1923,10 @@ impl Gnome {
                 None
             }
         } else if let Some(neighbor) = self.slow_neighbors.iter_mut().next() {
-            eprintln!(
-                "Slow {} Sending SwarmSyncRequest with hash: {}",
-                neighbor.id, app_root_hash
-            );
+            // eprintln!(
+            //     "Slow {} Sending SwarmSyncRequest with hash: {}",
+            //     neighbor.id, app_root_hash
+            // );
             neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
                 SwarmSyncRequestParams {
                     sync_key_reg: true,
@@ -1934,7 +1934,7 @@ impl Gnome {
                     sync_policy: true,
                     sync_broadcast: true,
                     sync_multicast: true,
-                    app_root_hash,
+                    // app_root_hash,
                 },
             )));
             if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
@@ -1953,14 +1953,13 @@ impl Gnome {
         //       we need to initialize all necessary piping to be able to send through it
         if let Some(NeighborResponse::SwarmSync(mut swarm_sync_response)) = response_opt {
             eprintln!(
-                "App sync hash remote: {} ST: {} Round: {}",
-                swarm_sync_response.app_root_hash,
+                "App sync ST: {} Round: {} Key#: {}",
+                // swarm_sync_response.app_root_hash,
                 swarm_sync_response.swarm_time,
-                swarm_sync_response.round_start
+                swarm_sync_response.round_start,
+                swarm_sync_response.key_reg_pairs.len()
             );
-            let _ = self.sender.send(GnomeToApp::AppDataSynced(
-                swarm_sync_response.app_root_hash == app_root_hash,
-            ));
+            let _ = self.sender.send(GnomeToApp::SwarmReady);
             // eprintln!(
             //     "1 Setting founder from: {} to {}",
             //     self.swarm.name.founder, swarm_sync_response.founder
@@ -1989,8 +1988,8 @@ impl Gnome {
                 self.chill_out.0 = false;
             }
         } else if response_opt.is_none() {
-            let synced = app_root_hash == 0;
-            let _ = self.sender.send(GnomeToApp::AppDataSynced(synced));
+            // let synced = app_root_hash == 0;
+            let _ = self.sender.send(GnomeToApp::SwarmReady);
             if remote_id.0 > 0 && self.swarm.name.founder.is_any() {
                 // TODO: both of us want to Sync to empty Swarm
                 //       we need to determine who is Founder
@@ -2630,7 +2629,7 @@ impl Gnome {
         }
     }
 
-    fn try_recv(&mut self, app_sync_hash: u64, fast: bool) -> (bool, bool, bool, bool) {
+    fn try_recv(&mut self, fast: bool) -> (bool, bool, bool, bool) {
         let mut any_data_processed = false;
         let n_len = if fast {
             self.fast_neighbors.len()
@@ -2706,12 +2705,13 @@ impl Gnome {
                             while let Some((id, pubkey)) = swarm_sync_response.key_reg_pairs.pop() {
                                 self.swarm.key_reg.insert(id, pubkey);
                             }
-                            if swarm_sync_response.app_root_hash != app_sync_hash {
-                                // println!("rem: {:?}, our: {:?}", rem_app_sync_hash, app_sync_hash);
-                                let _ = self.sender.send(GnomeToApp::AppDataSynced(false));
-                            } else {
-                                let _ = self.sender.send(GnomeToApp::AppDataSynced(true));
-                            }
+                            let _ = self.sender.send(GnomeToApp::SwarmReady);
+                            // if swarm_sync_response.app_root_hash != app_sync_hash {
+                            //     // println!("rem: {:?}, our: {:?}", rem_app_sync_hash, app_sync_hash);
+                            //     let _ = self.sender.send(GnomeToApp::AppDataSynced(false));
+                            // } else {
+                            //     let _ = self.sender.send(GnomeToApp::AppDataSynced(true));
+                            // }
                         }
                         NeighborResponse::Subscribed(is_bcast, cast_id, origin, source) => {
                             let source = source.unwrap();

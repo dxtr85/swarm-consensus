@@ -146,7 +146,7 @@ pub struct Swarm {
 impl Swarm {
     pub fn join(
         name: SwarmName,
-        app_sync_hash: u64,
+        // app_sync_hash: u64,
         id: SwarmID,
         gnome_id: GnomeId,
         pub_key_der: Vec<u8>,
@@ -220,7 +220,7 @@ impl Swarm {
             )
         };
         let _join_handle = spawn(move || {
-            gnome.do_your_job(app_sync_hash);
+            gnome.do_your_job();
         });
 
         (sender, receiver)
