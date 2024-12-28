@@ -1545,6 +1545,7 @@ impl Gnome {
         // - user has sent us a request
         // - we sent a Cast message
         let mut was_loop_iteration_busy;
+        let mut loops_with_no_reply = 0;
         loop {
             was_loop_iteration_busy = false;
             let sleep_time = Duration::from_nanos(sleep_nsec);
@@ -1681,6 +1682,7 @@ impl Gnome {
             //TODO: following conditional logic is a terrible mess, it begs for refactoring
             let timeout = timer.elapsed() >= self.timeout_duration;
             if advance_to_next_turn || self.send_immediate || timeout && have_responsive_neighbors {
+                loops_with_no_reply = 0;
                 self.update_state();
                 if !new_proposal && !self.send_immediate {
                     // println!("swap&send");
@@ -1701,6 +1703,16 @@ impl Gnome {
                 }
                 timer = Instant::now();
                 self.timeout_duration = Duration::from_millis(500);
+            } else if timeout && !have_responsive_neighbors {
+                loops_with_no_reply += 1;
+                if loops_with_no_reply >= 5 && !self.slow_neighbors.is_empty() {
+                    loops_with_no_reply = 0;
+                    eprintln!("Timed out multiple times, droping slow neighbors…");
+                    let slow = std::mem::take(&mut self.slow_neighbors);
+                    for neighbor in slow {
+                        self.drop_neighbor(neighbor.id);
+                    }
+                }
             }
 
             if exit_app {
