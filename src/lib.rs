@@ -60,7 +60,7 @@ const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
 
 #[derive(Debug)]
 pub enum ToGnome {
-    // UpdateAppRootHash(u64),
+    SetFounder(GnomeId),
     AddData(SyncData),
     AddNeighbor(Neighbor),
     DropNeighbor(GnomeId),
@@ -160,6 +160,10 @@ impl fmt::Debug for GnomeToApp {
     }
 }
 
+pub enum Notification {
+    AddSwarm(NotificationBundle),
+    SetFounder(GnomeId),
+}
 pub struct NotificationBundle {
     pub swarm_name: SwarmName,
     pub request_sender: Sender<ToGnome>,

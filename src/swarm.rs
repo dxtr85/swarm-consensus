@@ -1,3 +1,4 @@
+use crate::capabilities::CapabiLeaf;
 use crate::gnome::NetworkSettings;
 use crate::gnome_to_manager::GnomeToManager;
 use crate::key_registry::KeyRegistry;
@@ -54,7 +55,7 @@ impl SwarmName {
         }
     }
     pub fn from(v: Vec<u8>) -> Result<Self, ()> {
-        // eprintln!("SwarmName from {} bytes: {:?}", v.len(), v);
+        eprintln!("SwarmName from {} bytes: {:?}", v.len(), v);
         if v.len() != 9 + v[8] as usize {
             Err(())
         } else {
@@ -164,6 +165,12 @@ impl Swarm {
         let (response_sender, receiver) = channel::<GnomeToApp>();
         let mut policy_reg = HashMap::new();
         policy_reg.insert(Policy::Default, Requirement::Has(Capabilities::Founder));
+        let mut capability_reg = HashMap::new();
+        if !name.founder.is_any() {
+            let mut ct = CapabiliTree::create();
+            ct.insert(name.founder);
+            capability_reg.insert(Capabilities::Founder, ct);
+        }
         // policy_reg.insert(
         //     Policy::DataWithFirstByte(0),
         //     Requirement::Has(Capabilities::Founder),
@@ -182,7 +189,7 @@ impl Swarm {
             active_multicasts: HashMap::new(),
             verify,
             key_reg: KeyRegistry::new8(),
-            capability_reg: HashMap::new(),
+            capability_reg,
             policy_reg,
             last_accepted_pubkey_chunk: (0, 0),
         };
@@ -331,12 +338,15 @@ impl Swarm {
     }
 
     pub fn insert_capability(&mut self, cap: Capabilities, mut id_list: Vec<GnomeId>) {
+        eprintln!("Insert capability {:?}: {:?}", cap, id_list);
         id_list.reverse();
         if let Some(tree) = self.capability_reg.get_mut(&cap) {
+            eprintln!("append");
             while let Some(gnome_id) = id_list.pop() {
                 tree.insert(gnome_id);
             }
         } else {
+            eprintln!("cnew");
             let mut tree = CapabiliTree::create();
             while let Some(gnome_id) = id_list.pop() {
                 tree.insert(gnome_id);
@@ -486,20 +496,32 @@ impl Swarm {
         }
     }
     pub fn set_founder(&mut self, gnome_id: GnomeId) {
+        eprintln!(
+            "Swarm {} setting founder from: {} to: {}",
+            self.name.name, self.name.founder, gnome_id
+        );
         self.name.founder = gnome_id;
         let mut tree = CapabiliTree::create();
         tree.insert(gnome_id);
         self.capability_reg.insert(Capabilities::Founder, tree);
     }
     pub fn check_data_policy(&self, gnome_id: &GnomeId, first_byte: u8) -> bool {
+        eprintln!("founder: {}", self.name.founder);
         if let Some(req) = self.policy_reg.get(&Policy::DataWithFirstByte(first_byte)) {
-            // eprintln!("poli 1");
+            eprintln!("poli 1, {:?}", req);
             req.is_fullfilled(gnome_id, &self.capability_reg)
         } else if let Some(req) = self.policy_reg.get(&Policy::Data) {
-            // eprintln!("poli 2");
+            eprintln!("poli 2, {:?}", req);
             req.is_fullfilled(gnome_id, &self.capability_reg)
         } else {
-            // eprintln!("poli 3");
+            // eprintln!(
+            //     "default: {:?}\ncapa: {:?}",
+            //     self.policy_reg.get(&Policy::Default),
+            //     self.capability_reg
+            //         .get(&Capabilities::Founder)
+            //         .unwrap()
+            //         .contains(&self.name.founder)
+            // );
             self.policy_reg
                 .get(&Policy::Default)
                 .unwrap()

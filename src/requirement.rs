@@ -69,10 +69,11 @@ impl Requirement {
                 true
             }
             Requirement::Has(capa) => {
-                // eprintln!("Req: Has({:?})", capa);
+                eprintln!("Req: Has({:?})", capa);
                 if let Some(tree) = caps.get(capa) {
                     tree.contains(gnome_id)
                 } else {
+                    eprintln!("no tree for req");
                     false
                 }
             }

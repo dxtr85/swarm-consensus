@@ -581,6 +581,14 @@ impl Gnome {
                         .push_front(Proposal::Config(Configuration::UserDefined(value, s_data)));
                     new_user_proposal = true;
                 }
+                ToGnome::SetFounder(f_id) => {
+                    eprintln!("Set founder to {}", f_id);
+                    self.swarm.set_founder(f_id);
+                    let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
+                        self.swarm.id,
+                        self.swarm.name.founder,
+                    ));
+                }
                 ToGnome::AddNeighbor(neighbor) => {
                     eprintln!(
                         "{} ADD\tadd a new neighbor to {}",
@@ -787,7 +795,7 @@ impl Gnome {
                         "Gnome adding {} neighbor to {}",
                         neighbor.id, self.swarm.name
                     );
-                    // eprintln!("Send CN {} foor {}", neighbor.id, self.swarm.name);
+                    eprintln!("Send CN {} foor {}", neighbor.id, self.swarm.name);
                     neighbor.send_out_cast(CastMessage::new_request(
                         NeighborRequest::CreateNeighbor(self.id, self.swarm.name.clone()),
                     ));
@@ -909,7 +917,7 @@ impl Gnome {
         }
     }
     fn request_neighbors_for_swarm(&mut self, swarm_name: SwarmName) {
-        // eprintln!("Send CN 3");
+        eprintln!("Send CN 3");
         let req = NeighborRequest::CreateNeighbor(self.id, swarm_name.clone());
         for neighbor in &mut self.fast_neighbors {
             neighbor.request_data(req.clone());
@@ -1465,7 +1473,7 @@ impl Gnome {
                         let (s1, r1) = channel();
                         let (s2, r2) = channel();
                         let (s3, r3) = channel();
-                        // eprintln!("Send CN 4 +NoOp");
+                        eprintln!("Send CN 4 +NoOp");
                         let _ = s2.send(CastMessage::new_request(NeighborRequest::CreateNeighbor(
                             self.id,
                             swarm_name.clone(),
@@ -1808,10 +1816,10 @@ impl Gnome {
             .send(GnomeToManager::ActiveNeighbors(s_id, n_ids));
     }
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
-        // eprintln!("add_neighbor");
+        eprintln!("add_neighbor {:?}", neighbor.member_of_swarms);
         let neighbor_already_exists = self.has_neighbor(neighbor.id);
         for swarm_name in &neighbor.member_of_swarms {
-            if !swarm_name.founder.is_any() {
+            if !swarm_name.founder.is_any() && swarm_name != &self.swarm.name {
                 let _ = self.mgr_sender.send(GnomeToManager::NeighboringSwarm(
                     self.swarm.id,
                     neighbor.id,
@@ -1908,13 +1916,13 @@ impl Gnome {
     //       We apply those parameters to our state and continue to loop.
     //       If we receive any other message we set ChillOut to false and continue.
     fn presync_with_swarm(&mut self, available_bandwith: u64) {
-        // eprintln!("In presync, hash: {}", app_root_hash);
+        eprintln!("SID-{} In presync", self.swarm.id.0);
         let mut remote_id = GnomeId(0);
         let response_opt = if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
-            // eprintln!(
-            //     "Sending {} SyncReq to {} (hash: {})",
-            //     self.swarm.name, neighbor.id, app_root_hash
-            // );
+            eprintln!(
+                "SID-{} Sending {} SyncReq to {} ",
+                self.swarm.id.0, self.swarm.name, neighbor.id,
+            );
             neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
                 SwarmSyncRequestParams {
                     sync_key_reg: true,
@@ -1932,13 +1940,14 @@ impl Gnome {
                 remote_id = neighbor.id;
                 sync_response_option
             } else {
+                eprintln!("No response received");
                 None
             }
         } else if let Some(neighbor) = self.slow_neighbors.iter_mut().next() {
-            // eprintln!(
-            //     "Slow {} Sending SwarmSyncRequest with hash: {}",
-            //     neighbor.id, app_root_hash
-            // );
+            eprintln!(
+                "SID-{} Slow {} Sending SwarmSyncRequest ",
+                self.swarm.id.0, neighbor.id,
+            );
             neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
                 SwarmSyncRequestParams {
                     sync_key_reg: true,
@@ -1957,9 +1966,13 @@ impl Gnome {
                 None
             }
         } else {
-            eprintln!("Not Sending SwarmSyncRequest - no neighbors",);
+            eprintln!(
+                "SID-{}Not Sending SwarmSyncRequest - no neighbors",
+                self.swarm.id.0
+            );
             None
         };
+        eprintln!("SID-{} Response opt: {:?}", self.swarm.id.0, response_opt);
         // TODO: make use of capability_size, policy_size, b_cast_size, m_cast_size, more_keys_follow
         // TODO: in case we join a swarm which has a *cast originating from our gnome
         //       we need to initialize all necessary piping to be able to send through it
@@ -1976,6 +1989,7 @@ impl Gnome {
             //     "1 Setting founder from: {} to {}",
             //     self.swarm.name.founder, swarm_sync_response.founder
             // );
+            eprintln!("Legacy founder set");
             self.swarm.set_founder(swarm_sync_response.founder);
             self.swarm.swarm_type = swarm_sync_response.swarm_type;
             self.swarm.key_reg =
@@ -1983,10 +1997,10 @@ impl Gnome {
             self.swarm_time = swarm_sync_response.swarm_time;
             self.round_start = swarm_sync_response.round_start;
             self.next_state.swarm_time = swarm_sync_response.swarm_time;
-            let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
-                self.swarm.id,
-                self.swarm.name.founder,
-            ));
+            // let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
+            //     self.swarm.id,
+            //     self.swarm.name.founder,
+            // ));
             while let Some((g_id, pubkey)) = swarm_sync_response.key_reg_pairs.pop() {
                 self.swarm.key_reg.insert(g_id, pubkey);
             }
@@ -2002,34 +2016,37 @@ impl Gnome {
         } else if response_opt.is_none() {
             // let synced = app_root_hash == 0;
             let _ = self.sender.send(GnomeToApp::SwarmReady);
-            if remote_id.0 > 0 && self.swarm.name.founder.is_any() {
-                // TODO: both of us want to Sync to empty Swarm
-                //       we need to determine who is Founder
-                if self.id > remote_id {
-                    // eprintln!(
-                    //     "2 {} Setting founder from: {} to {}",
-                    //     synced, self.swarm.name.founder, self.id
-                    // );
-                    self.swarm.set_founder(self.id);
-                } else {
-                    // eprintln!(
-                    //     "3 Setting founder from: {} to {}",
-                    //     self.swarm.name.founder, remote_id
-                    // );
-                    self.swarm.set_founder(remote_id);
-                }
-                let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
-                    self.swarm.id,
-                    self.swarm.name.founder,
-                ));
-            } else if !self.swarm.name.founder.is_any() {
-                self.swarm.set_founder(self.swarm.name.founder);
-            } else {
-                // eprintln!("Unable to determine Founder");
-            }
+            // if remote_id.0 > 0 && self.swarm.name.founder.is_any() {
+            //     // TODO: both of us want to Sync to empty Swarm
+            //     //       we need to determine who is Founder
+            //     if self.id > remote_id {
+            //         // eprintln!(
+            //         //     "2 {} Setting founder from: {} to {}",
+            //         //     synced, self.swarm.name.founder, self.id
+            //         // );
+            //         self.swarm.set_founder(self.id);
+            //     } else {
+            //         // eprintln!(
+            //         //     "3 Setting founder from: {} to {}",
+            //         //     self.swarm.name.founder, remote_id
+            //         // );
+            //         self.swarm.set_founder(remote_id);
+            //     }
+            //     let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
+            //         self.swarm.id,
+            //         self.swarm.name.founder,
+            //     ));
+            // } else if !self.swarm.name.founder.is_any() {
+            //     self.swarm.set_founder(self.swarm.name.founder);
+            // } else {
+            //     // eprintln!("Unable to determine Founder");
+            // }
             // println!("Sync response: {}", response);
             self.send_all(available_bandwith);
             return;
+        } else {
+            eprintln!("unexpected Response opt: {:?}", response_opt);
+            let _ = self.sender.send(GnomeToApp::SwarmReady);
         }
     }
 
