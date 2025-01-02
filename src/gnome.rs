@@ -758,7 +758,7 @@ impl Gnome {
                     //              remote instantiates new channel and clones itself)
                     //
                     eprintln!(
-                        "Gnome {} received neighbor request for {}. Am I founder?: {}",
+                        "{} received neighbor request for {}. Am I founder?: {}",
                         self.swarm.name,
                         swarm_name,
                         swarm_name.founder.0 == self.id.0
@@ -780,7 +780,7 @@ impl Gnome {
                         new_neighbor.clone_to_swarm(swarm_name.clone(), s1, s2, r3);
                         self.send_noop_from_a_neighbor();
                         eprintln!(
-                            "Gnome {} requesting add cloned {} to {}",
+                            "{} request add {} to {}",
                             self.swarm.name, new_neighbor.id, swarm_name
                         );
                         let _resp = self.mgr_sender.send(GnomeToManager::AddNeighborToSwarm(
@@ -1967,12 +1967,12 @@ impl Gnome {
             }
         } else {
             eprintln!(
-                "SID-{}Not Sending SwarmSyncRequest - no neighbors",
+                "SID-{} Not Sending SwarmSyncRequest - no neighbors",
                 self.swarm.id.0
             );
             None
         };
-        eprintln!("SID-{} Response opt: {:?}", self.swarm.id.0, response_opt);
+        // eprintln!("SID-{} Response opt: {:?}", self.swarm.id.0, response_opt);
         // TODO: make use of capability_size, policy_size, b_cast_size, m_cast_size, more_keys_follow
         // TODO: in case we join a swarm which has a *cast originating from our gnome
         //       we need to initialize all necessary piping to be able to send through it

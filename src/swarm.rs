@@ -56,7 +56,7 @@ impl SwarmName {
         }
     }
     pub fn from(v: &[u8]) -> Result<Self, ()> {
-        eprintln!("SwarmName from {} bytes: {:?}", v.len(), v);
+        // eprintln!("SwarmName from {} bytes: {:?}", v.len(), v);
         let name_len = v[0];
         if name_len < 128 {
             let founder = GnomeId::any();
@@ -348,6 +348,15 @@ impl Swarm {
 
     pub fn insert_capability(&mut self, cap: Capabilities, mut id_list: Vec<GnomeId>) {
         eprintln!("Insert capability {:?}: {:?}", cap, id_list);
+        if matches!(Capabilities::Founder, cap) {
+            if let Some(gnome_id) = id_list.pop() {
+                let mut tree = CapabiliTree::create();
+                eprintln!("overwrite Founder");
+                tree.insert(gnome_id);
+                self.capability_reg.insert(cap, tree);
+            }
+            return;
+        }
         id_list.reverse();
         if let Some(tree) = self.capability_reg.get_mut(&cap) {
             eprintln!("append");
