@@ -21,6 +21,7 @@ use crate::{CastID, WrappedMessage};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
+use std::io::Read;
 use std::ops::Add;
 use std::ops::Sub;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -54,25 +55,33 @@ impl SwarmName {
             Ok(SwarmName { founder, name })
         }
     }
-    pub fn from(v: Vec<u8>) -> Result<Self, ()> {
+    pub fn from(v: &[u8]) -> Result<Self, ()> {
         eprintln!("SwarmName from {} bytes: {:?}", v.len(), v);
-        if v.len() != 9 + v[8] as usize {
-            Err(())
+        let name_len = v[0];
+        if name_len < 128 {
+            let founder = GnomeId::any();
+            let name = String::from_utf8(v[1..1 + name_len as usize].try_into().unwrap()).unwrap();
+            Ok(SwarmName { founder, name })
         } else {
             let founder: GnomeId = GnomeId(u64::from_be_bytes([
-                v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
+                v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8],
             ]));
-            let name = String::from_utf8(v[9..].try_into().unwrap()).unwrap();
+            let name =
+                String::from_utf8(v[9..name_len as usize - 127].try_into().unwrap()).unwrap();
             Ok(SwarmName { founder, name })
         }
     }
     pub fn as_bytes(&self) -> Vec<u8> {
         let name_len = self.name.len();
         let mut bytes = Vec::with_capacity(9 + name_len);
-        for byte in self.founder.0.to_be_bytes() {
-            bytes.push(byte);
+        if !self.founder.is_any() {
+            bytes.push(name_len as u8 + 136);
+            for byte in self.founder.0.to_be_bytes() {
+                bytes.push(byte);
+            }
+        } else {
+            bytes.push(name_len as u8);
         }
-        bytes.push(name_len as u8);
         for byte in self.name.clone().into_bytes() {
             bytes.push(byte);
         }
