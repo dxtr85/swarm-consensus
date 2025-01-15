@@ -83,7 +83,7 @@ pub enum ToGnome {
 pub struct CastID(pub u8);
 
 pub enum GnomeToApp {
-    SwarmReady,
+    SwarmReady(SwarmName),
     Block(BlockID, SyncData),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(Vec<BlockID>),
@@ -104,8 +104,8 @@ pub enum GnomeToApp {
 impl fmt::Debug for GnomeToApp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GnomeToApp::SwarmReady => {
-                write!(f, "SwarmReady")
+            GnomeToApp::SwarmReady(s_name) => {
+                write!(f, "{} Ready", s_name)
             }
             GnomeToApp::Block(prop_id, data) => {
                 write!(f, "{:?} {}", prop_id, data)

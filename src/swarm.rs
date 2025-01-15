@@ -24,6 +24,8 @@ use std::fmt;
 use std::io::Read;
 use std::ops::Add;
 use std::ops::Sub;
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::spawn;
 
@@ -86,6 +88,13 @@ impl SwarmName {
             bytes.push(byte);
         }
         bytes
+    }
+    pub fn to_path(&self) -> PathBuf {
+        let mut s = self.name.clone();
+        while s.starts_with('/') {
+            s = String::from_str(&s[1..]).unwrap();
+        }
+        PathBuf::new().join(s).join(format!("{}", self.founder))
     }
 }
 impl fmt::Display for SwarmName {
