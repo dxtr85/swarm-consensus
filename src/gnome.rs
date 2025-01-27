@@ -34,6 +34,8 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::IpAddr;
+use std::net::Ipv4Addr;
+use std::net::Ipv6Addr;
 use std::ops::Deref;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
@@ -131,6 +133,19 @@ pub enum Nat {
     SymmetricWithPortControl = 16,
     Symmetric = 32,
 }
+impl Nat {
+    pub fn from(byte: u8) -> Self {
+        match byte {
+            1 => Self::None,
+            2 => Self::FullCone,
+            4 => Self::AddressRestrictedCone,
+            8 => Self::PortRestrictedCone,
+            16 => Self::SymmetricWithPortControl,
+            32 => Self::Symmetric,
+            _o => Self::Unknown,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PortAllocationRule {
@@ -138,6 +153,16 @@ pub enum PortAllocationRule {
     FullCone = 1,
     AddressSensitive = 2,
     PortSensitive = 4,
+}
+impl PortAllocationRule {
+    pub fn from(byte: u8) -> Self {
+        match byte {
+            1 => Self::FullCone,
+            2 => Self::AddressSensitive,
+            4 => Self::PortSensitive,
+            _o => Self::Random,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -331,7 +356,8 @@ pub struct Gnome {
     next_state: NextState,
     timeout_duration: Duration,
     send_immediate: bool,
-    network_settings: NetworkSettings, //TODO: do we really need those here anymore?
+    ipv6_network_settings: NetworkSettings, //TODO: do we really need those here anymore?
+    network_settings: NetworkSettings,      //TODO: do we really need those here anymore?
     net_settings_send: Sender<NetworkSettings>,
     pending_conn_requests: VecDeque<ConnRequest>,
     ongoing_requests: HashMap<u8, OngoingRequest>,
@@ -361,6 +387,20 @@ impl Gnome {
     ) -> Self {
         // println!("DER size: {}", pub_key_bytes.len());
         let (send_internal, recv_internal) = channel();
+        let (ipv6_network_settings, network_settings) = if network_settings.pub_ip.is_ipv4() {
+            (
+                NetworkSettings::new_not_natted(
+                    IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)),
+                    0,
+                ),
+                network_settings,
+            )
+        } else {
+            (
+                network_settings,
+                NetworkSettings::new_not_natted(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
+            )
+        };
         Gnome {
             id,
             pub_key_bytes,
@@ -386,6 +426,7 @@ impl Gnome {
             next_state: NextState::new(),
             timeout_duration: Duration::from_millis(500),
             send_immediate: false,
+            ipv6_network_settings,
             network_settings,
             net_settings_send,
             pending_conn_requests: VecDeque::new(),
@@ -694,12 +735,37 @@ impl Gnome {
                         .send(InternalMsg::ResponseOut(gnome_id, response))
                         .unwrap();
                 }
-                ToGnome::NetworkSettingsUpdate(notify_neighbor, ip_addr, port, nat) => {
-                    self.network_settings.pub_ip = ip_addr;
-                    self.network_settings.set_port(port);
-                    self.network_settings.nat_type = nat;
-
-                    if notify_neighbor {
+                ToGnome::NetworkSettingsUpdate(notify_neighbor, ip_addr, port, nat, port_rule) => {
+                    // TODO: now we can receive an IPv6 address in addition to IPv4
+                    // we should support both versions in order to maximize number of
+                    // potential communication channels
+                    if !notify_neighbor {
+                        // eprintln!("not notify neighbor");
+                        //TODO: if I am founder in this swarm, then I should notify manager
+                        // if self.id == self.swarm.name.founder {
+                        let _ = self
+                            .mgr_sender
+                            .send(GnomeToManager::PublicAddress(ip_addr, port, nat, port_rule));
+                        // self.sender.send(GnomeToApp::SwarmReady(()))
+                        // }
+                        if ip_addr.is_ipv6() {
+                            self.ipv6_network_settings.pub_ip = ip_addr;
+                            self.ipv6_network_settings.set_port(port);
+                            self.ipv6_network_settings.nat_type = nat;
+                            // self.ipv6_network_settings
+                        } else {
+                            self.network_settings.pub_ip = ip_addr;
+                            self.network_settings.set_port(port);
+                            self.network_settings.nat_type = nat;
+                            // self.network_settings
+                        };
+                    } else {
+                        let settings_to_send = NetworkSettings {
+                            pub_ip: ip_addr,
+                            pub_port: port,
+                            nat_type: nat,
+                            port_allocation: (PortAllocationRule::Random, 0),
+                        };
                         eprintln!("Trying to notify neighbor");
                         if let Some(ConnRequest {
                             conn_id,
@@ -711,10 +777,24 @@ impl Gnome {
                                 if neighbor.id == neighbor_id {
                                     neighbor.add_requested_data(NeighborResponse::ConnectResponse(
                                         conn_id,
-                                        self.network_settings,
+                                        settings_to_send,
                                     ));
                                     neighbor_informed = true;
                                     break;
+                                }
+                            }
+                            if !neighbor_informed {
+                                for neighbor in &mut self.refreshed_neighbors {
+                                    if neighbor.id == neighbor_id {
+                                        neighbor.add_requested_data(
+                                            NeighborResponse::ConnectResponse(
+                                                conn_id,
+                                                settings_to_send,
+                                            ),
+                                        );
+                                        neighbor_informed = true;
+                                        break;
+                                    }
                                 }
                             }
                             if !neighbor_informed {
@@ -723,7 +803,7 @@ impl Gnome {
                                         neighbor.add_requested_data(
                                             NeighborResponse::ConnectResponse(
                                                 conn_id,
-                                                self.network_settings,
+                                                settings_to_send,
                                             ),
                                         );
                                         neighbor_informed = true;

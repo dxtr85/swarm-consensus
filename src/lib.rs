@@ -74,7 +74,7 @@ pub enum ToGnome {
     StartBroadcast,
     EndBroadcast(CastID),
     UnsubscribeBroadcast(CastID),
-    NetworkSettingsUpdate(bool, IpAddr, u16, Nat),
+    NetworkSettingsUpdate(bool, IpAddr, u16, Nat, (PortAllocationRule, i8)),
     SwarmNeighbors(SwarmName),
     Reconfigure(u8, SyncData),
 }
