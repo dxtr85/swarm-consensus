@@ -2070,9 +2070,10 @@ impl Gnome {
             // );
             eprintln!("Legacy founder set");
             self.swarm.set_founder(swarm_sync_response.founder);
-            let _ = self
-                .sender
-                .send(GnomeToApp::SwarmReady(self.swarm.name.clone()));
+            let _ = self.sender.send(GnomeToApp::SwarmReady(
+                self.swarm.name.clone(),
+                self.id == self.swarm.name.founder,
+            ));
             self.swarm.swarm_type = swarm_sync_response.swarm_type;
             self.swarm.key_reg =
                 KeyRegistry::from(&mut vec![swarm_sync_response.key_reg_size, 0, 0]);
@@ -2097,9 +2098,10 @@ impl Gnome {
             }
         } else if response_opt.is_none() {
             // let synced = app_root_hash == 0;
-            let _ = self
-                .sender
-                .send(GnomeToApp::SwarmReady(self.swarm.name.clone()));
+            let _ = self.sender.send(GnomeToApp::SwarmReady(
+                self.swarm.name.clone(),
+                self.id == self.swarm.name.founder, //TODO: not sure if this is ok
+            ));
             // if remote_id.0 > 0 && self.swarm.name.founder.is_any() {
             //     // TODO: both of us want to Sync to empty Swarm
             //     //       we need to determine who is Founder
@@ -2130,9 +2132,10 @@ impl Gnome {
             return;
         } else {
             eprintln!("unexpected Response opt: {:?}", response_opt);
-            let _ = self
-                .sender
-                .send(GnomeToApp::SwarmReady(self.swarm.name.clone()));
+            let _ = self.sender.send(GnomeToApp::SwarmReady(
+                self.swarm.name.clone(),
+                self.id == self.swarm.name.founder, //TODO: not sure if this is ok
+            ));
         }
     }
 
@@ -2820,9 +2823,10 @@ impl Gnome {
                             while let Some((id, pubkey)) = swarm_sync_response.key_reg_pairs.pop() {
                                 self.swarm.key_reg.insert(id, pubkey);
                             }
-                            let _ = self
-                                .sender
-                                .send(GnomeToApp::SwarmReady(self.swarm.name.clone()));
+                            let _ = self.sender.send(GnomeToApp::SwarmReady(
+                                self.swarm.name.clone(),
+                                self.id == self.swarm.name.founder,
+                            ));
                             // if swarm_sync_response.app_root_hash != app_sync_hash {
                             //     // println!("rem: {:?}, our: {:?}", rem_app_sync_hash, app_sync_hash);
                             //     let _ = self.sender.send(GnomeToApp::AppDataSynced(false));
