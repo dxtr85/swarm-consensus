@@ -2944,8 +2944,7 @@ impl Gnome {
                 if !drop_me {
                     self.refreshed_neighbors.push(neighbor);
                 } else {
-                    eprintln!("{} Dropping neighbor {}", self.swarm.name, neighbor.id);
-                    continue;
+                    eprintln!("{} Dropping a neighbor {}", self.swarm.name, neighbor.id);
                 }
             } else if !drop_me {
                 if fast {
