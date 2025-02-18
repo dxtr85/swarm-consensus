@@ -632,8 +632,8 @@ impl Gnome {
                 }
                 ToGnome::AddNeighbor(neighbor) => {
                     eprintln!(
-                        "{} ADD\tadd a new neighbor to {}",
-                        neighbor.id, self.swarm.name
+                        "{} ADD\tadd a new neighbor to {} ({})",
+                        neighbor.id, self.swarm.name, self.swarm.id
                     );
                     self.add_neighbor(neighbor);
                 }
@@ -1252,7 +1252,7 @@ impl Gnome {
         //       actual value of app_sync_hash at hand
         //       this should be provided by Manager and stored by Gnome or better Swarm
         if self.new_neighbors.is_empty() {
-            any_data_processed;
+            return any_data_processed;
         }
         let message = self.prepare_message();
         let mut processed_neighbors = vec![];
@@ -1284,10 +1284,11 @@ impl Gnome {
                     sync_multicast,
                     &mut neighbor,
                 );
-                self.fast_neighbors.push(neighbor);
-            } else {
-                processed_neighbors.push(neighbor);
+                // self.fast_neighbors.push(neighbor);
+                // } else {
+                //     processed_neighbors.push(neighbor);
             }
+            processed_neighbors.push(neighbor);
         }
         self.new_neighbors = processed_neighbors;
         any_data_processed
@@ -1318,6 +1319,7 @@ impl Gnome {
                 .as_millis() as u16
         } else {
             0
+            // self.chill_out_max.as_millis() as u16
         };
         let (more_keys, first_key_batch, mut remaining_batches) = if sync_key_reg {
             let mut chunks = self.swarm.key_reg.chunks();
@@ -1646,7 +1648,9 @@ impl Gnome {
             let (mgr_busy, bye) = self.serve_manager_requests();
             exit_app |= bye;
             was_loop_iteration_busy |= mgr_busy;
-            was_loop_iteration_busy |= self.serve_sync_requests();
+            if self.chill_out.0 {
+                was_loop_iteration_busy |= self.serve_sync_requests();
+            }
             if !self.refreshed_neighbors.is_empty() {
                 was_loop_iteration_busy |= self.serve_neighbors_requests(true, false);
             }
@@ -1912,7 +1916,11 @@ impl Gnome {
             self.drop_neighbor(neighbor.id);
             // self.fast_neighbors.push(neighbor);
         }
-        if self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
+        if self.chill_out.0 || (self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty()) {
+            eprintln!(
+                "{} ADD {} (chilling or no neighbors around)",
+                self.swarm.id, neighbor.id
+            );
             self.fast_neighbors.push(neighbor);
         } else {
             self.new_neighbors.push(neighbor);
@@ -1958,20 +1966,20 @@ impl Gnome {
         let keep_alive = message.set_payload(Payload::KeepAlive(available_bandwith));
         for neighbor in &mut self.fast_neighbors {
             if neighbor.header == message.header {
-                eprintln!("{} >>> {}", self.id, keep_alive);
+                eprintln!("{} >>> {}", self.swarm.id, keep_alive);
                 // println!("Sending KA only");
                 neighbor.send_out(keep_alive.clone());
             } else {
-                eprintln!("{} >/> {}", self.id, message);
+                eprintln!("{} >/> {}", self.swarm.id, message);
                 neighbor.send_out(message.clone());
             }
         }
         for neighbor in &mut self.slow_neighbors {
             if neighbor.header == message.header {
-                eprintln!("{} >s> {}", self.id, message);
+                eprintln!("{} >s> {}", self.swarm.id, message);
                 neighbor.send_out(keep_alive.clone());
             } else {
-                eprintln!("{} >S> {}", self.id, message);
+                eprintln!("{} >S> {}", self.swarm.id, message);
                 neighbor.send_out(message.clone());
             }
         }
@@ -1996,12 +2004,12 @@ impl Gnome {
     //       We apply those parameters to our state and continue to loop.
     //       If we receive any other message we set ChillOut to false and continue.
     fn presync_with_swarm(&mut self, available_bandwith: u64) {
-        eprintln!("SID-{} In presync", self.swarm.id.0);
+        eprintln!("{} In presync", self.swarm.id);
         let mut remote_id = GnomeId(0);
         let response_opt = if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
             eprintln!(
-                "SID-{} Sending {} SyncReq to {} ",
-                self.swarm.id.0, self.swarm.name, neighbor.id,
+                "{} {} Sending SyncReq to {} ",
+                self.swarm.id, self.swarm.name, neighbor.id,
             );
             neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
                 SwarmSyncRequestParams {
@@ -2058,11 +2066,12 @@ impl Gnome {
         //       we need to initialize all necessary piping to be able to send through it
         if let Some(NeighborResponse::SwarmSync(mut swarm_sync_response)) = response_opt {
             eprintln!(
-                "App sync ST: {} Round: {} Key#: {}",
+                "App sync ST: {} Round: {} Key#: {}, chill: {}",
                 // swarm_sync_response.app_root_hash,
                 swarm_sync_response.swarm_time,
                 swarm_sync_response.round_start,
-                swarm_sync_response.key_reg_pairs.len()
+                swarm_sync_response.key_reg_pairs.len(),
+                swarm_sync_response.chill_phase
             );
             // eprintln!(
             //     "1 Setting founder from: {} to {}",
@@ -2647,7 +2656,7 @@ impl Gnome {
             } else {
                 // Sync swarm time
                 // self.swarm_time = self.round_start + self.swarm_diameter;
-                eprintln!("Sync swarm time {}", self.swarm_time);
+                eprintln!("{} Sync swarm time {}", self.swarm.id, self.swarm_time);
                 self.round_start = self.swarm_time;
                 self.next_state.last_accepted_message = self.prepare_message();
                 // println!("set N-0");
@@ -2722,7 +2731,7 @@ impl Gnome {
                             self.next_state.last_accepted_message.clone(),
                             &mut self.swarm,
                         );
-                        // println!("snd2 {}", msg);
+                        eprintln!("{} ADD {}", self.swarm.id, neighbor.id);
                         neighbor.send_out(msg.clone());
                         self.fast_neighbors.push(neighbor);
                     }

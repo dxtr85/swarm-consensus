@@ -41,6 +41,11 @@ pub enum SwarmType {
 
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub struct SwarmID(pub u8);
+impl fmt::Display for SwarmID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "S={}", self.0)
+    }
+}
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct SwarmName {
