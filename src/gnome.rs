@@ -623,12 +623,12 @@ impl Gnome {
                     new_user_proposal = true;
                 }
                 ToGnome::SetFounder(f_id) => {
-                    eprintln!("Set founder to {}", f_id);
                     self.swarm.set_founder(f_id);
-                    let _ = self.mgr_sender.send(GnomeToManager::FounderDetermined(
+                    let _res = self.mgr_sender.send(GnomeToManager::FounderDetermined(
                         self.swarm.id,
                         self.swarm.name.founder,
                     ));
+                    eprintln!("Set founder to {}, {:?}", f_id, _res);
                 }
                 ToGnome::AddNeighbor(neighbor) => {
                     eprintln!(
@@ -891,7 +891,9 @@ impl Gnome {
                 }
                 ManagerToGnome::Disconnect => {
                     self.bye_all();
-                    let _ = self.mgr_sender.send(GnomeToManager::Disconnected);
+                    let _ = self
+                        .mgr_sender
+                        .send(GnomeToManager::Disconnected(self.swarm.id));
                     bye = true;
                     return (any_data_processed, bye);
                 }
@@ -1642,11 +1644,11 @@ impl Gnome {
             // println!("Sleeping for: {:?}", sleep_time);
             std::thread::sleep(sleep_time);
             // println!("Sleep is over");
-            let (mut exit_app, new_user_proposal) = self.serve_user_requests();
+            let (mut break_the_loop, new_user_proposal) = self.serve_user_requests();
             was_loop_iteration_busy |= self.serve_internal();
             was_loop_iteration_busy |= self.serve_user_data();
             let (mgr_busy, bye) = self.serve_manager_requests();
-            exit_app |= bye;
+            break_the_loop |= bye;
             was_loop_iteration_busy |= mgr_busy;
             if self.chill_out.0 {
                 was_loop_iteration_busy |= self.serve_sync_requests();
@@ -1797,17 +1799,23 @@ impl Gnome {
                 self.timeout_duration = Duration::from_millis(500);
             } else if timeout && !have_responsive_neighbors {
                 loops_with_no_reply += 1;
-                if loops_with_no_reply >= 5 && !self.slow_neighbors.is_empty() {
+                if loops_with_no_reply >= 5 {
                     loops_with_no_reply = 0;
-                    eprintln!("Timed out multiple times, droping slow neighbors…");
-                    let slow = std::mem::take(&mut self.slow_neighbors);
-                    for neighbor in slow {
-                        self.drop_neighbor(neighbor.id);
+                    break_the_loop = true;
+                    if !self.slow_neighbors.is_empty() {
+                        eprintln!("Timed out multiple times, droping slow neighbors…");
+                        let slow = std::mem::take(&mut self.slow_neighbors);
+                        for neighbor in slow {
+                            self.drop_neighbor(neighbor.id);
+                        }
                     }
                 }
             }
 
-            if exit_app {
+            if break_the_loop {
+                let _ = self
+                    .mgr_sender
+                    .send(GnomeToManager::Disconnected(self.swarm.id));
                 break;
             };
 

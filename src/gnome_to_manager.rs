@@ -14,5 +14,5 @@ pub enum GnomeToManager {
     AddNeighborToSwarm(SwarmID, SwarmName, Neighbor),
     ActiveNeighbors(SwarmID, Vec<GnomeId>),
     PublicAddress(IpAddr, u16, Nat, (PortAllocationRule, i8)),
-    Disconnected,
+    Disconnected(SwarmID),
 }

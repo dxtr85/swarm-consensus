@@ -247,10 +247,7 @@ impl Neighbor {
                 if let CastContent::Request(NeighborRequest::SwarmSyncRequest(sync_req_params)) =
                     content
                 {
-                    // eprintln!(
-                    //     "Neighbor Received SwarmSyncRequest with hash: {}",
-                    //     sync_req_params.app_root_hash
-                    // );
+                    eprintln!("Neighbor Received SwarmSyncRequest {:?} ", sync_req_params);
                     // if sync_req_params.app_root_hash != 0 {
                     //     // TODO we need a more sophisticated sync method
                     //     // once we enable storing swarm data on disk this will run
