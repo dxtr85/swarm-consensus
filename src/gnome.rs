@@ -1608,10 +1608,18 @@ impl Gnome {
             "Waiting for user/network to provide some Neighbors for {}...",
             self.swarm.name
         );
+        let sleep_time = Duration::from_millis(128);
         while self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
             // println!("in while");
             let _ = self.serve_user_requests();
-            self.serve_manager_requests();
+            let (_data_processed, bye) = self.serve_manager_requests();
+            if bye {
+                let _ = self
+                    .mgr_sender
+                    .send(GnomeToManager::Disconnected(self.swarm.id));
+                return;
+            }
+            std::thread::sleep(sleep_time);
         }
         eprintln!("{} have neighbors!", self.swarm.name);
         self.notify_mgr_about_neighbors();
@@ -1620,7 +1628,7 @@ impl Gnome {
         } else {
             1024
         };
-        available_bandwith = 1024;
+        // available_bandwith = 1024;
         eprintln!("Avail bandwith: {}", available_bandwith);
         self.presync_with_swarm(available_bandwith);
         let mut timer = Instant::now();

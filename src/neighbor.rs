@@ -420,7 +420,7 @@ impl Neighbor {
                     message.pack(r_st, r_n, r_header, is_config, Some((signature, bytes)));
                 }
                 if !swarm.verify_policy(&message) {
-                    eprintln!("Policy not fulfilled");
+                    eprintln!("Policy not fulfilled for {}", message.header);
                     drop_me = true;
                     return (message_recvd, false, new_proposal, drop_me);
                 }
