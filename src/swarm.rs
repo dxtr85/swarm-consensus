@@ -170,7 +170,10 @@ pub struct Swarm {
 impl Swarm {
     pub fn join(
         name: SwarmName,
-        // app_sync_hash: u64,
+        // TODO: allow for swarm_diameter customization
+        // Each swarm may have different diameter, accepted values 1-15,
+        // where 1 means each Gnome has active communication channel to every other Gnome.
+        // swarm_diameter: SwarmTime,
         id: SwarmID,
         gnome_id: GnomeId,
         pub_key_der: Vec<u8>,

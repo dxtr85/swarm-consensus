@@ -626,7 +626,7 @@ impl Gnome {
                     self.swarm.set_founder(f_id);
                     let _res = self.mgr_sender.send(GnomeToManager::FounderDetermined(
                         self.swarm.id,
-                        self.swarm.name.founder,
+                        self.swarm.name.clone(),
                     ));
                     eprintln!("Set founder to {}, {:?}", f_id, _res);
                 }
@@ -2037,7 +2037,8 @@ impl Gnome {
                     // app_root_hash,
                 },
             )));
-            if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
+            if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(2)) {
+                eprintln!("Received SyncResponse: {:?}",sync_response_option);
                 // TODO: not sure if reversing next_state update with start_new_round
                 // inside neighbor.recv_sync is fine
                 self.next_state.update(neighbor);

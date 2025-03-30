@@ -56,7 +56,7 @@ mod tests;
 //             proposal_time + 2 * swarm_diameter
 
 const DEFAULT_NEIGHBORS_PER_GNOME: usize = 3;
-const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7);
+const DEFAULT_SWARM_DIAMETER: SwarmTime = SwarmTime(7); //Max value is 15!
 
 #[derive(Debug)]
 pub enum ToGnome {

@@ -9,7 +9,7 @@ use crate::SwarmName;
 
 #[derive(Debug)]
 pub enum GnomeToManager {
-    FounderDetermined(SwarmID, GnomeId),
+    FounderDetermined(SwarmID, SwarmName),
     NeighboringSwarm(SwarmID, GnomeId, SwarmName),
     AddNeighborToSwarm(SwarmID, SwarmName, Neighbor),
     ActiveNeighbors(SwarmID, Vec<GnomeId>),
