@@ -650,7 +650,6 @@ impl Gnome {
                     self.drop_neighbor(n_id);
                 }
                 ToGnome::ListNeighbors => {
-                    // eprintln!("List neighbors request");
                     let mut n_ids = vec![];
                     for n in &self.fast_neighbors {
                         n_ids.push(n.id);
@@ -661,9 +660,16 @@ impl Gnome {
                     for n in &self.refreshed_neighbors {
                         n_ids.push(n.id);
                     }
-                    let _ = self
+                    eprintln!("New neighbors len: {}", self.new_neighbors.len());
+                    eprintln!(
+                        "{} Gnome sending neighbors to app (n#: {})",
+                        self.swarm.id,
+                        n_ids.len()
+                    );
+                    let _res = self
                         .sender
                         .send(GnomeToApp::Neighbors(self.swarm.id, n_ids));
+                    eprintln!("Gnome send result: {:?}", _res);
                 }
                 ToGnome::StartUnicast(gnome_id) => {
                     // println!("Received StartUnicast {:?}", gnome_id);
@@ -1558,12 +1564,12 @@ impl Gnome {
                         let (s2, r2) = channel();
                         let (s3, r3) = channel();
                         eprintln!("Send CN 4 +NoOp");
-                        let _ = s2.send(CastMessage::new_request(NeighborRequest::CreateNeighbor(
-                            self.id,
-                            swarm_name.clone(),
-                        )));
+                        // let _ = s2.send(CastMessage::new_request(NeighborRequest::CreateNeighbor(
+                        //     self.id,
+                        //     swarm_name.clone(),
+                        // )));
                         //TODO clone_to_swarm only if Manager confirmed addition
-                        let new_neighbor = Neighbor::from_id_channel_time(
+                        let mut new_neighbor = Neighbor::from_id_channel_time(
                             gnome_id,
                             r1,
                             r2,
@@ -1574,6 +1580,9 @@ impl Gnome {
                             neighbor.member_of_swarms.clone(),
                         );
                         new_neighbor.clone_to_swarm(swarm_name.clone(), s1, s2, r3);
+                        let _ = new_neighbor.send_out_cast(CastMessage::new_request(
+                            NeighborRequest::CreateNeighbor(self.id, swarm_name.clone()),
+                        ));
                         neighbor.send_no_op();
                         let _ = self.mgr_sender.send(GnomeToManager::AddNeighborToSwarm(
                             self.swarm.id,
@@ -1895,8 +1904,7 @@ impl Gnome {
         None
     }
 
-    fn notify_mgr_about_neighbors(&self) {
-        let s_id = self.swarm.id;
+    fn collect_active_neighbor_ids(&self) -> Vec<GnomeId> {
         let mut n_ids = vec![];
         // for neighbor in &self.slow_neighbors {
         //     }
@@ -1907,6 +1915,11 @@ impl Gnome {
         for neighbor in &self.refreshed_neighbors {
             n_ids.push(neighbor.id);
         }
+        n_ids
+    }
+    fn notify_mgr_about_neighbors(&self) {
+        let s_id = self.swarm.id;
+        let n_ids = self.collect_active_neighbor_ids();
         //TODO: maybe we should not send to both App & Gnome mgr?
         let _ = self
             .sender
@@ -1916,8 +1929,11 @@ impl Gnome {
             .send(GnomeToManager::ActiveNeighbors(s_id, n_ids));
     }
     pub fn add_neighbor(&mut self, neighbor: Neighbor) {
-        eprintln!("add_neighbor {:?}", neighbor.member_of_swarms);
         let neighbor_already_exists = self.has_neighbor(neighbor.id);
+        eprintln!(
+            "{} add_neighbor {} [{:?}](already exist: {})",
+            self.swarm.id, neighbor.id, neighbor.member_of_swarms, neighbor_already_exists
+        );
         for swarm_name in &neighbor.member_of_swarms {
             if !swarm_name.founder.is_any() && swarm_name != &self.swarm.name {
                 let _ = self.mgr_sender.send(GnomeToManager::NeighboringSwarm(
@@ -1931,6 +1947,18 @@ impl Gnome {
             // eprintln!("NOT Replacing a neighbor");
             self.drop_neighbor(neighbor.id);
             // self.fast_neighbors.push(neighbor);
+        } else {
+            let mut n_ids = self.collect_active_neighbor_ids();
+            n_ids.push(neighbor.id);
+            // if n_ids.len() > 1 {
+            //     eprintln!(
+            //         "{} ({}) Inform application about updated neighbor set:\n{:?}",
+            //         self.swarm.id, self.swarm.name, n_ids
+            //     );
+            // }
+            let _ = self
+                .sender
+                .send(GnomeToApp::Neighbors(self.swarm.id, n_ids.clone()));
         }
         if self.chill_out.0 || (self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty()) {
             eprintln!(
@@ -2038,7 +2066,7 @@ impl Gnome {
                 },
             )));
             if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(2)) {
-                eprintln!("Received SyncResponse: {:?}",sync_response_option);
+                eprintln!("Received SyncResponse: {:?}", sync_response_option);
                 // TODO: not sure if reversing next_state update with start_new_round
                 // inside neighbor.recv_sync is fine
                 self.next_state.update(neighbor);
