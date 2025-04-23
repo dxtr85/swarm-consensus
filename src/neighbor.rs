@@ -116,6 +116,7 @@ pub enum NeighborRequest {
     // have to find another source for given cast, give them some time to do so
     CreateNeighbor(GnomeId, SwarmName),
     SwarmJoinedInfo(SwarmName),
+    //TODO: implement ListNeighboringSwarms,
     Custom(u8, CastData),
 }
 
@@ -133,6 +134,7 @@ pub enum NeighborResponse {
     CapabilitySync(u8, u8, Vec<(Capabilities, Vec<GnomeId>)>),
     PolicySync(u8, u8, Vec<(Policy, Requirement)>),
     Subscribed(bool, CastID, GnomeId, Option<GnomeId>),
+    //TODO: implement NeighboringSwarms(u8, u8, Vec<SwarmName>),
     Custom(u8, CastData),
 }
 
@@ -749,7 +751,7 @@ impl Neighbor {
     pub fn send_out_cast(&mut self, message: CastMessage) {
         // println!("Sending: {:?}", message);
         let _res = self.sender.send(WrappedMessage::Cast(message));
-        // eprintln!("Cast send result: {:?}", _res);
+        eprintln!("Cast send result: {:?}", _res);
     }
 
     pub fn send_out(&mut self, message: Message) {

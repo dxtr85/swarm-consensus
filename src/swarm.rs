@@ -254,6 +254,7 @@ impl Swarm {
         };
         let _join_handle = spawn(move || {
             gnome.do_your_job();
+            eprintln!("Gnome is done");
         });
 
         (sender, receiver)
