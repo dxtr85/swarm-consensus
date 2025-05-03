@@ -357,6 +357,7 @@ pub struct Gnome {
     next_state: NextState,
     timeout_duration: Duration,
     send_immediate: bool,
+    is_busy: bool,
     ipv6_network_settings: NetworkSettings, //TODO: do we really need those here anymore?
     network_settings: NetworkSettings,      //TODO: do we really need those here anymore?
     net_settings_send: Sender<NetworkSettings>,
@@ -427,6 +428,7 @@ impl Gnome {
             next_state: NextState::new(),
             timeout_duration: Duration::from_millis(500),
             send_immediate: false,
+            is_busy: true,
             ipv6_network_settings,
             network_settings,
             net_settings_send,
@@ -913,12 +915,23 @@ impl Gnome {
                         neighbor.id, self.swarm.name
                     );
                     eprintln!("Send CN {} foor {}", neighbor.id, self.swarm.name);
-                    neighbor.send_out_cast(CastMessage::new_request(
+                    let res = neighbor.send_out_cast(CastMessage::new_request(
                         NeighborRequest::CreateNeighbor(self.id, self.swarm.name.clone()),
                     ));
-                    self.send_noop_from_a_neighbor();
-                    self.add_neighbor(neighbor);
-                    self.notify_mgr_about_neighbors();
+                    if res.is_ok() {
+                        self.send_noop_from_a_neighbor();
+                        self.add_neighbor(neighbor);
+                        self.notify_mgr_about_neighbors();
+                    } else {
+                        eprintln!(
+                            "Not adding Neighbor: Unable to send cast message:\n {:?}",
+                            res.err().unwrap()
+                        );
+                        if !self.has_any_neighbors() {
+                            eprintln!("Gnome decided to disconnect from {}", self.swarm.name);
+                            bye = true;
+                        }
+                    }
                 }
                 ManagerToGnome::SwarmJoined(swarm_name, n_ids) => {
                     self.notify_neighbors_about_new_swarm(swarm_name, n_ids);
@@ -928,10 +941,13 @@ impl Gnome {
                 }
                 ManagerToGnome::Disconnect => {
                     self.bye_all();
-                    // let _ = self
-                    //     .mgr_sender
-                    //     .send(GnomeToManager::Disconnected(self.swarm.id));
-                    bye = true;
+                    // Gnome should send Disconnected automatically
+                    // once he realizes he has no neighbors around
+                    // let _ = self.mgr_sender.send(GnomeToManager::Disconnected(
+                    //     self.swarm.id,
+                    //     self.swarm.name.clone(),
+                    // ));
+                    // bye = true;
                     return (any_data_processed, bye);
                 }
             }
@@ -1070,13 +1086,20 @@ impl Gnome {
     fn bye_all(&mut self) {
         eprintln!("Sending bye to all {:?} Neighbors…", self.swarm.id);
         let bye = Message::bye();
-        for neighbor in &mut self.fast_neighbors {
+        let mut neighbors = std::mem::replace(&mut self.fast_neighbors, vec![]);
+        for mut neighbor in neighbors {
             neighbor.send_out(bye.clone());
         }
-        for neighbor in &mut self.slow_neighbors {
+        neighbors = std::mem::replace(&mut self.slow_neighbors, vec![]);
+        for mut neighbor in neighbors {
             neighbor.send_out(bye.clone());
         }
-        for neighbor in &mut self.refreshed_neighbors {
+        neighbors = std::mem::replace(&mut self.refreshed_neighbors, vec![]);
+        for mut neighbor in neighbors {
+            neighbor.send_out(bye.clone());
+        }
+        neighbors = std::mem::replace(&mut self.new_neighbors, vec![]);
+        for mut neighbor in neighbors {
             neighbor.send_out(bye.clone());
         }
     }
@@ -1901,7 +1924,19 @@ impl Gnome {
                 }
             }
         } //loop
-        eprintln!("Gnome is done");
+          // eprintln!("Gnome is done");
+    }
+    pub fn has_any_neighbors(&self) -> bool {
+        if !self.refreshed_neighbors.is_empty() {
+            return true;
+        } else if !self.fast_neighbors.is_empty() {
+            return true;
+        } else if !self.new_neighbors.is_empty() {
+            return true;
+        } else if !self.slow_neighbors.is_empty() {
+            return true;
+        }
+        false
     }
     pub fn has_neighbor(&self, id: GnomeId) -> bool {
         for neighbor in &self.slow_neighbors {
@@ -2860,6 +2895,12 @@ impl Gnome {
             for neighbor in &mut self.slow_neighbors {
                 // println!("slow");
                 neighbor.start_new_round(self.swarm_time);
+            }
+            if self.is_busy {
+                self.is_busy = false;
+                let _ = self
+                    .mgr_sender
+                    .send(GnomeToManager::SwarmBusy(self.swarm.id, false));
             }
             true
         } else {

@@ -26,6 +26,7 @@ use std::fmt::Display;
 
 use std::collections::VecDeque;
 use std::sync::mpsc::channel;
+use std::sync::mpsc::SendError;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
@@ -203,7 +204,9 @@ impl Neighbor {
     ) {
         // println!("clone to swarm");
         let _r = self.shared_sender.send((swarm_name, send, c_send, recv));
-        // println!("clone to swarm: {:?}", r);
+        if let Some(err) = _r.err() {
+            eprintln!("failed to clone to swarm: {:?}", err);
+        }
     }
 
     pub fn start_new_round(&mut self, swarm_time: SwarmTime) {
@@ -748,10 +751,13 @@ impl Neighbor {
     pub fn send_no_op(&self) {
         let _ = self.sender.send(WrappedMessage::NoOp);
     }
-    pub fn send_out_cast(&mut self, message: CastMessage) {
+    pub fn send_out_cast(&mut self, message: CastMessage) -> Result<(), SendError<WrappedMessage>> {
         // println!("Sending: {:?}", message);
         let _res = self.sender.send(WrappedMessage::Cast(message));
-        eprintln!("Cast send result: {:?}", _res);
+        // if let Some(err) = _res.err() {
+        //     eprintln!("Unable to send cast: {:?}", err);
+        // }
+        _res
     }
 
     pub fn send_out(&mut self, message: Message) {
