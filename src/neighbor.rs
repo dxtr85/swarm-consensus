@@ -209,8 +209,27 @@ impl Neighbor {
         }
     }
 
+    pub fn clone_state(&mut self, neighbor: Neighbor) {
+        self.round_start = neighbor.round_start;
+        self.swarm_time = neighbor.swarm_time;
+        self.swarm_diameter = neighbor.swarm_diameter;
+        self.neighborhood = neighbor.neighborhood;
+        self.prev_neighborhood = neighbor.prev_neighborhood;
+        self.header = neighbor.header;
+        self.payload = neighbor.payload;
+        self.user_requests = neighbor.user_requests;
+        self.user_responses = neighbor.user_responses;
+        self.requests = neighbor.requests;
+        self.requested_data = neighbor.requested_data;
+        self.gnome_header = neighbor.gnome_header;
+        self.gnome_neighborhood = neighbor.gnome_neighborhood;
+        self.active_unicasts = neighbor.active_unicasts;
+        self.active_broadcasts = neighbor.active_broadcasts;
+        self.available_bandwith = neighbor.available_bandwith;
+        self.new_message_recieved = neighbor.new_message_recieved;
+    }
     pub fn start_new_round(&mut self, swarm_time: SwarmTime) {
-        // println!("\n\nStarting new round!");
+        // eprintln!("\n\nN{} Starting new round @{}", self.id, swarm_time);
         self.round_start = swarm_time;
         self.header = Header::Sync;
         self.payload = Payload::KeepAlive(self.available_bandwith);
@@ -244,7 +263,7 @@ impl Neighbor {
                     content
                 {
                     self.swarm_time = swarm_sync_response.swarm_time;
-                    // self.round_start = swarm_sync_response.round_start;
+                    eprintln!("SNR1");
                     self.start_new_round(swarm_sync_response.round_start);
                     return Ok(Some(NeighborResponse::SwarmSync(swarm_sync_response)));
                 }
@@ -413,9 +432,9 @@ impl Neighbor {
             //           continue
             if message.payload.has_signature() {
                 let tested_message = std::mem::replace(&mut message, Message::bye());
-                // println!("Testing message: {:?}", tested_message);
                 let (r_st, r_n, r_header, is_config, sign_bytes_opt) = tested_message.unpack();
                 let (signature, mut bytes) = sign_bytes_opt.unwrap();
+                eprintln!("N{} verify_payload ST: {}", self.id, self.round_start);
                 if !self.verify_payload(self.round_start, swarm, &signature, &mut bytes) {
                     eprintln!("Verification failed {}", self.round_start);
                     // TODO: maybe it's too drastic of a measure?
@@ -425,7 +444,10 @@ impl Neighbor {
                     message.pack(r_st, r_n, r_header, is_config, Some((signature, bytes)));
                 }
                 if !swarm.verify_policy(&message) {
-                    eprintln!("Policy not fulfilled for {}", message.header);
+                    eprintln!(
+                        "Policy not fulfilled for {} {}",
+                        message.header, message.payload
+                    );
                     drop_me = true;
                     return (message_recvd, false, new_proposal, drop_me);
                 }
@@ -509,11 +531,14 @@ impl Neighbor {
                             if id == block_id {
                                 self.payload = Payload::Block(id, signature, data)
                             } else {
-                                println!("This is not possible");
+                                eprintln!(
+                                    "This is not possible\nheader id: {}, block id: {}",
+                                    id, block_id
+                                );
                             }
                         }
                         Header::Sync => {
-                            println!("This is not possible too");
+                            eprintln!("This is not possible too");
                         }
                         Header::Reconfigure(_ct, _gid) => {
                             eprintln!("Sending Block in Reconfigure header is not allowed");

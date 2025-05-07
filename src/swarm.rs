@@ -186,6 +186,7 @@ impl Swarm {
         network_settings: NetworkSettings,
         verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
+        sha_hash: fn(&[u8]) -> u64,
     ) -> (Sender<ToGnome>, Receiver<GnomeToApp>) {
         let (sender, request_receiver) = channel::<ToGnome>();
         let (response_sender, receiver) = channel::<GnomeToApp>();
@@ -235,6 +236,7 @@ impl Swarm {
                 network_settings,
                 net_settings_send,
                 sign,
+                sha_hash,
             )
         } else {
             Gnome::new(
@@ -250,6 +252,7 @@ impl Swarm {
                 network_settings,
                 net_settings_send,
                 sign,
+                sha_hash,
             )
         };
         let _join_handle = spawn(move || {
@@ -266,8 +269,9 @@ impl Swarm {
                 self.check_config_policy(gnome_id, c_id)
             }
             Header::Block(_b_id) => {
+                eprintln!("Block, payload: {}", message.payload);
                 if let Payload::Block(_bid, ref _sign, ref data) = message.payload {
-                    // eprintln!("Verify Data policy...");
+                    eprintln!("Verify Data policy...{}", _bid);
                     match _sign {
                         Signature::Regular(gnome_id, _s) => {
                             self.check_data_policy(gnome_id, data.first_byte())
@@ -543,6 +547,7 @@ impl Swarm {
     }
     pub fn check_data_policy(&self, gnome_id: &GnomeId, first_byte: u8) -> bool {
         eprintln!("founder: {}", self.name.founder);
+        eprintln!("g_id: {}", gnome_id);
         if let Some(req) = self.policy_reg.get(&Policy::DataWithFirstByte(first_byte)) {
             eprintln!("poli 1, {:?}", req);
             req.is_fullfilled(gnome_id, &self.capability_reg)

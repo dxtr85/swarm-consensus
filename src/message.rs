@@ -401,17 +401,23 @@ impl Message {
         self.swarm_time = swarm_time;
         self.neighborhood = neighborhood;
         self.header = header;
+        eprintln!("Initial payload: {}", self.payload);
         if is_config {
             let (signature, bytes) = sign_bytes_opt.unwrap();
             let conf = Configuration::from_bytes(bytes);
             self.payload = Payload::Reconfigure(signature, conf);
         } else if let Some((signature, bytes)) = sign_bytes_opt {
             let data = SyncData::new(bytes).unwrap();
-            let block_id = data.get_block_id();
+            let block_id = if let Header::Block(b_id) = header {
+                b_id
+            } else {
+                BlockID(0)
+            };
             self.payload = Payload::Block(block_id, signature, data);
         } else {
             panic!("We unpacked a message without Signature");
         }
+        eprintln!("Final payload: {}", self.payload);
     }
     pub fn set_payload(&self, payload: Payload) -> Message {
         Message { payload, ..*self }

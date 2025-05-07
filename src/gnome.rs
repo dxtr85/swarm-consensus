@@ -368,6 +368,7 @@ pub struct Gnome {
     chill_out_max: Duration,
     data_converters: HashMap<(CastType, CastID), (Receiver<CastData>, Sender<WrappedMessage>)>,
     sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
+    sha_hash: fn(&[u8]) -> u64,
     send_internal: Sender<InternalMsg>,
     recv_internal: Receiver<InternalMsg>,
 }
@@ -386,6 +387,7 @@ impl Gnome {
         network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
+        sha_hash: fn(&[u8]) -> u64,
     ) -> Self {
         // println!("DER size: {}", pub_key_bytes.len());
         let (send_internal, recv_internal) = channel();
@@ -439,6 +441,7 @@ impl Gnome {
             chill_out_max: Duration::from_millis(14500),
             data_converters: HashMap::new(),
             sign,
+            sha_hash,
             send_internal,
             recv_internal,
         }
@@ -458,6 +461,7 @@ impl Gnome {
         network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
+        sha_hash: fn(&[u8]) -> u64,
     ) -> Self {
         let mut gnome = Gnome::new(
             id,
@@ -472,6 +476,7 @@ impl Gnome {
             network_settings,
             net_settings_send,
             sign,
+            sha_hash,
         );
         gnome.fast_neighbors = neighbors;
         gnome
@@ -550,6 +555,7 @@ impl Gnome {
                         gnome_id
                     };
                     if !neighbor_id.is_any() {
+                        eprintln!("Request: {:?}", request);
                         if self.send_neighbor_request(neighbor_id, request) {
                             eprintln!("Request sent");
                         } else {
@@ -618,8 +624,9 @@ impl Gnome {
                     );
                 }
                 ToGnome::AddData(data) => {
-                    let b_id = data.get_block_id();
-                    self.proposals.push_front(Proposal::Block(b_id, data));
+                    let b_id = (self.sha_hash)(data.ref_bytes());
+                    self.proposals
+                        .push_front(Proposal::Block(BlockID(b_id), data));
                     new_user_proposal = true;
                     // println!("vvv USER vvv REQ {}", data);
                 }
@@ -940,14 +947,17 @@ impl Gnome {
                     //TODO
                 }
                 ManagerToGnome::Disconnect => {
-                    self.bye_all();
                     // Gnome should send Disconnected automatically
                     // once he realizes he has no neighbors around
                     // let _ = self.mgr_sender.send(GnomeToManager::Disconnected(
                     //     self.swarm.id,
                     //     self.swarm.name.clone(),
                     // ));
-                    // bye = true;
+                    if !self.has_any_neighbors() {
+                        bye = true;
+                    } else {
+                        self.bye_all();
+                    }
                     return (any_data_processed, bye);
                 }
             }
@@ -1435,6 +1445,7 @@ impl Gnome {
             key_reg_pairs: first_key_batch,
         };
         let response = NeighborResponse::SwarmSync(sync_response);
+        eprintln!("SNR2");
         neighbor.start_new_round(self.swarm_time);
         neighbor.send_out_cast(CastMessage::new_response(response));
         let mut i: u8 = 1;
@@ -1569,6 +1580,7 @@ impl Gnome {
                             neighbor,
                         );
                         neighbor.swarm_time = self.swarm_time;
+                        eprintln!("SNR3");
                         neighbor.start_new_round(self.swarm_time);
                     }
                     NeighborRequest::SwarmJoinedInfo(swarm_name) => {
@@ -2013,7 +2025,7 @@ impl Gnome {
             .mgr_sender
             .send(GnomeToManager::ActiveNeighbors(s_id, s_name, n_ids));
     }
-    pub fn add_neighbor(&mut self, neighbor: Neighbor) {
+    pub fn add_neighbor(&mut self, mut neighbor: Neighbor) {
         let neighbor_already_exists = self.has_neighbor(neighbor.id);
         eprintln!(
             "{} add_neighbor {} [{:?}](already exist: {})",
@@ -2027,7 +2039,9 @@ impl Gnome {
         }
         if neighbor_already_exists {
             // eprintln!("NOT Replacing a neighbor");
-            self.drop_neighbor(neighbor.id);
+            if let Some(old_neighbor) = self.drop_neighbor(neighbor.id) {
+                neighbor.clone_state(old_neighbor);
+            }
             // self.fast_neighbors.push(neighbor);
         } else {
             let mut n_ids = self.collect_active_neighbor_ids();
@@ -2072,23 +2086,24 @@ impl Gnome {
         }
     }
 
-    pub fn drop_neighbor(&mut self, neighbor_id: GnomeId) {
+    pub fn drop_neighbor(&mut self, neighbor_id: GnomeId) -> Option<Neighbor> {
         if let Some(index) = self.fast_neighbors.iter().position(|x| x.id == neighbor_id) {
-            self.fast_neighbors.remove(index);
+            return Some(self.fast_neighbors.remove(index));
         }
         if let Some(index) = self.slow_neighbors.iter().position(|x| x.id == neighbor_id) {
-            self.slow_neighbors.remove(index);
+            return Some(self.slow_neighbors.remove(index));
         }
         if let Some(index) = self
             .refreshed_neighbors
             .iter()
             .position(|x| x.id == neighbor_id)
         {
-            self.refreshed_neighbors.remove(index);
+            return Some(self.refreshed_neighbors.remove(index));
         }
         if let Some(index) = self.new_neighbors.iter().position(|x| x.id == neighbor_id) {
-            self.new_neighbors.remove(index);
+            return Some(self.new_neighbors.remove(index));
         }
+        None
     }
 
     pub fn send_all(&mut self, available_bandwith: u64) {
@@ -2096,6 +2111,7 @@ impl Gnome {
         // TODO: we need to send something in case policy is not fullfilled
         // now we send an invalid message over the network
         // for all of our peers to drop us. We are also wasting bandwith.
+        eprintln!("verify_policy from send_all");
         if !message.header.is_sync() && !self.swarm.verify_policy(&message) {
             eprintln!("Should not send, policy not fulfilled!");
         }
@@ -2889,11 +2905,11 @@ impl Gnome {
             self.next_state
                 .reset_for_next_turn(true, self.header, self.payload.clone());
             for neighbor in &mut self.fast_neighbors {
-                // println!("fast");
+                eprintln!("SNR4");
                 neighbor.start_new_round(self.swarm_time);
             }
             for neighbor in &mut self.slow_neighbors {
-                // println!("slow");
+                eprintln!("SNR5");
                 neighbor.start_new_round(self.swarm_time);
             }
             if self.is_busy {
