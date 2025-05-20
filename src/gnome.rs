@@ -350,7 +350,7 @@ pub struct Gnome {
     round_start: SwarmTime,
     swarm_diameter: SwarmTime,
     receiver: Receiver<ToGnome>,
-    band_receiver: Receiver<u64>,
+    // band_receiver: Receiver<u64>,
     sender: Sender<GnomeToApp>,
     mgr_sender: Sender<GnomeToManager>,
     mgr_receiver: Receiver<ManagerToGnome>,
@@ -392,7 +392,7 @@ impl Gnome {
         receiver: Receiver<ToGnome>,
         mgr_sender: Sender<GnomeToManager>,
         mgr_receiver: Receiver<ManagerToGnome>,
-        band_receiver: Receiver<u64>,
+        // band_receiver: Receiver<u64>,
         network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
@@ -424,7 +424,7 @@ impl Gnome {
             round_start: SwarmTime(0),
             swarm_diameter: DEFAULT_SWARM_DIAMETER,
             receiver,
-            band_receiver,
+            // band_receiver,
             sender,
             mgr_sender,
             mgr_receiver,
@@ -465,7 +465,7 @@ impl Gnome {
         receiver: Receiver<ToGnome>,
         mgr_sender: Sender<GnomeToManager>,
         mgr_receiver: Receiver<ManagerToGnome>,
-        band_receiver: Receiver<u64>,
+        // band_receiver: Receiver<u64>,
         neighbors: Vec<Neighbor>,
         network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
@@ -481,7 +481,7 @@ impl Gnome {
             receiver,
             mgr_sender,
             mgr_receiver,
-            band_receiver,
+            // band_receiver,
             network_settings,
             net_settings_send,
             sign,
@@ -1830,7 +1830,7 @@ impl Gnome {
         (any_data_processed, tokens_used)
     }
 
-    pub fn do_your_job(mut self) {
+    pub fn do_your_job(mut self, assigned_bandwidth: u64) {
         eprintln!(
             "Waiting for user/network to provide some Neighbors for {}...",
             self.swarm.name
@@ -1851,16 +1851,17 @@ impl Gnome {
         }
         eprintln!("{} have neighbors!", self.swarm.name);
         self.notify_mgr_about_neighbors();
-        let mut assigned_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
-            band
-        } else {
-            1024
-        };
-        // available_bandwith = 1024;
-        eprintln!("Avail bandwith: {}", assigned_bandwith);
+        // let mut assigned_bandwidth = 1024;
+        //     if let Ok(band) = self.band_receiver.try_recv() {
+        //     band
+        // } else {
+        //     1024
+        // };
+
+        eprintln!("Avail bandwith: {}", assigned_bandwidth);
         // TODO: manager should send a message with available bandwith
         //       and available network_buffer
-        self.presync_with_swarm(assigned_bandwith);
+        self.presync_with_swarm(assigned_bandwidth);
         let mut timer = Instant::now();
         self.timeout_duration = Duration::from_secs(16);
 
@@ -1878,10 +1879,11 @@ impl Gnome {
         let mut loops_with_no_reply = 0;
         // let mut tokens_used_in_iteration = 0;
         let mut last_loop_time = SystemTime::now();
-        let mut available_tokens = assigned_bandwith;
-        let mut min_token_creation_time = calculate_min_token_period(assigned_bandwith);
+        let mut available_tokens = assigned_bandwidth;
+        let min_token_creation_time = calculate_min_token_period(assigned_bandwidth);
         let mut borrowed_tokens: u64 = 0;
         let mut band_mon = BandwidthMonitor::new(Duration::from_secs(1));
+        let mut neigh_drop_time_by_net = SwarmTime(0);
         loop {
             //TODO: Gather bandwith usage stats
             //
@@ -1915,7 +1917,7 @@ impl Gnome {
                     &mut available_tokens,
                     &mut borrowed_tokens,
                     last_loop_duration,
-                    assigned_bandwith,
+                    assigned_bandwidth,
                 );
                 // tokens_used_in_iteration = 0;
             }
@@ -2011,18 +2013,18 @@ impl Gnome {
             // We have to send NoOp every 128msec in order to
             // trigger token admission on socket side
             // That is why we can not sleep for longer than 128msec
-            if let Ok(band) = self.band_receiver.try_recv() {
-                if band == 0 {
-                    // print!("R");
-                    self.send_noop_from_a_neighbor();
-                } else {
-                    assigned_bandwith = band;
-                    eprintln!("Got bandwith: {}", assigned_bandwith);
-                    min_token_creation_time = calculate_min_token_period(assigned_bandwith);
-                }
-                // println!("Avail bandwith: {}", available_bandwith);
-                //TODO make use of available_bandwith during multicasting setup
-            }
+            // if let Ok(band) = self.band_receiver.try_recv() {
+            //     if band == 0 {
+            //         // print!("R");
+            //         self.send_noop_from_a_neighbor();
+            //     } else {
+            //         assigned_bandwith = band;
+            //         eprintln!("Got bandwith: {}", assigned_bandwith);
+            //         min_token_creation_time = calculate_min_token_period(assigned_bandwith);
+            //     }
+            //     // println!("Avail bandwith: {}", available_bandwith);
+            //     //TODO make use of available_bandwith during multicasting setup
+            // }
             let advance_to_next_turn = fast_advance_to_next_turn || slow_advance_to_next_turn;
             let new_proposal = new_user_proposal || fast_new_proposal || slow_new_proposal;
 
@@ -2115,27 +2117,30 @@ impl Gnome {
                     // self.send_all(available_tokens); // always send!
                 }
                 //TODO: send average bandwith available
-                let average_available = assigned_bandwith.saturating_sub(band_mon.average());
+                let average_available = assigned_bandwidth.saturating_sub(band_mon.average());
                 let tokens_used = self.send_all(average_available);
                 update_tokens(
                     &mut available_tokens,
                     &mut borrowed_tokens,
                     tokens_used as usize,
                 );
-                if average_available <= assigned_bandwith >> 3 {
+                if average_available <= assigned_bandwidth >> 3 {
                     // we have used >=87.5% of bandwidth available
                     // so we need to drop a neighbor
-                    // TODO: implement logic when id.is_any
-                    // inside drop_neighbor
-                    if let Some(dropped) = self.drop_neighbor(GnomeId::any()) {
-                        eprintln!("Dropped {} due to high network usage", dropped.id);
+                    if self.swarm_time - neigh_drop_time_by_net > SwarmTime(30)
+                        && self.neighbors_count() > 2
+                    {
+                        if let Some(dropped) = self.drop_any_neighbor() {
+                            eprintln!("Dropped {} due to high network usage", dropped.id);
+                            neigh_drop_time_by_net = self.swarm_time;
+                        }
                     }
                 }
                 band_mon.update(tokens_used);
                 self.send_immediate = false;
                 if self.check_if_new_round(available_tokens)
                     && self.neighbor_discovery.tick_and_check()
-                    && average_available >= assigned_bandwith >> 1
+                    && average_available >= assigned_bandwidth >> 1
                 {
                     self.query_for_new_neighbors();
                 }
@@ -2347,6 +2352,26 @@ impl Gnome {
             return Some(self.refreshed_neighbors.remove(index));
         }
         if let Some(index) = self.new_neighbors.iter().position(|x| x.id == neighbor_id) {
+            return Some(self.new_neighbors.remove(index));
+        }
+        None
+    }
+    pub fn drop_any_neighbor(&mut self) -> Option<Neighbor> {
+        //TODO: first search
+        if let Some(index) = self.slow_neighbors.iter().position(|x| x.can_be_dropped()) {
+            return Some(self.slow_neighbors.remove(index));
+        }
+        if let Some(index) = self.fast_neighbors.iter().position(|x| x.can_be_dropped()) {
+            return Some(self.fast_neighbors.remove(index));
+        }
+        if let Some(index) = self
+            .refreshed_neighbors
+            .iter()
+            .position(|x| x.can_be_dropped())
+        {
+            return Some(self.refreshed_neighbors.remove(index));
+        }
+        if let Some(index) = self.new_neighbors.iter().position(|x| x.can_be_dropped()) {
             return Some(self.new_neighbors.remove(index));
         }
         None
@@ -3542,6 +3567,12 @@ impl Gnome {
             }
         }
         false
+    }
+    fn neighbors_count(&self) -> usize {
+        self.refreshed_neighbors.len()
+            + self.fast_neighbors.len()
+            + self.slow_neighbors.len()
+            + self.new_neighbors.len()
     }
 }
 

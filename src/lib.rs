@@ -169,6 +169,6 @@ pub enum Notification {
 pub struct NotificationBundle {
     pub swarm_name: SwarmName,
     pub request_sender: Sender<ToGnome>,
-    pub token_sender: Sender<u64>,
+    // pub token_sender: Sender<u64>,
     pub network_settings_receiver: Receiver<NetworkSettings>,
 }

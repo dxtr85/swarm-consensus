@@ -181,9 +181,10 @@ impl Swarm {
         neighbors: Option<Vec<Neighbor>>,
         mgr_sender: Sender<GnomeToManager>,
         mgr_receiver: Receiver<ManagerToGnome>,
-        band_receiver: Receiver<u64>,
+        // band_receiver: Receiver<u64>,
         net_settings_send: Sender<NetworkSettings>,
         network_settings: NetworkSettings,
+        assigned_bandwidth: u64,
         verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
         sha_hash: fn(&[u8]) -> u64,
@@ -231,7 +232,7 @@ impl Swarm {
                 request_receiver,
                 mgr_sender,
                 mgr_receiver,
-                band_receiver,
+                // band_receiver,
                 neighbors,
                 network_settings,
                 net_settings_send,
@@ -248,7 +249,7 @@ impl Swarm {
                 request_receiver,
                 mgr_sender,
                 mgr_receiver,
-                band_receiver,
+                // band_receiver,
                 network_settings,
                 net_settings_send,
                 sign,
@@ -256,7 +257,7 @@ impl Swarm {
             )
         };
         let _join_handle = spawn(move || {
-            gnome.do_your_job();
+            gnome.do_your_job(assigned_bandwidth);
             eprintln!("Gnome is done");
         });
 

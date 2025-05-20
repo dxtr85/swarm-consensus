@@ -898,4 +898,12 @@ impl Neighbor {
     pub fn request_data(&mut self, request: NeighborRequest) {
         self.send_out_cast(CastMessage::new_request(request));
     }
+    pub fn can_be_dropped(&self) -> bool {
+        self.active_unicasts.is_empty()
+            && self.active_broadcasts.is_empty()
+            && self.user_requests.is_empty()
+            && self.user_responses.is_empty()
+            && self.requests.is_empty()
+            && self.requested_data.is_empty()
+    }
 }
