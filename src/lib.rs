@@ -1,3 +1,4 @@
+mod band_mon;
 mod capabilities;
 mod gnome;
 mod gnome_to_manager;

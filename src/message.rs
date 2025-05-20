@@ -108,6 +108,17 @@ impl Payload {
             _ => None,
         }
     }
+    pub fn is_keep_alive(&self) -> bool {
+        matches!(self, Payload::KeepAlive(_at))
+    }
+    pub fn len(&self) -> usize {
+        match self {
+            Self::KeepAlive(_at) => 9,
+            Self::Bye => 1,
+            Self::Reconfigure(sign, conf) => 1 + sign.len() + conf.len(),
+            Self::Block(_bid, sign, sdata) => 9 + sign.len() + sdata.len(),
+        }
+    }
 }
 
 // #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -491,6 +502,9 @@ impl Message {
     // pub fn is_broadcast(&self) -> bool {
     //     matches!(self.payload, Payload::Broadcast(_, _))
     // }
+    pub fn len(&self) -> usize {
+        5 + self.payload.len()
+    }
 }
 
 impl Display for Message {

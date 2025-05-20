@@ -87,6 +87,11 @@ pub struct SwarmSyncRequestParams {
     pub sync_multicast: bool,
     // pub app_root_hash: u64,
 }
+impl SwarmSyncRequestParams {
+    pub fn len(&self) -> usize {
+        5
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SwarmSyncResponse {
@@ -104,6 +109,16 @@ pub struct SwarmSyncResponse {
     pub more_key_reg_messages: bool,
     pub key_reg_pairs: Vec<(GnomeId, Vec<u8>)>,
 }
+impl SwarmSyncResponse {
+    pub fn len(&self) -> usize {
+        if self.key_reg_pairs.is_empty() {
+            25
+        } else {
+            let e_len = self.key_reg_pairs[0].1.len() + 8;
+            25 + self.key_reg_pairs.len() * e_len
+        }
+    }
+}
 //TODO: Move all upper layer Requests Responses into Custom wrap
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NeighborRequest {
@@ -119,6 +134,66 @@ pub enum NeighborRequest {
     SwarmJoinedInfo(SwarmName),
     //TODO: implement ListNeighboringSwarms,
     Custom(u8, CastData),
+}
+impl NeighborRequest {
+    pub fn len(&self) -> usize {
+        match self {
+            NeighborRequest::UnicastRequest(_s, cbox) => 2 + cbox.len(),
+            NeighborRequest::ForwardConnectRequest(ns) => 1 + ns.len(),
+            NeighborRequest::ConnectRequest(_n, _g, ns) => 3 + ns.len(),
+            NeighborRequest::SwarmSyncRequest(ssp) => 1 + ssp.len(),
+            NeighborRequest::SubscribeRequest(_b, _c) => 3,
+            NeighborRequest::UnsubscribeRequest(_b, _c) => 3,
+            NeighborRequest::SourceDrained(_b, _c) => 3,
+            NeighborRequest::CreateNeighbor(_g, sn) => 17 + sn.name.len(),
+            NeighborRequest::SwarmJoinedInfo(sn) => 9 + sn.name.len(),
+            NeighborRequest::Custom(_b, cd) => 2 + cd.len(),
+        }
+    }
+}
+impl NeighborResponse {
+    pub fn len(&self) -> usize {
+        match self {
+            NeighborResponse::BroadcastSync(_b, _t, cvec) => 3 + (9 * cvec.len()),
+            NeighborResponse::MulticastSync(_b, _t, mvec) => 3 + (9 * mvec.len()),
+            NeighborResponse::Unicast(_s, _c) => 3,
+            NeighborResponse::ForwardConnectResponse(ns) => 1 + ns.len(),
+            NeighborResponse::ForwardConnectFailed => 1,
+            NeighborResponse::ConnectResponse(_b, ns) => 2 + ns.len(),
+            NeighborResponse::AlreadyConnected(_b) => 2,
+            NeighborResponse::SwarmSync(ssr) => 1 + ssr.len(),
+            NeighborResponse::KeyRegistrySync(_b, _t, kvec) => {
+                if kvec.is_empty() {
+                    3
+                } else {
+                    let e_len = kvec[0].1.len() + 8;
+                    3 + (kvec.len() * e_len)
+                }
+            }
+            NeighborResponse::CapabilitySync(_b, _t, cvec) => {
+                let mut total_len = 3 + 2 * cvec.len();
+                for (c, gids) in cvec {
+                    total_len += 8 * gids.len();
+                }
+                total_len
+            }
+            NeighborResponse::PolicySync(_b, _t, pvec) => {
+                let mut total_len = 3 + 2 * pvec.len();
+                for (_p, req) in pvec {
+                    total_len += req.len() as usize;
+                }
+                total_len
+            }
+            NeighborResponse::Subscribed(_b, _c, _g, gopt) => {
+                if gopt.is_some() {
+                    20
+                } else {
+                    12
+                }
+            }
+            NeighborResponse::Custom(_b, cdata) => 2 + cdata.len(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -799,15 +874,25 @@ impl Neighbor {
 
     // TODO: find all instances where this is used and replace with
     //       gnome.send_neighbor_response
-    pub fn add_requested_data(&mut self, response: NeighborResponse) {
-        // TODO: maybe move it somewhere else?
-        if let NeighborResponse::Unicast(swarm_id, cast_id) = response {
-            let (sender, receiver) = channel();
-            self.active_unicasts.insert(cast_id, sender);
-            self.user_responses
-                .push_front(GnomeToApp::Unicast(swarm_id, cast_id, receiver));
-        }
-        self.send_out_cast(CastMessage::new_response(response));
+    // pub fn add_requested_data(&mut self, response: NeighborResponse) {
+    // TODO: maybe move it somewhere else?
+    // if let NeighborResponse::Unicast(swarm_id, cast_id) = response {
+    //     let (sender, receiver) = channel();
+    //     self.active_unicasts.insert(cast_id, sender);
+    //     self.user_responses
+    //         .push_front(GnomeToApp::Unicast(swarm_id, cast_id, receiver));
+    // }
+    //     self.send_out_cast(CastMessage::new_response(response));
+    // }
+
+    pub fn add_unicast(&mut self, swarm_id: SwarmID, cast_id: CastID) {
+        let (sender, receiver) = channel();
+        self.active_unicasts.insert(cast_id, sender);
+        self.user_responses
+            .push_front(GnomeToApp::Unicast(swarm_id, cast_id, receiver));
+        self.send_out_cast(CastMessage::new_response(NeighborResponse::Unicast(
+            swarm_id, cast_id,
+        )));
     }
 
     pub fn request_data(&mut self, request: NeighborRequest) {

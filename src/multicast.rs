@@ -18,6 +18,15 @@ pub enum CastContent {
     Request(NeighborRequest),
     Response(NeighborResponse),
 }
+impl CastContent {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Data(d) => d.len(),
+            Self::Request(nreq) => nreq.len(),
+            Self::Response(nresp) => nresp.len(),
+        }
+    }
+}
 
 // TODO: make Unicast CastID = 255 & 254 not available for user
 // these will be created automatically for every gnome pair
@@ -102,6 +111,9 @@ impl CastMessage {
     pub fn is_broadcast(&self) -> bool {
         matches!(self.c_type, CastType::Broadcast)
     }
+    pub fn len(&self) -> usize {
+        47 + self.content.len()
+    }
 }
 
 pub struct Multicast {
@@ -170,12 +182,17 @@ impl Multicast {
         self.alt_sources.clone()
     }
 
-    pub fn serve(&mut self) -> bool {
+    pub fn serve(&mut self, available_tokens: u64) -> (bool, u64) {
         let mut any_data_processed = false;
+        let mut tokens_used = 0;
+        // let mut tokens_remaining = available_tokens;
         while let Ok(WrappedMessage::Cast(msg)) = self.source.1.try_recv() {
             // println!("Received a casting msg: {:?}", msg);
+            let m_size = msg.len() as u64;
             for sender in self.subscribers.values() {
                 any_data_processed = true;
+                tokens_used += m_size;
+                // tokens_remaining = tokens_remaining.saturating_sub(m_size);
                 // println!("Wrapped send: {:?}", msg);
                 let _ = sender.send(WrappedMessage::Cast(msg.clone()));
             }
@@ -195,7 +212,11 @@ impl Multicast {
                     any_data_processed = true;
                 }
             }
+            // if tokens_remaining == 0 {
+            if tokens_used > available_tokens {
+                break;
+            }
         }
-        any_data_processed
+        (any_data_processed, tokens_used)
     }
 }

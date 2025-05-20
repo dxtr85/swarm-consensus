@@ -441,11 +441,18 @@ impl Swarm {
         }
     }
 
-    pub fn serve_casts(&mut self) -> bool {
+    pub fn serve_casts(&mut self, available_tokens: u64) -> (bool, u64) {
+        //Castings are not served in case we have no tokens available
         let mut any_data_processed = false;
-        any_data_processed |= self.serve_broadcasts();
-        // self.serve_unicasts();
-        any_data_processed
+        let mut total_tokens_used = 0;
+        if available_tokens == 0 {
+            return (any_data_processed, total_tokens_used);
+        }
+        let (was_busy, used_tokens) = self.serve_broadcasts(available_tokens);
+        total_tokens_used += used_tokens;
+        any_data_processed |= was_busy;
+        // let (was_busy, tokens_used) = self.serve_unicasts(tokens_remaining);
+        (any_data_processed, total_tokens_used)
     }
 
     pub fn broadcasts_count(&self) -> u8 {
@@ -678,12 +685,21 @@ impl Swarm {
         }
     }
 
-    fn serve_broadcasts(&mut self) -> bool {
+    fn serve_broadcasts(&mut self, available_tokens: u64) -> (bool, u64) {
         let mut any_data_processed = false;
+        let mut total_tokens_used = 0;
+        let mut tokens_remaining = available_tokens;
         for bcast in self.active_broadcasts.values_mut() {
-            any_data_processed |= bcast.serve();
+            let (was_busy, used_tokens) = bcast.serve(tokens_remaining);
+            any_data_processed |= was_busy;
+            total_tokens_used += used_tokens;
+            // if tokens_remaining == 0 {
+            if total_tokens_used >= available_tokens {
+                break;
+            }
+            tokens_remaining -= used_tokens;
         }
-        any_data_processed
+        (any_data_processed, total_tokens_used)
     }
     // fn serve_unicasts(&mut self) {
     //     for (c_id, c_recv) in self.active_unicasts.items() {

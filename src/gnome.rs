@@ -1,3 +1,4 @@
+use crate::band_mon::BandwidthMonitor;
 use crate::gnome_to_manager::GnomeToManager;
 use crate::internal::InternalMsg;
 use crate::manager_to_gnome::ManagerToGnome;
@@ -41,6 +42,7 @@ use std::ops::Deref;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
 
 #[derive(Clone, Copy, PartialOrd, PartialEq, Ord, Eq, Debug, Hash)]
 pub struct GnomeId(pub u64);
@@ -181,6 +183,13 @@ impl NetworkSettings {
             pub_port,
             nat_type: Nat::None,
             port_allocation: (PortAllocationRule::FullCone, 0),
+        }
+    }
+    pub fn len(&self) -> usize {
+        if self.pub_ip.is_ipv4() {
+            9
+        } else {
+            21
         }
     }
     pub fn update(&mut self, other: Self) {
@@ -484,7 +493,9 @@ impl Gnome {
 
     //TODO: we should probably add identifiers to internal messages
     //      and have them progress on a step by step basis somehow
-    fn serve_internal(&mut self) -> bool {
+    fn serve_internal(&mut self) -> (bool, usize) {
+        //TODO: implement token bucket logic
+        let mut tokens_used = 0;
         let mut any_data_processed = false;
         while let Ok(internal) = self.recv_internal.try_recv() {
             any_data_processed = true;
@@ -499,19 +510,23 @@ impl Gnome {
                         if self.send_neighbor_request(
                             source,
                             NeighborRequest::SubscribeRequest(is_bcast, id),
-                        ) && self.activate_broadcast_at_neighbor(source, id, send_n)
-                        {
-                            let b_cast = Multicast::new(
-                                origin,
-                                (source, recv_n),
-                                vec![],
-                                HashMap::new(),
-                                Some(send_d),
-                            );
-                            self.swarm.insert_broadcast(id, b_cast);
-                            let _res =
-                                self.sender
-                                    .send(GnomeToApp::Broadcast(self.swarm.id, id, recv_d));
+                        ) {
+                            tokens_used += 48;
+                            if self.activate_broadcast_at_neighbor(source, id, send_n) {
+                                let b_cast = Multicast::new(
+                                    origin,
+                                    (source, recv_n),
+                                    vec![],
+                                    HashMap::new(),
+                                    Some(send_d),
+                                );
+                                self.swarm.insert_broadcast(id, b_cast);
+                                let _res = self.sender.send(GnomeToApp::Broadcast(
+                                    self.swarm.id,
+                                    id,
+                                    recv_d,
+                                ));
+                            }
                         }
                     } else {
                         eprintln!("Unable to subscribe a broadcast");
@@ -521,16 +536,20 @@ impl Gnome {
                     if let Some((n_id, subs)) =
                         self.swarm.unsubscribe_cast(self.id, is_bcast, &c_id)
                     {
-                        self.send_neighbor_request(
+                        if self.send_neighbor_request(
                             n_id,
                             NeighborRequest::UnsubscribeRequest(is_bcast, c_id),
-                        );
+                        ) {
+                            tokens_used += 48;
+                        }
                         for sub in subs {
                             eprintln!("Sending SDrain to: {}", sub);
-                            self.send_neighbor_request(
+                            if self.send_neighbor_request(
                                 sub,
                                 NeighborRequest::SourceDrained(is_bcast, c_id),
-                            );
+                            ) {
+                                tokens_used += 48;
+                            }
                         }
                     }
                 }
@@ -556,8 +575,10 @@ impl Gnome {
                     };
                     if !neighbor_id.is_any() {
                         eprintln!("Request: {:?}", request);
+                        let req_len = request.len();
                         if self.send_neighbor_request(neighbor_id, request) {
                             eprintln!("Request sent");
+                            tokens_used += 43 + req_len;
                         } else {
                             eprintln!("Failed to send request");
                         }
@@ -572,17 +593,21 @@ impl Gnome {
                         gnome_id
                     };
                     if !neighbor_id.is_any() {
-                        self.send_neighbor_response(neighbor_id, response);
+                        let resp_len = response.len();
+                        if self.send_neighbor_response(neighbor_id, response) {
+                            tokens_used += resp_len;
+                        }
                     } else {
                         eprintln!("Unable to find a Neighbor to send out CustomRequest");
                     }
                 }
             }
         }
-        any_data_processed
+        (any_data_processed, tokens_used)
     }
 
     fn serve_user_data(&self) -> bool {
+        // Casting is only being sent internally, not via network
         let mut any_data_processed = false;
         for ((c_type, c_id), (recv_d, send_m)) in &self.data_converters {
             while let Ok(data) = recv_d.try_recv() {
@@ -687,7 +712,7 @@ impl Gnome {
                 }
                 ToGnome::StartUnicast(gnome_id) => {
                     // println!("Received StartUnicast {:?}", gnome_id);
-                    let mut request_sent = false;
+                    // let mut request_sent = false;
                     let mut avail_ids: [CastID; 256] = [CastID(0); 256];
                     for (added_ids, cast_id) in
                         self.swarm.avail_unicast_ids().into_iter().enumerate()
@@ -696,26 +721,29 @@ impl Gnome {
                     }
                     let request =
                         NeighborRequest::UnicastRequest(self.swarm.id, Box::new(avail_ids));
-                    for neighbor in &mut self.fast_neighbors {
-                        if neighbor.id == gnome_id {
-                            eprintln!("Sending UnicastRequest to neighbor");
-                            neighbor.request_data(request.clone());
-                            request_sent = true;
-                            break;
-                        }
-                    }
-                    if !request_sent {
-                        for neighbor in &mut self.slow_neighbors {
-                            if neighbor.id == gnome_id {
-                                request_sent = true;
-                                neighbor.request_data(request.clone());
-                                break;
-                            }
-                        }
-                    }
-                    if !request_sent {
-                        eprintln!("Unable to find gnome with id {}", gnome_id);
-                    }
+                    self.send_internal
+                        .send(InternalMsg::RequestOut(gnome_id, request))
+                        .unwrap();
+                    // for neighbor in &mut self.fast_neighbors {
+                    //     if neighbor.id == gnome_id {
+                    //         eprintln!("Sending UnicastRequest to neighbor");
+                    //         neighbor.request_data(request.clone());
+                    //         request_sent = true;
+                    //         break;
+                    //     }
+                    // }
+                    // if !request_sent {
+                    //     for neighbor in &mut self.slow_neighbors {
+                    //         if neighbor.id == gnome_id {
+                    //             request_sent = true;
+                    //             neighbor.request_data(request.clone());
+                    //             break;
+                    //         }
+                    //     }
+                    // }
+                    // if !request_sent {
+                    //     eprintln!("Unable to find gnome with id {}", gnome_id);
+                    // }
                 }
                 ToGnome::StartBroadcast => {
                     eprintln!("Received StartBroadcast user request");
@@ -792,50 +820,58 @@ impl Gnome {
                             neighbor_id,
                         }) = self.pending_conn_requests.pop_front()
                         {
-                            let mut neighbor_informed = false;
-                            for neighbor in &mut self.fast_neighbors {
-                                if neighbor.id == neighbor_id {
-                                    neighbor.add_requested_data(NeighborResponse::ConnectResponse(
-                                        conn_id,
-                                        settings_to_send,
-                                    ));
-                                    neighbor_informed = true;
-                                    break;
-                                }
-                            }
-                            if !neighbor_informed {
-                                for neighbor in &mut self.refreshed_neighbors {
-                                    if neighbor.id == neighbor_id {
-                                        neighbor.add_requested_data(
-                                            NeighborResponse::ConnectResponse(
-                                                conn_id,
-                                                settings_to_send,
-                                            ),
-                                        );
-                                        neighbor_informed = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if !neighbor_informed {
-                                for neighbor in &mut self.slow_neighbors {
-                                    if neighbor.id == neighbor_id {
-                                        neighbor.add_requested_data(
-                                            NeighborResponse::ConnectResponse(
-                                                conn_id,
-                                                settings_to_send,
-                                            ),
-                                        );
-                                        neighbor_informed = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if neighbor_informed {
-                                eprintln!("Sent back ConnResponse");
-                            } else {
-                                eprintln!("Failed to send response");
-                            }
+                            self.send_internal
+                                .send(InternalMsg::ResponseOut(
+                                    neighbor_id,
+                                    NeighborResponse::ConnectResponse(conn_id, settings_to_send),
+                                ))
+                                .unwrap();
+                            // let mut neighbor_informed = false;
+                            // for neighbor in &mut self.fast_neighbors {
+                            //     if neighbor.id == neighbor_id {
+                            //         //TODO: implement token bucket logic
+                            //         neighbor.add_requested_data(NeighborResponse::ConnectResponse(
+                            //             conn_id,
+                            //             settings_to_send,
+                            //         ));
+                            //         neighbor_informed = true;
+                            //         break;
+                            //     }
+                            // }
+                            // if !neighbor_informed {
+                            //     for neighbor in &mut self.refreshed_neighbors {
+                            //         if neighbor.id == neighbor_id {
+                            //             //TODO: implement token bucket logic
+                            //             neighbor.add_requested_data(
+                            //                 NeighborResponse::ConnectResponse(
+                            //                     conn_id,
+                            //                     settings_to_send,
+                            //                 ),
+                            //             );
+                            //             neighbor_informed = true;
+                            //             break;
+                            //         }
+                            //     }
+                            // }
+                            // if !neighbor_informed {
+                            //     for neighbor in &mut self.slow_neighbors {
+                            //         if neighbor.id == neighbor_id {
+                            //             neighbor.add_requested_data(
+                            //                 NeighborResponse::ConnectResponse(
+                            //                     conn_id,
+                            //                     settings_to_send,
+                            //                 ),
+                            //             );
+                            //             neighbor_informed = true;
+                            //             break;
+                            //         }
+                            //     }
+                            // }
+                            // if neighbor_informed {
+                            //     eprintln!("Sent back ConnResponse");
+                            // } else {
+                            //     eprintln!("Failed to send response");
+                            // }
                         }
                     }
                 }
@@ -843,7 +879,9 @@ impl Gnome {
         }
         (exit_app, new_user_proposal)
     }
-    fn serve_manager_requests(&mut self) -> (bool, bool) {
+    fn serve_manager_requests(&mut self) -> (bool, bool, usize) {
+        //TODO: implement token bucket logic
+        let mut tokens_used = 0;
         let mut any_data_processed = false;
         let mut bye = false;
         while let Ok(request) = self.mgr_receiver.try_recv() {
@@ -898,6 +936,8 @@ impl Gnome {
                             self.swarm_diameter, //TODO
                             vec![],
                         );
+                        // 43 bytes for IP/TCP|UDP + 11 bytes for gnome header
+                        tokens_used += 54 + swarm_name.name.len();
                         new_neighbor.clone_to_swarm(swarm_name.clone(), s1, s2, r3);
                         self.send_noop_from_a_neighbor();
                         eprintln!(
@@ -922,6 +962,8 @@ impl Gnome {
                         neighbor.id, self.swarm.name
                     );
                     eprintln!("Send CN {} foor {}", neighbor.id, self.swarm.name);
+                    // 43 bytes for IP/TCP|UDP + 11 bytes for gnome header
+                    tokens_used += 54 + self.swarm.name.name.len();
                     let res = neighbor.send_out_cast(CastMessage::new_request(
                         NeighborRequest::CreateNeighbor(self.id, self.swarm.name.clone()),
                     ));
@@ -958,11 +1000,11 @@ impl Gnome {
                     } else {
                         self.bye_all();
                     }
-                    return (any_data_processed, bye);
+                    return (any_data_processed, bye, tokens_used);
                 }
             }
         }
-        (any_data_processed, bye)
+        (any_data_processed, bye, tokens_used)
     }
     fn get_neighboring_swarms(&self) -> HashSet<(GnomeId, SwarmName)> {
         let mut neighboring_swarms = HashSet::new();
@@ -993,22 +1035,23 @@ impl Gnome {
         let neighbor_count = self.fast_neighbors.len() + self.slow_neighbors.len();
         if neighbor_count < 2 {
             eprintln!("Not enough neighbors: {}", neighbor_count);
-            let mut response_sent = false;
-            for neighbor in &mut self.fast_neighbors {
-                if neighbor.id == origin {
-                    neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
-                    response_sent = true;
-                    break;
-                }
-            }
-            if !response_sent {
-                for neighbor in &mut self.slow_neighbors {
-                    if neighbor.id == origin {
-                        neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
-                        break;
-                    }
-                }
-            }
+            self.send_neighbor_response(origin, NeighborResponse::ForwardConnectFailed);
+            // let mut response_sent = false;
+            // for neighbor in &mut self.fast_neighbors {
+            //     if neighbor.id == origin {
+            //         neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+            //         response_sent = true;
+            //         break;
+            //     }
+            // }
+            // if !response_sent {
+            //     for neighbor in &mut self.slow_neighbors {
+            //         if neighbor.id == origin {
+            //             neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+            //             break;
+            //         }
+            //     }
+            // }
             return;
         }
         let mut id: u8 = 0;
@@ -1060,26 +1103,32 @@ impl Gnome {
     fn notify_neighbors_about_new_swarm(&mut self, swarm_name: SwarmName, n_ids: Vec<GnomeId>) {
         eprintln!("Supposed to notify {} neighbors", n_ids.len());
         let req = NeighborRequest::SwarmJoinedInfo(swarm_name);
-        for neighbor in &mut self.fast_neighbors {
-            if n_ids.contains(&neighbor.id) {
-                eprintln!("Send fast {}", neighbor.id);
-                neighbor.request_data(req.clone());
-            }
+        for n_id in n_ids {
+            self.send_internal
+                .send(InternalMsg::RequestOut(n_id, req.clone()))
+                .unwrap();
         }
-        for neighbor in &mut self.slow_neighbors {
-            if n_ids.contains(&neighbor.id) {
-                eprintln!("Send slow {}", neighbor.id);
-                neighbor.request_data(req.clone());
-            }
-        }
-        for neighbor in &mut self.refreshed_neighbors {
-            if n_ids.contains(&neighbor.id) {
-                eprintln!("Send refreshed {}", neighbor.id);
-                neighbor.request_data(req.clone());
-            }
-        }
+        // for neighbor in &mut self.fast_neighbors {
+        //     if n_ids.contains(&neighbor.id) {
+        //         eprintln!("Send fast {}", neighbor.id);
+        //         neighbor.request_data(req.clone());
+        //     }
+        // }
+        // for neighbor in &mut self.slow_neighbors {
+        //     if n_ids.contains(&neighbor.id) {
+        //         eprintln!("Send slow {}", neighbor.id);
+        //         neighbor.request_data(req.clone());
+        //     }
+        // }
+        // for neighbor in &mut self.refreshed_neighbors {
+        //     if n_ids.contains(&neighbor.id) {
+        //         eprintln!("Send refreshed {}", neighbor.id);
+        //         neighbor.request_data(req.clone());
+        //     }
+        // }
     }
     fn request_neighbors_for_swarm(&mut self, swarm_name: SwarmName) {
+        //TODO: implement token bucket logic
         eprintln!("Send CN 3");
         let req = NeighborRequest::CreateNeighbor(self.id, swarm_name.clone());
         for neighbor in &mut self.fast_neighbors {
@@ -1192,22 +1241,24 @@ impl Gnome {
             }
             if !neighbor_found {
                 eprintln!("Unable to find more neighbors for {}", id);
-                let mut response_sent = false;
-                for neighbor in &mut self.fast_neighbors {
-                    if neighbor.id == v.origin {
-                        neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
-                        response_sent = true;
-                        break;
-                    }
-                }
-                if !response_sent {
-                    for neighbor in &mut self.slow_neighbors {
-                        if neighbor.id == v.origin {
-                            neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
-                            break;
-                        }
-                    }
-                }
+                let origin = v.origin;
+                self.send_neighbor_response(origin, NeighborResponse::ForwardConnectFailed);
+                // let mut response_sent = false;
+                // for neighbor in &mut self.fast_neighbors {
+                //     if neighbor.id == v.origin {
+                //         neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+                //         response_sent = true;
+                //         break;
+                //     }
+                // }
+                // if !response_sent {
+                //     for neighbor in &mut self.slow_neighbors {
+                //         if neighbor.id == v.origin {
+                //             neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+                //             break;
+                //         }
+                //     }
+                // }
                 key_to_remove = Some(id);
             } else {
                 v.timestamp = self.swarm_time;
@@ -1235,95 +1286,146 @@ impl Gnome {
     // we also send back a reply to originating neighbor
     //
     // TODO: cover a case when queried neighbor already is connected to origin
-    fn serve_ongoing_requests(&mut self) -> bool {
+    fn serve_ongoing_requests(&mut self) -> (bool, usize) {
+        //TODO: implement token bucket logic
+        let mut tokens_used = 0;
         let mut any_data_processed = false;
-        let mut keys_to_remove: Vec<u8> = vec![];
-        for (k, v) in &mut self.ongoing_requests {
+        if self.ongoing_requests.is_empty() {
+            return (any_data_processed, tokens_used);
+        }
+        let to_process = std::mem::replace(&mut self.ongoing_requests, HashMap::new());
+        let mut to_add = HashMap::new();
+        // let mut keys_to_remove: Vec<u8> = vec![];
+        for (k, mut v) in to_process {
             if v.response.is_some() {
                 any_data_processed = true;
                 eprintln!("Sending response: {:?}", v.response);
-                let mut response_sent = false;
-                for neighbor in &mut self.fast_neighbors {
-                    if neighbor.id == v.origin {
-                        neighbor.add_requested_data(NeighborResponse::ForwardConnectResponse(
-                            v.response.unwrap(),
-                        ));
-                        response_sent = true;
-                        break;
-                    }
-                }
-                if !response_sent {
-                    for neighbor in &mut self.slow_neighbors {
-                        if neighbor.id == v.origin {
-                            neighbor.add_requested_data(NeighborResponse::ForwardConnectResponse(
-                                v.response.unwrap(),
-                            ));
-                            break;
-                        }
-                    }
-                }
-                keys_to_remove.push(*k);
+                let response = NeighborResponse::ForwardConnectResponse(v.response.unwrap());
+                tokens_used += 43 + response.len();
+                self.send_neighbor_response(v.origin, response);
+                // let mut response_sent = false;
+                // for neighbor in &mut self.fast_neighbors {
+                //     if neighbor.id == v.origin {
+                //         neighbor.add_requested_data(NeighborResponse::ForwardConnectResponse(
+                //             v.response.unwrap(),
+                //         ));
+                //         response_sent = true;
+                //         break;
+                //     }
+                // }
+                // if !response_sent {
+                //     for neighbor in &mut self.slow_neighbors {
+                //         if neighbor.id == v.origin {
+                //             neighbor.add_requested_data(NeighborResponse::ForwardConnectResponse(
+                //                 v.response.unwrap(),
+                //             ));
+                //             break;
+                //         }
+                //     }
+                // }
+                // keys_to_remove.push(*k);
             } else {
                 let time_delta = self.swarm_time - v.timestamp;
                 if time_delta > SwarmTime(100) {
-                    let mut neighbor_found = false;
-                    for neighbor in &mut self.fast_neighbors {
-                        if !v.queried_neighbors.contains(&neighbor.id) {
-                            neighbor_found = true;
-                            neighbor.request_data(NeighborRequest::ConnectRequest(
-                                *k,
-                                v.origin,
-                                v.network_settings,
-                            ));
-                            break;
-                        }
-                    }
-                    if !neighbor_found {
-                        for neighbor in &mut self.slow_neighbors {
-                            if !v.queried_neighbors.contains(&neighbor.id) {
-                                neighbor_found = true;
-                                neighbor.request_data(NeighborRequest::ConnectRequest(
-                                    *k,
-                                    v.origin,
-                                    v.network_settings,
-                                ));
-                                break;
-                            }
-                        }
-                    }
-                    if !neighbor_found {
-                        eprintln!("Unable to find more neighbors for {}", k);
-                        let mut response_sent = false;
-                        for neighbor in &mut self.fast_neighbors {
-                            if neighbor.id == v.origin {
-                                neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
-                                response_sent = true;
-                                break;
-                            }
-                        }
-                        if !response_sent {
-                            for neighbor in &mut self.slow_neighbors {
-                                if neighbor.id == v.origin {
-                                    neighbor
-                                        .add_requested_data(NeighborResponse::ForwardConnectFailed);
-                                    break;
-                                }
-                            }
-                        }
-                        keys_to_remove.push(*k);
-                    } else {
+                    any_data_processed = true;
+                    if let Some(unqueried_neighbor_id) =
+                        self.get_other_neighbor_id_than(&v.queried_neighbors)
+                    {
                         v.timestamp = self.swarm_time;
+                        v.queried_neighbors.push(unqueried_neighbor_id);
+                        let request =
+                            NeighborRequest::ConnectRequest(k, v.origin, v.network_settings);
+                        tokens_used += 43 + request.len();
+                        self.send_neighbor_request(unqueried_neighbor_id, request);
+                        to_add.insert(k, v);
+
+                    // let mut neighbor_found = false;
+                    // for neighbor in &mut self.fast_neighbors {
+                    //     if !v.queried_neighbors.contains(&neighbor.id) {
+                    //         neighbor_found = true;
+                    //         neighbor.request_data(NeighborRequest::ConnectRequest(
+                    //             *k,
+                    //             v.origin,
+                    //             v.network_settings,
+                    //         ));
+                    //         break;
+                    //     }
+                    // }
+                    // if !neighbor_found {
+                    //     for neighbor in &mut self.refreshed_neighbors {
+                    //         if !v.queried_neighbors.contains(&neighbor.id) {
+                    //             neighbor_found = true;
+                    //             neighbor.request_data(NeighborRequest::ConnectRequest(
+                    //                 *k,
+                    //                 v.origin,
+                    //                 v.network_settings,
+                    //             ));
+                    //             break;
+                    //         }
+                    //     }
+                    // }
+                    // if !neighbor_found {
+                    //     for neighbor in &mut self.slow_neighbors {
+                    //         if !v.queried_neighbors.contains(&neighbor.id) {
+                    //             neighbor_found = true;
+                    //             neighbor.request_data(NeighborRequest::ConnectRequest(
+                    //                 *k,
+                    //                 v.origin,
+                    //                 v.network_settings,
+                    //             ));
+                    //             break;
+                    //         }
+                    //     }
+                    // }
+                    // if !neighbor_found {
+                    } else {
+                        eprintln!("Unable to find more neighbors for {}", k);
+                        let resp = NeighborResponse::ForwardConnectFailed;
+                        tokens_used += 43 + resp.len();
+                        self.send_neighbor_response(v.origin, resp);
+                        // let mut response_sent = false;
+                        // for neighbor in &mut self.fast_neighbors {
+                        //     if neighbor.id == v.origin {
+                        //         neighbor.add_requested_data(NeighborResponse::ForwardConnectFailed);
+                        //         response_sent = true;
+                        //         break;
+                        //     }
+                        // }
+                        // if !response_sent {
+                        //     for neighbor in &mut self.refreshed_neighbors {
+                        //         if neighbor.id == v.origin {
+                        //             response_sent = true;
+                        //             neighbor
+                        //                 .add_requested_data(NeighborResponse::ForwardConnectFailed);
+                        //             break;
+                        //         }
+                        //     }
+                        // }
+                        // if !response_sent {
+                        //     for neighbor in &mut self.slow_neighbors {
+                        //         if neighbor.id == v.origin {
+                        //             neighbor
+                        //                 .add_requested_data(NeighborResponse::ForwardConnectFailed);
+                        //             break;
+                        //         }
+                        //     }
+                        // }
+                        // keys_to_remove.push(*k);
                     }
+                } else {
+                    to_add.insert(k, v);
                 }
             }
         }
-        for key in keys_to_remove {
-            self.ongoing_requests.remove(&key);
-        }
-        any_data_processed
+        self.ongoing_requests = to_add;
+        // for key in keys_to_remove {
+        //     self.ongoing_requests.remove(&key);
+        // }
+        (any_data_processed, tokens_used)
     }
 
     fn serve_neighbors_casts(&mut self) -> bool {
+        // This only sends cast messages internaly, not via network
         let mut any_data_processed = false;
         for neighbor in &mut self.fast_neighbors {
             any_data_processed |= neighbor.try_recv_cast();
@@ -1336,15 +1438,17 @@ impl Gnome {
         }
         any_data_processed
     }
-    fn serve_sync_requests(&mut self) -> bool {
+    fn serve_sync_requests(&mut self, available_tokens: u64) -> (bool, usize) {
+        //TODO: implement token bucket logic
+        let mut tokens_used = 0;
         let mut any_data_processed = false;
         // TODO: in order to function we need to always have
         //       actual value of app_sync_hash at hand
         //       this should be provided by Manager and stored by Gnome or better Swarm
         if self.new_neighbors.is_empty() {
-            return any_data_processed;
+            return (any_data_processed, tokens_used);
         }
-        let message = self.prepare_message();
+        let message = self.prepare_message(available_tokens);
         let mut processed_neighbors = vec![];
         while let Some(mut neighbor) = self.new_neighbors.pop() {
             // eprintln!("Serving Sync Swarm request");
@@ -1365,7 +1469,8 @@ impl Gnome {
                 // );
                 any_data_processed = true;
                 neighbor.swarm_time = message.swarm_time;
-                self.send_sync_responses(
+                // TODO: use tokens when sending response immediately
+                tokens_used += self.send_sync_responses(
                     // app_sync_hash,
                     sync_key_reg,
                     sync_capability,
@@ -1381,7 +1486,7 @@ impl Gnome {
             processed_neighbors.push(neighbor);
         }
         self.new_neighbors = processed_neighbors;
-        any_data_processed
+        (any_data_processed, tokens_used)
     }
 
     fn send_sync_responses(
@@ -1393,7 +1498,8 @@ impl Gnome {
         sync_broadcast: bool,
         sync_multicast: bool,
         neighbor: &mut Neighbor,
-    ) {
+    ) -> usize {
+        let mut tokens_used = 0;
         // println!("Serving some SyncRequest!");
         let b_count = self.swarm.broadcasts_count();
         let m_count = self.swarm.multicasts_count();
@@ -1429,6 +1535,13 @@ impl Gnome {
             (false, vec![], vec![])
         };
 
+        let key_size = if !first_key_batch.is_empty() {
+            8 + first_key_batch[0].1.len()
+        } else {
+            0
+        };
+        tokens_used += 54 + 25 + (first_key_batch.len() * key_size);
+
         let sync_response = SwarmSyncResponse {
             chill_phase,
             founder: self.swarm.name.founder,
@@ -1451,6 +1564,7 @@ impl Gnome {
         let mut i: u8 = 1;
         let total_batches = remaining_batches.len() as u8;
         while let Some(batch) = remaining_batches.pop() {
+            tokens_used += 45 + (batch.len() * key_size);
             let response = NeighborResponse::KeyRegistrySync(i, total_batches, batch);
             neighbor.send_out_cast(CastMessage::new_response(response));
             i += 1;
@@ -1460,12 +1574,18 @@ impl Gnome {
             let total_chunks = chunks.len();
             if total_chunks > 0 {
                 for i in 1..total_chunks + 1 {
+                    let chunk = chunks.pop().unwrap();
+                    let mut bytes_size = 0;
+                    for (_c, ids) in &chunk {
+                        bytes_size += 2 + (8 * ids.len());
+                    }
+                    tokens_used += 44 + bytes_size;
                     let response = NeighborResponse::CapabilitySync(
                         i as u8,
                         // TODO: we have to limit maximum size of Capability registry!
                         // max 128 gnomes per Capability
                         total_chunks as u8,
-                        chunks.pop().unwrap(),
+                        chunk,
                     );
                     neighbor.send_out_cast(CastMessage::new_response(response));
                 }
@@ -1478,11 +1598,13 @@ impl Gnome {
             let total_chunks = chunks.len();
             if total_chunks > 0 {
                 for i in 1..total_chunks + 1 {
-                    let response = NeighborResponse::PolicySync(
-                        i as u8,
-                        total_chunks as u8,
-                        chunks.pop().unwrap(),
-                    );
+                    let chunk = chunks.pop().unwrap();
+                    let mut bytes_size = 0;
+                    for (_p, req) in &chunk {
+                        bytes_size += 1 + (req.len() as usize);
+                    }
+                    tokens_used += 44 + bytes_size;
+                    let response = NeighborResponse::PolicySync(i as u8, total_chunks as u8, chunk);
                     neighbor.send_out_cast(CastMessage::new_response(response));
                 }
             }
@@ -1493,6 +1615,7 @@ impl Gnome {
             } else {
                 self.swarm.broadcast_ids()
             };
+            tokens_used += 46 + b_casts.len();
             let response = NeighborResponse::BroadcastSync(1, 1, b_casts);
             neighbor.send_out_cast(CastMessage::new_response(response));
         }
@@ -1502,9 +1625,11 @@ impl Gnome {
             } else {
                 self.swarm.multicast_ids()
             };
+            tokens_used += 46 + m_casts.len();
             let response = NeighborResponse::MulticastSync(1, 1, m_casts);
-            neighbor.send_out_cast(CastMessage::new_response(response));
+            let _ = neighbor.send_out_cast(CastMessage::new_response(response));
         }
+        tokens_used
     }
 
     fn serve_neighbors_requests(
@@ -1512,8 +1637,9 @@ impl Gnome {
         // app_sync_hash: u64,
         refreshed: bool,
         slow: bool,
-    ) -> bool {
+    ) -> (bool, usize) {
         let mut any_data_processed = false;
+        let mut tokens_used = 0;
         let mut neighbors = if slow {
             std::mem::take(&mut self.slow_neighbors)
         } else if refreshed {
@@ -1536,10 +1662,11 @@ impl Gnome {
                                     recv_d,
                                     neighbor.sender.clone(),
                                 );
-                                neighbor.add_requested_data(NeighborResponse::Unicast(
-                                    self.swarm.id,
-                                    *cast_id,
-                                ));
+                                neighbor.add_unicast(self.swarm.id, *cast_id);
+                                // neighbor.add_requested_data(NeighborResponse::Unicast(
+                                //     self.swarm.id,
+                                //     *cast_id,
+                                // ));
                                 let _res = self.sender.send(GnomeToApp::UnicastOrigin(
                                     self.swarm.id,
                                     *cast_id,
@@ -1558,7 +1685,9 @@ impl Gnome {
                         if let Some(response) =
                             self.serve_connect_request(id, neighbor.id, gnome_id, network_settings)
                         {
-                            neighbor.add_requested_data(response);
+                            tokens_used += 43 + response.len();
+                            self.send_neighbor_response(neighbor.id, response);
+                            // neighbor.add_requested_data(response);
                         }
                     }
                     NeighborRequest::SwarmSyncRequest(SwarmSyncRequestParams {
@@ -1570,7 +1699,7 @@ impl Gnome {
                         // app_root_hash: _,
                     }) => {
                         // eprintln!("SSReq 2");
-                        self.send_sync_responses(
+                        tokens_used += self.send_sync_responses(
                             // app_sync_hash,
                             sync_key_reg,
                             sync_capability,
@@ -1599,14 +1728,19 @@ impl Gnome {
                             neighbor.id,
                             neighbor.sender.clone(),
                         ) {
-                            neighbor.add_requested_data(NeighborResponse::Subscribed(
-                                is_bcast, cast_id, origin, None,
-                            ));
+                            let response =
+                                NeighborResponse::Subscribed(is_bcast, cast_id, origin, None);
+                            tokens_used += 43 + response.len();
+                            self.send_neighbor_response(neighbor.id, response);
+                            // neighbor.add_requested_data(NeighborResponse::Subscribed(
+                            //     is_bcast, cast_id, origin, None,
+                            // ));
                         } else {
                             // We can not subscribe so we request our neighbor to
                             // keep searching, excluding us
-                            neighbor
-                                .request_data(NeighborRequest::SourceDrained(is_bcast, cast_id));
+                            let request = NeighborRequest::SourceDrained(is_bcast, cast_id);
+                            tokens_used += 43 + request.len();
+                            neighbor.request_data(request);
                         }
                     }
                     NeighborRequest::UnsubscribeRequest(is_bcast, cast_id) => {
@@ -1664,9 +1798,9 @@ impl Gnome {
                             neighbor.member_of_swarms.clone(),
                         );
                         new_neighbor.clone_to_swarm(swarm_name.clone(), s1, s2, r3);
-                        let _ = new_neighbor.send_out_cast(CastMessage::new_request(
-                            NeighborRequest::CreateNeighbor(self.id, swarm_name.clone()),
-                        ));
+                        let request = NeighborRequest::CreateNeighbor(self.id, swarm_name.clone());
+                        tokens_used += 43 + request.len();
+                        let _ = new_neighbor.send_out_cast(CastMessage::new_request(request));
                         neighbor.send_no_op();
                         let _ = self.mgr_sender.send(GnomeToManager::AddNeighborToSwarm(
                             self.swarm.id,
@@ -1693,7 +1827,7 @@ impl Gnome {
         for (id, net_set) in pending_ongoing_requests {
             self.add_ongoing_request(id, net_set);
         }
-        any_data_processed
+        (any_data_processed, tokens_used)
     }
 
     pub fn do_your_job(mut self) {
@@ -1705,7 +1839,7 @@ impl Gnome {
         while self.fast_neighbors.is_empty() && self.slow_neighbors.is_empty() {
             // println!("in while");
             let _ = self.serve_user_requests();
-            let (_data_processed, bye) = self.serve_manager_requests();
+            let (_data_processed, bye, _tokens_used) = self.serve_manager_requests();
             if bye {
                 let _ = self.mgr_sender.send(GnomeToManager::Disconnected(
                     self.swarm.id,
@@ -1717,14 +1851,16 @@ impl Gnome {
         }
         eprintln!("{} have neighbors!", self.swarm.name);
         self.notify_mgr_about_neighbors();
-        let mut available_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
+        let mut assigned_bandwith = if let Ok(band) = self.band_receiver.try_recv() {
             band
         } else {
             1024
         };
         // available_bandwith = 1024;
-        eprintln!("Avail bandwith: {}", available_bandwith);
-        self.presync_with_swarm(available_bandwith);
+        eprintln!("Avail bandwith: {}", assigned_bandwith);
+        // TODO: manager should send a message with available bandwith
+        //       and available network_buffer
+        self.presync_with_swarm(assigned_bandwith);
         let mut timer = Instant::now();
         self.timeout_duration = Duration::from_secs(16);
 
@@ -1740,33 +1876,113 @@ impl Gnome {
         // - we sent a Cast message
         let mut was_loop_iteration_busy;
         let mut loops_with_no_reply = 0;
+        // let mut tokens_used_in_iteration = 0;
+        let mut last_loop_time = SystemTime::now();
+        let mut available_tokens = assigned_bandwith;
+        let mut min_token_creation_time = calculate_min_token_period(assigned_bandwith);
+        let mut borrowed_tokens: u64 = 0;
+        let mut band_mon = BandwidthMonitor::new(Duration::from_secs(1));
         loop {
+            //TODO: Gather bandwith usage stats
+            //
+            // At the start of every iteration read timestamp
+            // and substract from it one from previous iteration.
+            // time_step = new_timestamp - old_timestamp [sec]
+            // new_tokens = time_step * bandwith
+            // If value of network_buffer_used is > 0, decrease it by
+            // new_tokens.
+            //    (If new_tokens > network_buffer_used
+            //     new_tokens = network_buffer_used - prev_network_buffer_used
+            //     otherwise new_tokens = 0)
+
+            // available_tokens = min(available_tokens + new_tokens,
+            //                        MAX_TOKENS)
+            // TODO: iterate over neighbors and
+            //   for each neighbor take some amount of tokens and inform him
+            //   how many he can use for sending messages.
+            //   Every neighbor returns number of unused tokens.
+            // Every neighbor should get at least 1500 tokens, so that
+            // he can send at least one message for sure.
+            // If available_tokens < 1500 we can try sending this smaller
+            //   amount, or better we wait until next iteration for
+            //   this number to increase.
+
+            let this_loop_time = SystemTime::now();
+            let last_loop_duration = this_loop_time.duration_since(last_loop_time).unwrap();
+            if last_loop_duration > min_token_creation_time {
+                last_loop_time = this_loop_time;
+                create_tokens(
+                    &mut available_tokens,
+                    &mut borrowed_tokens,
+                    last_loop_duration,
+                    assigned_bandwith,
+                );
+                // tokens_used_in_iteration = 0;
+            }
             was_loop_iteration_busy = false;
             let sleep_time = Duration::from_nanos(sleep_nsec);
             // println!("Sleeping for: {:?}", sleep_time);
             std::thread::sleep(sleep_time);
-            // println!("Sleep is over");
             let (mut break_the_loop, new_user_proposal) = self.serve_user_requests();
-            was_loop_iteration_busy |= self.serve_internal();
-            was_loop_iteration_busy |= self.serve_user_data();
-            let (mgr_busy, bye) = self.serve_manager_requests();
+            //TODO: decide if we should serve below when no tokens available
+            let (mgr_busy, bye, tokens_used) = self.serve_manager_requests();
+            update_tokens(&mut available_tokens, &mut borrowed_tokens, tokens_used);
+            // tokens_used_in_iteration += tokens_used;
+            if tokens_used > 0 {
+                eprintln!("Manager requests used {} byte tokens", tokens_used);
+            }
             break_the_loop |= bye;
             was_loop_iteration_busy |= mgr_busy;
+            was_loop_iteration_busy |= self.serve_user_data();
             if self.chill_out.0 {
-                was_loop_iteration_busy |= self.serve_sync_requests();
+                //TODO: decide if we should serve below when no tokens available
+                let (was_busy, tokens_used) = self.serve_sync_requests(available_tokens);
+                was_loop_iteration_busy |= was_busy;
+                update_tokens(&mut available_tokens, &mut borrowed_tokens, tokens_used);
+                // tokens_used_in_iteration += tokens_used;
             }
+            //TODO: decide if we should serve below when no tokens available
+            let (was_busy, tokens_used) = self.serve_internal();
+            was_loop_iteration_busy |= was_busy;
+            update_tokens(&mut available_tokens, &mut borrowed_tokens, tokens_used);
+            // tokens_used_in_iteration += tokens_used;
             if !self.refreshed_neighbors.is_empty() {
-                was_loop_iteration_busy |= self.serve_neighbors_requests(true, false);
+                //TODO: decide if we should serve below when no tokens available
+                let (was_busy, tokens_used) = self.serve_neighbors_requests(true, false);
+                was_loop_iteration_busy |= was_busy;
+                update_tokens(&mut available_tokens, &mut borrowed_tokens, tokens_used);
+                // tokens_used_in_iteration += tokens_used;
             }
             if !self.fast_neighbors.is_empty() {
-                was_loop_iteration_busy |= self.serve_neighbors_requests(false, false);
+                //TODO: decide if we should serve below when no tokens available
+                let (was_busy, tokens_used) = self.serve_neighbors_requests(false, false);
+                was_loop_iteration_busy |= was_busy;
+                update_tokens(&mut available_tokens, &mut borrowed_tokens, tokens_used);
+                // tokens_used_in_iteration += tokens_used;
+                // was_loop_iteration_busy |= self.serve_neighbors_requests(false, false);
             }
             if !self.slow_neighbors.is_empty() {
-                was_loop_iteration_busy |= self.serve_neighbors_requests(false, true);
+                //TODO: decide if we should serve below when no tokens available
+                let (was_busy, tokens_used) = self.serve_neighbors_requests(false, true);
+                was_loop_iteration_busy |= was_busy;
+                update_tokens(&mut available_tokens, &mut borrowed_tokens, tokens_used);
+                // tokens_used_in_iteration += tokens_used;
+                // was_loop_iteration_busy |= self.serve_neighbors_requests(false, true);
             }
-            was_loop_iteration_busy |= self.serve_ongoing_requests();
+            //TODO: decide if we should serve below when no tokens available
+            let (was_busy, tokens_used) = self.serve_ongoing_requests();
+            was_loop_iteration_busy |= was_busy;
+            update_tokens(&mut available_tokens, &mut borrowed_tokens, tokens_used);
+            // tokens_used_in_iteration += tokens_used;
             was_loop_iteration_busy |= self.serve_neighbors_casts();
-            was_loop_iteration_busy |= self.swarm.serve_casts();
+            // was_loop_iteration_busy |= self.swarm.serve_casts(available_tokens); // #5
+            let (was_busy, tokens_used) = self.swarm.serve_casts(available_tokens);
+            was_loop_iteration_busy |= was_busy;
+            update_tokens(
+                &mut available_tokens,
+                &mut borrowed_tokens,
+                tokens_used as usize,
+            );
             // let refr_new_proposal = self.try_recv_refreshed();
             // print!(
             //     "F:{}s:{},r:{},n:{}",
@@ -1790,6 +2006,8 @@ impl Gnome {
             ) = self.try_recv(true);
             was_loop_iteration_busy |= fast_any_data_processed;
 
+            // TODO: get rid of this old mechanism
+            //
             // We have to send NoOp every 128msec in order to
             // trigger token admission on socket side
             // That is why we can not sleep for longer than 128msec
@@ -1798,7 +2016,9 @@ impl Gnome {
                     // print!("R");
                     self.send_noop_from_a_neighbor();
                 } else {
-                    available_bandwith = band;
+                    assigned_bandwith = band;
+                    eprintln!("Got bandwith: {}", assigned_bandwith);
+                    min_token_creation_time = calculate_min_token_period(assigned_bandwith);
                 }
                 // println!("Avail bandwith: {}", available_bandwith);
                 //TODO make use of available_bandwith during multicasting setup
@@ -1880,22 +2100,44 @@ impl Gnome {
             if advance_to_next_turn || self.send_immediate || timeout && have_responsive_neighbors {
                 loops_with_no_reply = 0;
                 self.update_state();
+                //TODO: calculate how many bytes on average we have
+                // available.
+                // Maybe substract from bandwith number of bytes used
+                // since round start divided by round time
+                // avail = bandwith - (used/time)
+                // to give neighbors a rough estimate of our capacity
                 if !new_proposal && !self.send_immediate {
                     // println!("swap&send");
                     self.swap_neighbors();
-                    self.send_all(available_bandwith);
                 } else {
                     // println!("konkat&send");
                     self.concat_neighbors();
-                    self.send_all(available_bandwith);
+                    // self.send_all(available_tokens); // always send!
                 }
+                //TODO: send average bandwith available
+                let average_available = assigned_bandwith.saturating_sub(band_mon.average());
+                let tokens_used = self.send_all(average_available);
+                update_tokens(
+                    &mut available_tokens,
+                    &mut borrowed_tokens,
+                    tokens_used as usize,
+                );
+                if average_available <= assigned_bandwith >> 3 {
+                    // we have used >=87.5% of bandwidth available
+                    // so we need to drop a neighbor
+                    // TODO: implement logic when id.is_any
+                    // inside drop_neighbor
+                    if let Some(dropped) = self.drop_neighbor(GnomeId::any()) {
+                        eprintln!("Dropped {} due to high network usage", dropped.id);
+                    }
+                }
+                band_mon.update(tokens_used);
                 self.send_immediate = false;
-                if self.check_if_new_round(available_bandwith)
+                if self.check_if_new_round(available_tokens)
                     && self.neighbor_discovery.tick_and_check()
-                    // TODO: figure out some better algo
-                    && available_bandwith > 256
+                    && average_available >= assigned_bandwith >> 1
                 {
-                    // self.query_for_new_neighbors();
+                    self.query_for_new_neighbors();
                 }
                 timer = Instant::now();
                 self.timeout_duration = Duration::from_millis(500);
@@ -2087,6 +2329,10 @@ impl Gnome {
     }
 
     pub fn drop_neighbor(&mut self, neighbor_id: GnomeId) -> Option<Neighbor> {
+        if neighbor_id.is_any() {
+            //TODO: select best candidate to say farewell
+            return None;
+        }
         if let Some(index) = self.fast_neighbors.iter().position(|x| x.id == neighbor_id) {
             return Some(self.fast_neighbors.remove(index));
         }
@@ -2106,43 +2352,56 @@ impl Gnome {
         None
     }
 
-    pub fn send_all(&mut self, available_bandwith: u64) {
-        let message = self.prepare_message();
+    pub fn send_all(&mut self, available_tokens: u64) -> u64 {
+        //TODO: implement token bucket logic
+        let mut tokens_used = 0;
+        let message = self.prepare_message(available_tokens);
+        let message_len = 43 + message.len();
         // TODO: we need to send something in case policy is not fullfilled
         // now we send an invalid message over the network
         // for all of our peers to drop us. We are also wasting bandwith.
-        eprintln!("verify_policy from send_all");
+        // eprintln!("verify_policy from send_all");
         if !message.header.is_sync() && !self.swarm.verify_policy(&message) {
             eprintln!("Should not send, policy not fulfilled!");
         }
-        let keep_alive = message.set_payload(Payload::KeepAlive(available_bandwith));
+        let keep_alive = message.set_payload(Payload::KeepAlive(available_tokens));
+        let keep_alive_len = 43 + keep_alive.len();
         for neighbor in &mut self.fast_neighbors {
             if neighbor.header == message.header {
                 eprintln!("{} >>> {}", self.swarm.id, keep_alive);
                 // println!("Sending KA only");
                 neighbor.send_out(keep_alive.clone());
+                tokens_used += keep_alive_len;
             } else {
                 eprintln!("{} >/> {}", self.swarm.id, message);
                 neighbor.send_out(message.clone());
+                tokens_used += message_len;
             }
         }
         for neighbor in &mut self.slow_neighbors {
             if neighbor.header == message.header {
-                eprintln!("{} >s> {}", self.swarm.id, message);
+                eprintln!("{} >s> {}", self.swarm.id, keep_alive);
                 neighbor.send_out(keep_alive.clone());
+                tokens_used += keep_alive_len;
             } else {
                 eprintln!("{} >S> {}", self.swarm.id, message);
                 neighbor.send_out(message.clone());
+                tokens_used += message_len;
             }
         }
+        tokens_used as u64
     }
 
-    pub fn prepare_message(&self) -> Message {
+    pub fn prepare_message(&self, available_tokens: u64) -> Message {
+        let mut payload = self.payload.clone();
+        if payload.is_keep_alive() {
+            payload = Payload::KeepAlive(available_tokens)
+        }
         Message {
             swarm_time: self.swarm_time,
             neighborhood: self.neighborhood,
             header: self.header,
-            payload: self.payload.clone(),
+            payload,
         }
     }
 
@@ -2334,22 +2593,44 @@ impl Gnome {
         // );
     }
 
+    fn get_other_neighbor_id_than(&self, n_ids: &Vec<GnomeId>) -> Option<GnomeId> {
+        for neighbor in &self.refreshed_neighbors {
+            if !n_ids.contains(&neighbor.id) {
+                return Some(neighbor.id);
+            }
+        }
+        for neighbor in &self.fast_neighbors {
+            if !n_ids.contains(&neighbor.id) {
+                return Some(neighbor.id);
+            }
+        }
+        //TODO: maybe skip searching thru slow neighbors?
+        for neighbor in &self.slow_neighbors {
+            if !n_ids.contains(&neighbor.id) {
+                return Some(neighbor.id);
+            }
+        }
+        None
+    }
     fn send_neighbor_response(&mut self, neighbor_id: GnomeId, response: NeighborResponse) -> bool {
         for neighbor in &mut self.refreshed_neighbors {
             if neighbor.id == neighbor_id {
-                neighbor.add_requested_data(response);
+                // neighbor.add_requested_data(response);
+                let _ = neighbor.send_out_cast(CastMessage::new_response(response));
                 return true;
             }
         }
         for neighbor in &mut self.fast_neighbors {
             if neighbor.id == neighbor_id {
-                neighbor.add_requested_data(response);
+                // neighbor.add_requested_data(response);
+                let _ = neighbor.send_out_cast(CastMessage::new_response(response));
                 return true;
             }
         }
         for neighbor in &mut self.slow_neighbors {
             if neighbor.id == neighbor_id {
-                neighbor.add_requested_data(response);
+                // neighbor.add_requested_data(response);
+                let _ = neighbor.send_out_cast(CastMessage::new_response(response));
                 return true;
             }
         }
@@ -2579,7 +2860,7 @@ impl Gnome {
         }
     }
 
-    fn check_if_new_round(&mut self, available_bandwith: u64) -> bool {
+    fn check_if_new_round(&mut self, available_tokens: u64) -> bool {
         let all_gnomes_aware = self.neighborhood.0 as u32 >= self.swarm_diameter.0;
         let finish_round =
             self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
@@ -2611,11 +2892,9 @@ impl Gnome {
             if block_proposed || reconfig {
                 self.send_immediate = true;
                 if all_gnomes_aware {
-                    self.next_state.last_accepted_message = self.prepare_message();
-                    let payload = std::mem::replace(
-                        &mut self.payload,
-                        Payload::KeepAlive(available_bandwith),
-                    );
+                    self.next_state.last_accepted_message = self.prepare_message(available_tokens);
+                    let payload =
+                        std::mem::replace(&mut self.payload, Payload::KeepAlive(available_tokens));
                     if block_proposed {
                         // println!("Block proposed");
                         if let Payload::Block(block_id, signature, data) = payload {
@@ -2811,7 +3090,7 @@ impl Gnome {
                 } else {
                     // eprintln!("Starting to chill… 1");
                     self.header = Header::Sync;
-                    self.payload = Payload::KeepAlive(available_bandwith);
+                    self.payload = Payload::KeepAlive(available_tokens);
                     self.chill_out.0 = true;
                     // TODO: probably we can merge chillout and timeout into one
                     self.chill_out.1 = Instant::now();
@@ -2822,7 +3101,7 @@ impl Gnome {
                 // self.swarm_time = self.round_start + self.swarm_diameter;
                 eprintln!("{} Sync swarm time {}", self.swarm.id, self.swarm_time);
                 self.round_start = self.swarm_time;
-                self.next_state.last_accepted_message = self.prepare_message();
+                self.next_state.last_accepted_message = self.prepare_message(available_tokens);
                 // println!("set N-0");
                 self.neighborhood = Neighborhood(0);
                 // println!("--------round start to: {}", self.swarm_time);
@@ -2889,7 +3168,7 @@ impl Gnome {
                         Vec::with_capacity(DEFAULT_NEIGHBORS_PER_GNOME),
                     );
 
-                    let msg = self.prepare_message();
+                    let msg = self.prepare_message(available_tokens);
                     for mut neighbor in new_neighbors {
                         let _ = neighbor.try_recv(
                             self.next_state.last_accepted_message.clone(),
@@ -3263,5 +3542,59 @@ impl Gnome {
             }
         }
         false
+    }
+}
+
+fn create_tokens(
+    available_tokens: &mut u64,
+    borrowed_tokens: &mut u64,
+    time_period: Duration,
+    available_bandwith: u64,
+) {
+    let last_loop_duration_ms = time_period.as_millis() as u64;
+    let mut tokens_created = available_bandwith * last_loop_duration_ms / 1000;
+    if *borrowed_tokens > 0 {
+        if tokens_created > *borrowed_tokens {
+            tokens_created = tokens_created - *borrowed_tokens;
+            *borrowed_tokens = 0;
+        } else {
+            *borrowed_tokens -= tokens_created;
+            tokens_created = 0;
+        }
+    }
+    *available_tokens = u64::min(available_bandwith, *available_tokens + tokens_created);
+    // eprintln!(
+    //     "Tokens borrowed: {}, available: {}",
+    //     borrowed_tokens, available_tokens
+    // );
+}
+fn update_tokens(available_tokens: &mut u64, borrowed_tokens: &mut u64, tokens_used: usize) {
+    let tokens_used = tokens_used as u64;
+    if *available_tokens > 0 {
+        if tokens_used > *available_tokens {
+            *borrowed_tokens += tokens_used - *available_tokens;
+            *available_tokens = 0;
+        } else {
+            *available_tokens -= tokens_used;
+        }
+    } else {
+        *borrowed_tokens += tokens_used;
+    }
+}
+fn calculate_min_token_period(available_bandwith: u64) -> Duration {
+    if available_bandwith >= 1000000000 {
+        Duration::from_nanos(1)
+    } else if available_bandwith >= 100000000 {
+        Duration::from_nanos(10)
+    } else if available_bandwith >= 10000000 {
+        Duration::from_nanos(100)
+    } else if available_bandwith >= 1000000 {
+        Duration::from_micros(1)
+    } else if available_bandwith >= 100000 {
+        Duration::from_micros(10)
+    } else if available_bandwith >= 10000 {
+        Duration::from_micros(100)
+    } else {
+        Duration::from_millis(1)
     }
 }
