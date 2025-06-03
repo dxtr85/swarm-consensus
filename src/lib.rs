@@ -163,7 +163,7 @@ impl fmt::Debug for GnomeToApp {
 
 pub enum Notification {
     AddSwarm(NotificationBundle),
-    RemoveSwarm(SwarmName),
+    RemoveSwarm(Vec<SwarmName>),
     SetFounder(GnomeId),
 }
 pub struct NotificationBundle {

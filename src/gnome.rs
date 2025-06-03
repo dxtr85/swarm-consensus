@@ -1998,14 +1998,14 @@ impl Gnome {
                 slow_advance_to_next_turn,
                 slow_new_proposal,
                 slow_any_data_processed,
-            ) = self.try_recv(false);
+            ) = self.try_recv(false, &mut break_the_loop);
             was_loop_iteration_busy |= slow_any_data_processed;
             let (
                 have_responsive_neighbors,
                 fast_advance_to_next_turn,
                 fast_new_proposal,
                 fast_any_data_processed,
-            ) = self.try_recv(true);
+            ) = self.try_recv(true, &mut break_the_loop);
             was_loop_iteration_busy |= fast_any_data_processed;
 
             // TODO: get rid of this old mechanism
@@ -3230,7 +3230,7 @@ impl Gnome {
         }
     }
 
-    fn try_recv(&mut self, fast: bool) -> (bool, bool, bool, bool) {
+    fn try_recv(&mut self, fast: bool, break_the_loop: &mut bool) -> (bool, bool, bool, bool) {
         let mut any_data_processed = false;
         let n_len = if fast {
             self.fast_neighbors.len()
@@ -3419,6 +3419,9 @@ impl Gnome {
                     self.refreshed_neighbors.push(neighbor);
                 } else {
                     eprintln!("{} Dropping a neighbor {}", self.swarm.name, neighbor.id);
+                    if !self.has_any_neighbors() {
+                        *break_the_loop = true;
+                    }
                 }
             } else if !drop_me {
                 if fast {
