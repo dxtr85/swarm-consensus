@@ -1,7 +1,7 @@
-use crate::{GnomeId, Neighbor, SwarmName};
+use crate::{GnomeId, Neighbor, NetworkSettings, SwarmName};
 
 pub enum ManagerToGnome {
-    // ListNeighboringSwarms,
+    ReplyNetworkSettings(NetworkSettings, u8, GnomeId),
     ProvideNeighborsToSwarm(SwarmName, GnomeId),
     AddNeighbor(Neighbor),
     SwarmJoined(SwarmName, Vec<GnomeId>),

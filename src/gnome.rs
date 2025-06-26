@@ -59,6 +59,14 @@ impl GnomeId {
     pub fn is_any(&self) -> bool {
         self.0 == 0
     }
+    pub fn get_port(&self) -> u16 {
+        let modulo = (self.0 % (u16::MAX as u64)) as u16;
+        if modulo >= 1024 {
+            modulo
+        } else {
+            modulo * 64
+        }
+    }
 }
 
 // impl PartialEq for GnomeId {
@@ -148,6 +156,81 @@ impl Nat {
             _o => Self::Unknown,
         }
     }
+    pub fn update(&mut self, new_value: Nat) {
+        // we always keep more restrictive option
+        match new_value {
+            Self::None => {
+                let myself = std::mem::replace(self, Self::None);
+                match myself {
+                    Self::None | Self::Unknown => {
+                        //do nothing, already updated
+                    }
+                    other => {
+                        *self = other;
+                    }
+                }
+            }
+            Self::FullCone => {
+                let myself = std::mem::replace(self, Self::FullCone);
+                match myself {
+                    Self::None => {
+                        *self = Self::None;
+                    }
+                    _other => {
+                        //do nothing
+                    }
+                }
+            }
+            Self::AddressRestrictedCone => {
+                let myself = std::mem::replace(self, Self::AddressRestrictedCone);
+                match myself {
+                    Self::None | Self::Unknown | Self::FullCone | Self::AddressRestrictedCone => {
+                        //do nothing
+                    }
+                    other => {
+                        *self = other;
+                    }
+                }
+            }
+            Self::PortRestrictedCone => {
+                let myself = std::mem::replace(self, Self::PortRestrictedCone);
+                match myself {
+                    Self::None
+                    | Self::Unknown
+                    | Self::FullCone
+                    | Self::AddressRestrictedCone
+                    | Self::PortRestrictedCone => {
+                        //do nothing
+                    }
+                    other => {
+                        *self = other;
+                    }
+                }
+            }
+            Self::SymmetricWithPortControl => {
+                let myself = std::mem::replace(self, Self::SymmetricWithPortControl);
+                match myself {
+                    Self::None
+                    | Self::Unknown
+                    | Self::FullCone
+                    | Self::AddressRestrictedCone
+                    | Self::PortRestrictedCone
+                    | Self::SymmetricWithPortControl => {
+                        //do nothing
+                    }
+                    other => {
+                        *self = other;
+                    }
+                }
+            }
+            Self::Symmetric => {
+                *self = Self::Symmetric;
+            }
+            Self::Unknown => {
+                //do nothing
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,6 +249,46 @@ impl PortAllocationRule {
             _o => Self::Random,
         }
     }
+    pub fn update(&mut self, new_value: Self) {
+        match new_value {
+            Self::Random => {
+                //do nothing
+            }
+            Self::FullCone => {
+                let myself = std::mem::replace(self, Self::AddressSensitive);
+                match myself {
+                    Self::Random | Self::FullCone => {
+                        //do nothing
+                    }
+                    other => {
+                        *self = other;
+                    }
+                }
+            }
+            Self::AddressSensitive => {
+                let myself = std::mem::replace(self, Self::AddressSensitive);
+                match myself {
+                    Self::Random | Self::AddressSensitive => {
+                        //do nothing
+                    }
+                    other => {
+                        *self = other;
+                    }
+                }
+            }
+            Self::PortSensitive => {
+                let myself = std::mem::replace(self, Self::PortSensitive);
+                match myself {
+                    Self::Random | Self::AddressSensitive | Self::PortSensitive => {
+                        //do nothing
+                    }
+                    other => {
+                        *self = other;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +297,7 @@ pub struct NetworkSettings {
     pub pub_port: u16,
     pub nat_type: Nat,
     pub port_allocation: (PortAllocationRule, i8),
+    //TODO:add transport: TCP or UDP
 }
 
 impl NetworkSettings {
@@ -367,8 +491,8 @@ pub struct Gnome {
     timeout_duration: Duration,
     send_immediate: bool,
     is_busy: bool,
-    ipv6_network_settings: NetworkSettings, //TODO: do we really need those here anymore?
-    network_settings: NetworkSettings,      //TODO: do we really need those here anymore?
+    // ipv6_network_settings: NetworkSettings, //TODO: do we really need those here anymore?
+    // network_settings: NetworkSettings,      //TODO: do we really need those here anymore?
     net_settings_send: Sender<NetworkSettings>,
     pending_conn_requests: VecDeque<ConnRequest>,
     ongoing_requests: HashMap<u8, OngoingRequest>,
@@ -393,27 +517,27 @@ impl Gnome {
         mgr_sender: Sender<GnomeToManager>,
         mgr_receiver: Receiver<ManagerToGnome>,
         // band_receiver: Receiver<u64>,
-        network_settings: NetworkSettings,
+        // network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
         sha_hash: fn(&[u8]) -> u64,
     ) -> Self {
         // println!("DER size: {}", pub_key_bytes.len());
         let (send_internal, recv_internal) = channel();
-        let (ipv6_network_settings, network_settings) = if network_settings.pub_ip.is_ipv4() {
-            (
-                NetworkSettings::new_not_natted(
-                    IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)),
-                    0,
-                ),
-                network_settings,
-            )
-        } else {
-            (
-                network_settings,
-                NetworkSettings::new_not_natted(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
-            )
-        };
+        // let (ipv6_network_settings, network_settings) = if network_settings.pub_ip.is_ipv4() {
+        //     (
+        //         NetworkSettings::new_not_natted(
+        //             IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)),
+        //             0,
+        //         ),
+        //         network_settings,
+        //     )
+        // } else {
+        //     (
+        //         network_settings,
+        //         NetworkSettings::new_not_natted(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
+        //     )
+        // };
         Gnome {
             id,
             pub_key_bytes,
@@ -440,8 +564,8 @@ impl Gnome {
             timeout_duration: Duration::from_millis(500),
             send_immediate: false,
             is_busy: true,
-            ipv6_network_settings,
-            network_settings,
+            // ipv6_network_settings,
+            // network_settings,
             net_settings_send,
             pending_conn_requests: VecDeque::new(),
             ongoing_requests: HashMap::new(),
@@ -467,7 +591,7 @@ impl Gnome {
         mgr_receiver: Receiver<ManagerToGnome>,
         // band_receiver: Receiver<u64>,
         neighbors: Vec<Neighbor>,
-        network_settings: NetworkSettings,
+        // network_settings: NetworkSettings,
         net_settings_send: Sender<NetworkSettings>,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
         sha_hash: fn(&[u8]) -> u64,
@@ -482,7 +606,7 @@ impl Gnome {
             mgr_sender,
             mgr_receiver,
             // band_receiver,
-            network_settings,
+            // network_settings,
             net_settings_send,
             sign,
             sha_hash,
@@ -782,99 +906,131 @@ impl Gnome {
                     self.send_internal
                         .send(InternalMsg::ResponseOut(gnome_id, response))
                         .unwrap();
-                }
-                ToGnome::NetworkSettingsUpdate(notify_neighbor, ip_addr, port, nat, port_rule) => {
-                    // TODO: now we can receive an IPv6 address in addition to IPv4
-                    // we should support both versions in order to maximize number of
-                    // potential communication channels
-                    if !notify_neighbor {
-                        // eprintln!("not notify neighbor");
-                        //TODO: if I am founder in this swarm, then I should notify manager
-                        // if self.id == self.swarm.name.founder {
-                        let _ = self
-                            .mgr_sender
-                            .send(GnomeToManager::PublicAddress(ip_addr, port, nat, port_rule));
-                        // self.sender.send(GnomeToApp::SwarmReady(()))
-                        // }
-                        if ip_addr.is_ipv6() {
-                            self.ipv6_network_settings.pub_ip = ip_addr;
-                            self.ipv6_network_settings.set_port(port);
-                            self.ipv6_network_settings.nat_type = nat;
-                            // self.ipv6_network_settings
-                        } else {
-                            self.network_settings.pub_ip = ip_addr;
-                            self.network_settings.set_port(port);
-                            self.network_settings.nat_type = nat;
-                            // self.network_settings
-                        };
-                    } else {
-                        let settings_to_send = NetworkSettings {
-                            pub_ip: ip_addr,
-                            pub_port: port,
-                            nat_type: nat,
-                            port_allocation: (PortAllocationRule::Random, 0),
-                        };
-                        eprintln!("Trying to notify neighbor");
-                        if let Some(ConnRequest {
-                            conn_id,
-                            neighbor_id,
-                        }) = self.pending_conn_requests.pop_front()
-                        {
-                            self.send_internal
-                                .send(InternalMsg::ResponseOut(
-                                    neighbor_id,
-                                    NeighborResponse::ConnectResponse(conn_id, settings_to_send),
-                                ))
-                                .unwrap();
-                            // let mut neighbor_informed = false;
-                            // for neighbor in &mut self.fast_neighbors {
-                            //     if neighbor.id == neighbor_id {
-                            //         //TODO: implement token bucket logic
-                            //         neighbor.add_requested_data(NeighborResponse::ConnectResponse(
-                            //             conn_id,
-                            //             settings_to_send,
-                            //         ));
-                            //         neighbor_informed = true;
-                            //         break;
-                            //     }
-                            // }
-                            // if !neighbor_informed {
-                            //     for neighbor in &mut self.refreshed_neighbors {
-                            //         if neighbor.id == neighbor_id {
-                            //             //TODO: implement token bucket logic
-                            //             neighbor.add_requested_data(
-                            //                 NeighborResponse::ConnectResponse(
-                            //                     conn_id,
-                            //                     settings_to_send,
-                            //                 ),
-                            //             );
-                            //             neighbor_informed = true;
-                            //             break;
-                            //         }
-                            //     }
-                            // }
-                            // if !neighbor_informed {
-                            //     for neighbor in &mut self.slow_neighbors {
-                            //         if neighbor.id == neighbor_id {
-                            //             neighbor.add_requested_data(
-                            //                 NeighborResponse::ConnectResponse(
-                            //                     conn_id,
-                            //                     settings_to_send,
-                            //                 ),
-                            //             );
-                            //             neighbor_informed = true;
-                            //             break;
-                            //         }
-                            //     }
-                            // }
-                            // if neighbor_informed {
-                            //     eprintln!("Sent back ConnResponse");
-                            // } else {
-                            //     eprintln!("Failed to send response");
-                            // }
-                        }
-                    }
-                }
+                } // ToGnome::NetworkSettingsUpdate(notify_neighbor, ip_addr, port, nat, port_rule) => {
+                  //     //TODO: move logic from here to GnomeManager
+                  //     eprintln!("NSU: {}, {}, {:?}, {:?}", ip_addr, port, nat, port_rule);
+                  //     // TODO: now we can receive an IPv6 address in addition to IPv4
+                  //     // we should support both versions in order to maximize number of
+                  //     // potential communication channels
+                  //     let first_byte = match &ip_addr {
+                  //         IpAddr::V4(i4) => i4.octets()[0],
+                  //         IpAddr::V6(i6) => i6.octets()[0],
+                  //     };
+                  //     // let pub_port = {
+                  //     //     match &port_rule {
+                  //     //         (PortAllocationRule::Random, 127) => self.id.get_port(),
+                  //     //         (PortAllocationRule::Random, 126) => self.id.get_port(),
+                  //     //         (PortAllocationRule::Random, 0) => self.id.get_port(),
+                  //     //         _other => port,
+                  //     //     }
+                  //     // };
+                  //     if !notify_neighbor {
+                  //         if first_byte == 0 {
+                  //             eprintln!("Ignoring this NSU");
+                  //         } else {
+                  //             eprintln!("Updating local Public Address");
+                  //             //TODO: if I am founder in this swarm, then I should notify manager
+                  //             // if self.id == self.swarm.name.founder {
+                  //             let _ = self
+                  //                 .mgr_sender
+                  //                 .send(GnomeToManager::PublicAddress(ip_addr, port, nat, port_rule));
+                  //             // self.sender.send(GnomeToApp::SwarmReady(()))
+                  //             // }
+                  //             if ip_addr.is_ipv6() {
+                  //                 eprintln!("Updating IPv6 Public Address");
+                  //                 self.ipv6_network_settings.pub_ip = ip_addr;
+                  //                 self.ipv6_network_settings.set_port(port);
+                  //                 self.ipv6_network_settings.nat_type = nat;
+                  //                 self.ipv6_network_settings.port_allocation = port_rule;
+                  //             } else {
+                  //                 eprintln!("Updating IPv4 Public Address");
+                  //                 self.network_settings.pub_ip = ip_addr;
+                  //                 self.network_settings.set_port(port);
+                  //                 self.network_settings.nat_type = nat;
+                  //                 self.network_settings.port_allocation = port_rule;
+                  //             };
+                  //         }
+                  //     } else {
+                  //         let settings_to_send = if first_byte == 0 {
+                  //             eprintln!("Sending current network settings");
+                  //             NetworkSettings {
+                  //                 pub_ip: self.network_settings.pub_ip,
+                  //                 pub_port: port,
+                  //                 nat_type: self.network_settings.nat_type,
+                  //                 // port_allocation: (PortAllocationRule::Random, 0),
+                  //                 port_allocation: self.network_settings.port_allocation,
+                  //             }
+                  //         } else {
+                  //             eprintln!("Sending settings that were provided");
+                  //             NetworkSettings {
+                  //                 pub_ip: ip_addr,
+                  //                 pub_port: port,
+                  //                 nat_type: nat,
+                  //                 // port_allocation: (PortAllocationRule::Random, 0),
+                  //                 port_allocation: port_rule,
+                  //             }
+                  //         };
+                  //         if let Some(ConnRequest {
+                  //             conn_id,
+                  //             neighbor_id,
+                  //         }) = self.pending_conn_requests.pop_front()
+                  //         {
+                  //             eprintln!("Trying to notify neighbor {:?}", settings_to_send);
+                  //             self.send_internal
+                  //                 .send(InternalMsg::ResponseOut(
+                  //                     neighbor_id,
+                  //                     NeighborResponse::ConnectResponse(conn_id, settings_to_send),
+                  //                 ))
+                  //                 .unwrap();
+                  //             // let mut neighbor_informed = false;
+                  //             // for neighbor in &mut self.fast_neighbors {
+                  //             //     if neighbor.id == neighbor_id {
+                  //             //         //TODO: implement token bucket logic
+                  //             //         neighbor.add_requested_data(NeighborResponse::ConnectResponse(
+                  //             //             conn_id,
+                  //             //             settings_to_send,
+                  //             //         ));
+                  //             //         neighbor_informed = true;
+                  //             //         break;
+                  //             //     }
+                  //             // }
+                  //             // if !neighbor_informed {
+                  //             //     for neighbor in &mut self.refreshed_neighbors {
+                  //             //         if neighbor.id == neighbor_id {
+                  //             //             //TODO: implement token bucket logic
+                  //             //             neighbor.add_requested_data(
+                  //             //                 NeighborResponse::ConnectResponse(
+                  //             //                     conn_id,
+                  //             //                     settings_to_send,
+                  //             //                 ),
+                  //             //             );
+                  //             //             neighbor_informed = true;
+                  //             //             break;
+                  //             //         }
+                  //             //     }
+                  //             // }
+                  //             // if !neighbor_informed {
+                  //             //     for neighbor in &mut self.slow_neighbors {
+                  //             //         if neighbor.id == neighbor_id {
+                  //             //             neighbor.add_requested_data(
+                  //             //                 NeighborResponse::ConnectResponse(
+                  //             //                     conn_id,
+                  //             //                     settings_to_send,
+                  //             //                 ),
+                  //             //             );
+                  //             //             neighbor_informed = true;
+                  //             //             break;
+                  //             //         }
+                  //             //     }
+                  //             // }
+                  //             // if neighbor_informed {
+                  //             //     eprintln!("Sent back ConnResponse");
+                  //             // } else {
+                  //             //     eprintln!("Failed to send response");
+                  //             // }
+                  //         }
+                  //     }
+                  // }
             }
         }
         (exit_app, new_user_proposal)
@@ -985,6 +1141,38 @@ impl Gnome {
                 ManagerToGnome::SwarmJoined(swarm_name, n_ids) => {
                     self.notify_neighbors_about_new_swarm(swarm_name, n_ids);
                 }
+                ManagerToGnome::ReplyNetworkSettings(mut ns, c_id, g_id) => {
+                    if ns.pub_port == 0 {
+                        ns.pub_port = self.id.get_port();
+                    }
+                    for _i in 0..self.pending_conn_requests.len() {
+                        if let Some(ConnRequest {
+                            conn_id,
+                            neighbor_id,
+                        }) = self.pending_conn_requests.pop_front()
+                        {
+                            if c_id == conn_id && g_id == neighbor_id {
+                                if g_id == self.id {
+                                    self.query_for_new_neighbors(ns);
+                                } else {
+                                    eprintln!("Trying to notify neighbor {:?}", ns);
+                                    self.send_internal
+                                        .send(InternalMsg::ResponseOut(
+                                            neighbor_id,
+                                            NeighborResponse::ConnectResponse(conn_id, ns),
+                                        ))
+                                        .unwrap();
+                                }
+                            } else {
+                                // push_back this c_req
+                                self.pending_conn_requests.push_back(ConnRequest {
+                                    conn_id,
+                                    neighbor_id,
+                                });
+                            }
+                        }
+                    }
+                }
                 ManagerToGnome::Status => {
                     //TODO
                 }
@@ -1070,6 +1258,19 @@ impl Gnome {
                     network_settings,
                 ));
                 break;
+            }
+        }
+        if queried_neighbor.is_none() {
+            for neigh in &mut self.refreshed_neighbors {
+                if neigh.id != origin {
+                    queried_neighbor = Some(neigh.id);
+                    neigh.request_data(NeighborRequest::ConnectRequest(
+                        id,
+                        origin,
+                        network_settings,
+                    ));
+                    break;
+                }
             }
         }
         if queried_neighbor.is_none() {
@@ -1174,6 +1375,11 @@ impl Gnome {
                 return Some(NeighborResponse::AlreadyConnected(id));
             }
         }
+        for neighbor in &self.refreshed_neighbors {
+            if neighbor.id == origin {
+                return Some(NeighborResponse::AlreadyConnected(id));
+            }
+        }
         for neighbor in &self.slow_neighbors {
             if neighbor.id == origin {
                 return Some(NeighborResponse::AlreadyConnected(id));
@@ -1184,7 +1390,7 @@ impl Gnome {
         // - first we ask networking about our current network settings
         // - second once our network settings are refreshed we send
         //   another message to networking to connect to neighbor
-        eprintln!("Trying to notify neighbor");
+        // eprintln!("Trying to notify neighbor");
         //   and also we return a NeighborResponse with our updated
         //   network settings
 
@@ -1195,6 +1401,12 @@ impl Gnome {
         // We send None to notify networking we want it to send us
         // back refreshed NetworkSettings
         let _ = self.net_settings_send.send(network_settings);
+        // send inquiry to GMgr
+        let _ = self.mgr_sender.send(GnomeToManager::ProvidePublicAddress(
+            self.swarm.id,
+            id,
+            reply_gnome,
+        ));
         None
     }
 
@@ -2142,7 +2354,16 @@ impl Gnome {
                     && self.neighbor_discovery.tick_and_check()
                     && average_available >= assigned_bandwidth >> 1
                 {
-                    self.query_for_new_neighbors();
+                    // self.query_for_new_neighbors();
+                    self.pending_conn_requests.push_front(ConnRequest {
+                        conn_id: 0,
+                        neighbor_id: self.id,
+                    });
+                    let _ = self.mgr_sender.send(GnomeToManager::ProvidePublicAddress(
+                        self.swarm.id,
+                        0,
+                        self.id,
+                    ));
                 }
                 timer = Instant::now();
                 self.timeout_duration = Duration::from_millis(500);
@@ -3465,8 +3686,9 @@ impl Gnome {
     // We need to track what neighbors have been queried so that we do not query the
     // same neighbor over again, if all our neighbors have been asked we simply clean
     // the list of queried neighbors and start over.
-    fn query_for_new_neighbors(&mut self) {
-        let request = NeighborRequest::ForwardConnectRequest(self.network_settings);
+    fn query_for_new_neighbors(&mut self, network_settings: NetworkSettings) {
+        eprintln!("In query_for_new_neighbors");
+        let request = NeighborRequest::ForwardConnectRequest(network_settings);
         let mut request_sent = false;
         for neighbor in &mut self.fast_neighbors {
             if !self
@@ -3476,6 +3698,7 @@ impl Gnome {
             {
                 neighbor.request_data(request.clone());
                 request_sent = true;
+                eprintln!("ForwardConnectRequest to {}", neighbor.id);
                 self.neighbor_discovery.queried_neighbors.push(neighbor.id);
                 break;
             }
