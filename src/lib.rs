@@ -17,6 +17,7 @@ pub use crate::capabilities::Capabilities;
 pub use crate::gnome::Nat;
 pub use crate::gnome::NetworkSettings;
 pub use crate::gnome::PortAllocationRule;
+pub use crate::gnome::Transport;
 pub use crate::key_registry::KeyRegistry;
 pub use crate::neighbor::SwarmSyncRequestParams;
 pub use crate::neighbor::SwarmSyncResponse;
@@ -161,14 +162,14 @@ impl fmt::Debug for GnomeToApp {
     }
 }
 
-pub enum Notification {
-    AddSwarm(NotificationBundle),
-    RemoveSwarm(Vec<SwarmName>),
-    SetFounder(GnomeId),
-}
-pub struct NotificationBundle {
-    pub swarm_name: SwarmName,
-    pub request_sender: Sender<ToGnome>,
-    // pub token_sender: Sender<u64>,
-    pub network_settings_receiver: Receiver<NetworkSettings>,
-}
+// pub enum Notification {
+//     AddSwarm(NotificationBundle),
+//     RemoveSwarm(Vec<SwarmName>),
+//     SetFounder(GnomeId),
+// }
+// pub struct NotificationBundle {
+//     pub swarm_name: SwarmName,
+//     pub request_sender: Sender<ToGnome>,
+//     // pub token_sender: Sender<u64>,
+//     pub network_settings_receiver: Receiver<NetworkSettings>,
+// }

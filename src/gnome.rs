@@ -84,8 +84,8 @@ struct OngoingRequest {
     origin: GnomeId,
     queried_neighbors: Vec<GnomeId>,
     timestamp: SwarmTime,
-    response: Option<NetworkSettings>,
-    network_settings: NetworkSettings,
+    response: Vec<NetworkSettings>,
+    network_settings: Vec<NetworkSettings>,
 }
 
 struct NeighborDiscovery {
@@ -292,21 +292,49 @@ impl PortAllocationRule {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transport {
+    UDPoverIP4 = 0,
+    TCPoverIP4 = 1,
+    UDPoverIP6 = 2,
+    TCPoverIP6 = 3,
+}
+
+impl Transport {
+    pub fn from(byte: u8) -> Result<Self, u8> {
+        match byte {
+            0 => Ok(Self::UDPoverIP4),
+            1 => Ok(Self::TCPoverIP4),
+            2 => Ok(Self::UDPoverIP6),
+            3 => Ok(Self::TCPoverIP6),
+            other => Err(other),
+        }
+    }
+    pub fn byte(&self) -> u8 {
+        match self {
+            Self::UDPoverIP4 => 0,
+            Self::TCPoverIP4 => 1,
+            Self::UDPoverIP6 => 2,
+            Self::TCPoverIP6 => 3,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NetworkSettings {
     pub pub_ip: IpAddr,
     pub pub_port: u16,
     pub nat_type: Nat,
     pub port_allocation: (PortAllocationRule, i8),
-    //TODO:add transport: TCP or UDP
+    pub transport: Transport,
 }
 
 impl NetworkSettings {
-    pub fn new_not_natted(pub_ip: IpAddr, pub_port: u16) -> Self {
+    pub fn new_not_natted(pub_ip: IpAddr, pub_port: u16, transport: Transport) -> Self {
         Self {
             pub_ip,
             pub_port,
             nat_type: Nat::None,
             port_allocation: (PortAllocationRule::FullCone, 0),
+            transport,
         }
     }
     pub fn len(&self) -> usize {
@@ -388,6 +416,7 @@ impl Default for NetworkSettings {
             pub_port: 1026,
             nat_type: Nat::Unknown,
             port_allocation: (PortAllocationRule::Random, 0),
+            transport: Transport::UDPoverIP4,
         }
     }
 }
@@ -1141,10 +1170,10 @@ impl Gnome {
                 ManagerToGnome::SwarmJoined(swarm_name, n_ids) => {
                     self.notify_neighbors_about_new_swarm(swarm_name, n_ids);
                 }
-                ManagerToGnome::ReplyNetworkSettings(mut ns, c_id, g_id) => {
-                    if ns.pub_port == 0 {
-                        ns.pub_port = self.id.get_port();
-                    }
+                ManagerToGnome::ReplyNetworkSettings(ns, c_id, g_id) => {
+                    // if ns.pub_port == 0 {
+                    //     ns.pub_port = self.id.get_port();
+                    // }
                     for _i in 0..self.pending_conn_requests.len() {
                         if let Some(ConnRequest {
                             conn_id,
@@ -1153,13 +1182,13 @@ impl Gnome {
                         {
                             if c_id == conn_id && g_id == neighbor_id {
                                 if g_id == self.id {
-                                    self.query_for_new_neighbors(ns);
+                                    self.query_for_new_neighbors(ns.clone());
                                 } else {
-                                    eprintln!("Trying to notify neighbor {:?}", ns);
+                                    eprintln!("Trying to notify neighbor {:?}", &ns);
                                     self.send_internal
                                         .send(InternalMsg::ResponseOut(
                                             neighbor_id,
-                                            NeighborResponse::ConnectResponse(conn_id, ns),
+                                            NeighborResponse::ConnectResponse(conn_id, ns.clone()),
                                         ))
                                         .unwrap();
                                 }
@@ -1219,7 +1248,7 @@ impl Gnome {
     //
     // if there is only one neighbor we simply send back a failure message to originating
     // neighbor, since we do not have other neighbors to connect to.
-    fn add_ongoing_request(&mut self, origin: GnomeId, network_settings: NetworkSettings) {
+    fn add_ongoing_request(&mut self, origin: GnomeId, network_settings: Vec<NetworkSettings>) {
         let neighbor_count = self.fast_neighbors.len() + self.slow_neighbors.len();
         if neighbor_count < 2 {
             eprintln!("Not enough neighbors: {}", neighbor_count);
@@ -1255,7 +1284,7 @@ impl Gnome {
                 neigh.request_data(NeighborRequest::ConnectRequest(
                     id,
                     origin,
-                    network_settings,
+                    network_settings.clone(),
                 ));
                 break;
             }
@@ -1267,7 +1296,7 @@ impl Gnome {
                     neigh.request_data(NeighborRequest::ConnectRequest(
                         id,
                         origin,
-                        network_settings,
+                        network_settings.clone(),
                     ));
                     break;
                 }
@@ -1280,7 +1309,7 @@ impl Gnome {
                     neigh.request_data(NeighborRequest::ConnectRequest(
                         id,
                         origin,
-                        network_settings,
+                        network_settings.clone(),
                     ));
                     break;
                 }
@@ -1295,7 +1324,7 @@ impl Gnome {
             origin,
             queried_neighbors,
             timestamp: self.swarm_time,
-            response: None,
+            response: vec![],
             network_settings,
         };
         self.ongoing_requests.insert(id, or);
@@ -1368,7 +1397,7 @@ impl Gnome {
         id: u8,
         reply_gnome: GnomeId,
         origin: GnomeId,
-        network_settings: NetworkSettings,
+        network_settings: Vec<NetworkSettings>,
     ) -> Option<NeighborResponse> {
         for neighbor in &self.fast_neighbors {
             if neighbor.id == origin {
@@ -1400,8 +1429,9 @@ impl Gnome {
         });
         // We send None to notify networking we want it to send us
         // back refreshed NetworkSettings
-        let _ = self.net_settings_send.send(network_settings);
-        // send inquiry to GMgr
+        for ns in network_settings {
+            let _ = self.net_settings_send.send(ns);
+        } // send inquiry to GMgr
         let _ = self.mgr_sender.send(GnomeToManager::ProvidePublicAddress(
             self.swarm.id,
             id,
@@ -1411,11 +1441,11 @@ impl Gnome {
     }
 
     // TODO: find where to apply this function
-    fn add_ongoing_reply(&mut self, id: u8, network_settings: NetworkSettings) {
+    fn add_ongoing_reply(&mut self, id: u8, network_settings: Vec<NetworkSettings>) {
         let opor = self.ongoing_requests.remove(&id);
         if opor.is_some() {
             let mut o_req = opor.unwrap();
-            o_req.response = Some(network_settings);
+            o_req.response = network_settings;
             self.ongoing_requests.insert(id, o_req);
         } else {
             eprintln!("No ongoing request with id: {}", id);
@@ -1433,7 +1463,7 @@ impl Gnome {
                     neighbor.request_data(NeighborRequest::ConnectRequest(
                         id,
                         v.origin,
-                        v.network_settings,
+                        v.network_settings.clone(),
                     ));
                     break;
                 }
@@ -1445,7 +1475,7 @@ impl Gnome {
                         neighbor.request_data(NeighborRequest::ConnectRequest(
                             id,
                             v.origin,
-                            v.network_settings,
+                            v.network_settings.clone(),
                         ));
                         break;
                     }
@@ -1509,10 +1539,11 @@ impl Gnome {
         let mut to_add = HashMap::new();
         // let mut keys_to_remove: Vec<u8> = vec![];
         for (k, mut v) in to_process {
-            if v.response.is_some() {
+            if !v.response.is_empty() {
                 any_data_processed = true;
                 eprintln!("Sending response: {:?}", v.response);
-                let response = NeighborResponse::ForwardConnectResponse(v.response.unwrap());
+                let response = NeighborResponse::ForwardConnectResponse(v.response);
+                //todo: fix tokens used
                 tokens_used += 43 + response.len();
                 self.send_neighbor_response(v.origin, response);
                 // let mut response_sent = false;
@@ -1545,8 +1576,11 @@ impl Gnome {
                     {
                         v.timestamp = self.swarm_time;
                         v.queried_neighbors.push(unqueried_neighbor_id);
-                        let request =
-                            NeighborRequest::ConnectRequest(k, v.origin, v.network_settings);
+                        let request = NeighborRequest::ConnectRequest(
+                            k,
+                            v.origin,
+                            v.network_settings.clone(),
+                        );
                         tokens_used += 43 + request.len();
                         self.send_neighbor_request(unqueried_neighbor_id, request);
                         to_add.insert(k, v);
@@ -3488,7 +3522,9 @@ impl Gnome {
                         }
                         NeighborResponse::ForwardConnectResponse(net_set) => {
                             eprintln!("ForwardConnResponse: {:?}", net_set);
-                            let _ = self.net_settings_send.send(net_set);
+                            for ns in net_set {
+                                let _ = self.net_settings_send.send(ns);
+                            }
                         }
                         NeighborResponse::ForwardConnectFailed => {
                             // TODO build querying mechanism
@@ -3686,7 +3722,11 @@ impl Gnome {
     // We need to track what neighbors have been queried so that we do not query the
     // same neighbor over again, if all our neighbors have been asked we simply clean
     // the list of queried neighbors and start over.
-    fn query_for_new_neighbors(&mut self, network_settings: NetworkSettings) {
+    // TODO: provide a list of our NetworkSettings,
+    // do not include  not working protocol combinations.
+    // NS should also indicate which protocol pair (e.g. IP4-UDP) they are for
+    // Neighbor should respond back only with supported NetworkSettings
+    fn query_for_new_neighbors(&mut self, network_settings: Vec<NetworkSettings>) {
         eprintln!("In query_for_new_neighbors");
         let request = NeighborRequest::ForwardConnectRequest(network_settings);
         let mut request_sent = false;
@@ -3698,7 +3738,7 @@ impl Gnome {
             {
                 neighbor.request_data(request.clone());
                 request_sent = true;
-                eprintln!("ForwardConnectRequest to {}", neighbor.id);
+                eprintln!("FCR {:?} to {}", request, neighbor.id);
                 self.neighbor_discovery.queried_neighbors.push(neighbor.id);
                 break;
             }

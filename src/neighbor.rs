@@ -123,8 +123,8 @@ impl SwarmSyncResponse {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NeighborRequest {
     UnicastRequest(SwarmID, Box<[CastID; 256]>),
-    ForwardConnectRequest(NetworkSettings),
-    ConnectRequest(u8, GnomeId, NetworkSettings),
+    ForwardConnectRequest(Vec<NetworkSettings>),
+    ConnectRequest(u8, GnomeId, Vec<NetworkSettings>),
     SwarmSyncRequest(SwarmSyncRequestParams),
     SubscribeRequest(bool, CastID),
     UnsubscribeRequest(bool, CastID), // We send this when no longer interested in bcast
@@ -201,9 +201,9 @@ pub enum NeighborResponse {
     BroadcastSync(u8, u8, Vec<(CastID, GnomeId)>),
     MulticastSync(u8, u8, Vec<(CastID, GnomeId)>),
     Unicast(SwarmID, CastID),
-    ForwardConnectResponse(NetworkSettings),
+    ForwardConnectResponse(Vec<NetworkSettings>),
     ForwardConnectFailed,
-    ConnectResponse(u8, NetworkSettings),
+    ConnectResponse(u8, Vec<NetworkSettings>),
     AlreadyConnected(u8),
     SwarmSync(SwarmSyncResponse),
     KeyRegistrySync(u8, u8, Vec<(GnomeId, Vec<u8>)>),
@@ -646,7 +646,7 @@ impl Neighbor {
                 self.user_responses
                     .push_front(GnomeToApp::Unicast(swarm_id, cast_id, receiver));
             }
-            NeighborResponse::ForwardConnectResponse(_network_settings) => {
+            NeighborResponse::ForwardConnectResponse(ref _network_settings) => {
                 //TODO send this to networking
                 self.user_responses
                     .push_front(GnomeToApp::ToGnome(response));
@@ -659,7 +659,7 @@ impl Neighbor {
                 self.user_responses
                     .push_front(GnomeToApp::ToGnome(response));
             }
-            NeighborResponse::ConnectResponse(_id, _network_settings) => {
+            NeighborResponse::ConnectResponse(_id, ref _network_settings) => {
                 self.user_responses
                     .push_front(GnomeToApp::ToGnome(response));
                 //TODO send this to gnome.ongoing_requests
