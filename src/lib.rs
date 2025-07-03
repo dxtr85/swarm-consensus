@@ -14,10 +14,10 @@ mod multicast;
 mod swarm;
 pub use crate::capabilities::CapabiliTree;
 pub use crate::capabilities::Capabilities;
-pub use crate::gnome::Nat;
-pub use crate::gnome::NetworkSettings;
-pub use crate::gnome::PortAllocationRule;
-pub use crate::gnome::Transport;
+// pub use crate::gnome::Nat;
+// pub use crate::gnome::NetworkSettings;
+// pub use crate::gnome::PortAllocationRule;
+// pub use crate::gnome::Transport;
 pub use crate::key_registry::KeyRegistry;
 pub use crate::neighbor::SwarmSyncRequestParams;
 pub use crate::neighbor::SwarmSyncResponse;
@@ -76,7 +76,6 @@ pub enum ToGnome {
     StartBroadcast,
     EndBroadcast(CastID),
     UnsubscribeBroadcast(CastID),
-    // NetworkSettingsUpdate(bool, IpAddr, u16, Nat, (PortAllocationRule, i8)),
     SwarmNeighbors(SwarmName),
     Reconfigure(u8, SyncData),
 }
@@ -171,5 +170,5 @@ impl fmt::Debug for GnomeToApp {
 //     pub swarm_name: SwarmName,
 //     pub request_sender: Sender<ToGnome>,
 //     // pub token_sender: Sender<u64>,
-//     pub network_settings_receiver: Receiver<NetworkSettings>,
+//     pub network_settings_receiver: Receiver<NetSet>,
 // }

@@ -1,10 +1,10 @@
 use std::collections::HashSet;
-use std::net::IpAddr;
+// use std::net::IpAddr;
 
 use crate::GnomeId;
-use crate::Nat;
+// use crate::Nat;
 use crate::Neighbor;
-use crate::PortAllocationRule;
+// use crate::PortAllocationRule;
 use crate::SwarmID;
 use crate::SwarmName;
 

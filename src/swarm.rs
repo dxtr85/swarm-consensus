@@ -1,5 +1,5 @@
-use crate::capabilities::CapabiLeaf;
-use crate::gnome::NetworkSettings;
+// use crate::capabilities::CapabiLeaf;
+// use crate::gnome::NetworkSettings;
 use crate::gnome_to_manager::GnomeToManager;
 use crate::key_registry::KeyRegistry;
 use crate::manager_to_gnome::ManagerToGnome;
@@ -182,8 +182,8 @@ impl Swarm {
         mgr_sender: Sender<GnomeToManager>,
         mgr_receiver: Receiver<ManagerToGnome>,
         // band_receiver: Receiver<u64>,
-        net_settings_send: Sender<NetworkSettings>,
-        // network_settings: NetworkSettings,
+        // net_settings_send: Sender<NetworkSettings>,
+        net_settings_send: Sender<Vec<u8>>,
         assigned_bandwidth: u64,
         verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,

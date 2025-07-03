@@ -13,14 +13,13 @@ use crate::CastID;
 use crate::GnomeId;
 use crate::GnomeToApp;
 use crate::Message;
-use crate::NetworkSettings;
 use crate::Signature;
 use crate::Swarm;
 use crate::SwarmID;
 use crate::SwarmName;
 use crate::SwarmTime;
 use crate::SwarmType;
-use crate::SyncData;
+// use crate::SyncData;
 use std::collections::HashMap;
 use std::fmt::Display;
 
@@ -123,8 +122,9 @@ impl SwarmSyncResponse {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NeighborRequest {
     UnicastRequest(SwarmID, Box<[CastID; 256]>),
-    ForwardConnectRequest(Vec<NetworkSettings>),
-    ConnectRequest(u8, GnomeId, Vec<NetworkSettings>),
+    ForwardConnectRequest(Vec<u8>),
+    // ConnectRequest(u8, GnomeId, Vec<NetworkSettings>),
+    ConnectRequest(u8, GnomeId, Vec<u8>),
     SwarmSyncRequest(SwarmSyncRequestParams),
     SubscribeRequest(bool, CastID),
     UnsubscribeRequest(bool, CastID), // We send this when no longer interested in bcast
@@ -201,9 +201,11 @@ pub enum NeighborResponse {
     BroadcastSync(u8, u8, Vec<(CastID, GnomeId)>),
     MulticastSync(u8, u8, Vec<(CastID, GnomeId)>),
     Unicast(SwarmID, CastID),
-    ForwardConnectResponse(Vec<NetworkSettings>),
+    // ForwardConnectResponse(Vec<NetworkSettings>),
+    ForwardConnectResponse(Vec<u8>),
     ForwardConnectFailed,
-    ConnectResponse(u8, Vec<NetworkSettings>),
+    // ConnectResponse(u8, Vec<NetworkSettings>),
+    ConnectResponse(u8, Vec<u8>),
     AlreadyConnected(u8),
     SwarmSync(SwarmSyncResponse),
     KeyRegistrySync(u8, u8, Vec<(GnomeId, Vec<u8>)>),

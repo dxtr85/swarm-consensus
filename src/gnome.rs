@@ -84,8 +84,10 @@ struct OngoingRequest {
     origin: GnomeId,
     queried_neighbors: Vec<GnomeId>,
     timestamp: SwarmTime,
-    response: Vec<NetworkSettings>,
-    network_settings: Vec<NetworkSettings>,
+    // response: Vec<NetworkSettings>,
+    // network_settings: Vec<NetworkSettings>,
+    response: Vec<u8>,
+    network_settings: Vec<u8>,
 }
 
 struct NeighborDiscovery {
@@ -134,292 +136,6 @@ impl Default for NeighborDiscovery {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Nat {
-    Unknown = 0,
-    None = 1,
-    FullCone = 2,
-    AddressRestrictedCone = 4,
-    PortRestrictedCone = 8,
-    SymmetricWithPortControl = 16,
-    Symmetric = 32,
-}
-impl Nat {
-    pub fn from(byte: u8) -> Self {
-        match byte {
-            1 => Self::None,
-            2 => Self::FullCone,
-            4 => Self::AddressRestrictedCone,
-            8 => Self::PortRestrictedCone,
-            16 => Self::SymmetricWithPortControl,
-            32 => Self::Symmetric,
-            _o => Self::Unknown,
-        }
-    }
-    pub fn update(&mut self, new_value: Nat) {
-        // we always keep more restrictive option
-        match new_value {
-            Self::None => {
-                let myself = std::mem::replace(self, Self::None);
-                match myself {
-                    Self::None | Self::Unknown => {
-                        //do nothing, already updated
-                    }
-                    other => {
-                        *self = other;
-                    }
-                }
-            }
-            Self::FullCone => {
-                let myself = std::mem::replace(self, Self::FullCone);
-                match myself {
-                    Self::None => {
-                        *self = Self::None;
-                    }
-                    _other => {
-                        //do nothing
-                    }
-                }
-            }
-            Self::AddressRestrictedCone => {
-                let myself = std::mem::replace(self, Self::AddressRestrictedCone);
-                match myself {
-                    Self::None | Self::Unknown | Self::FullCone | Self::AddressRestrictedCone => {
-                        //do nothing
-                    }
-                    other => {
-                        *self = other;
-                    }
-                }
-            }
-            Self::PortRestrictedCone => {
-                let myself = std::mem::replace(self, Self::PortRestrictedCone);
-                match myself {
-                    Self::None
-                    | Self::Unknown
-                    | Self::FullCone
-                    | Self::AddressRestrictedCone
-                    | Self::PortRestrictedCone => {
-                        //do nothing
-                    }
-                    other => {
-                        *self = other;
-                    }
-                }
-            }
-            Self::SymmetricWithPortControl => {
-                let myself = std::mem::replace(self, Self::SymmetricWithPortControl);
-                match myself {
-                    Self::None
-                    | Self::Unknown
-                    | Self::FullCone
-                    | Self::AddressRestrictedCone
-                    | Self::PortRestrictedCone
-                    | Self::SymmetricWithPortControl => {
-                        //do nothing
-                    }
-                    other => {
-                        *self = other;
-                    }
-                }
-            }
-            Self::Symmetric => {
-                *self = Self::Symmetric;
-            }
-            Self::Unknown => {
-                //do nothing
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PortAllocationRule {
-    Random = 0,
-    FullCone = 1,
-    AddressSensitive = 2,
-    PortSensitive = 4,
-}
-impl PortAllocationRule {
-    pub fn from(byte: u8) -> Self {
-        match byte {
-            1 => Self::FullCone,
-            2 => Self::AddressSensitive,
-            4 => Self::PortSensitive,
-            _o => Self::Random,
-        }
-    }
-    pub fn update(&mut self, new_value: Self) {
-        match new_value {
-            Self::Random => {
-                //do nothing
-            }
-            Self::FullCone => {
-                let myself = std::mem::replace(self, Self::AddressSensitive);
-                match myself {
-                    Self::Random | Self::FullCone => {
-                        //do nothing
-                    }
-                    other => {
-                        *self = other;
-                    }
-                }
-            }
-            Self::AddressSensitive => {
-                let myself = std::mem::replace(self, Self::AddressSensitive);
-                match myself {
-                    Self::Random | Self::AddressSensitive => {
-                        //do nothing
-                    }
-                    other => {
-                        *self = other;
-                    }
-                }
-            }
-            Self::PortSensitive => {
-                let myself = std::mem::replace(self, Self::PortSensitive);
-                match myself {
-                    Self::Random | Self::AddressSensitive | Self::PortSensitive => {
-                        //do nothing
-                    }
-                    other => {
-                        *self = other;
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Transport {
-    UDPoverIP4 = 0,
-    TCPoverIP4 = 1,
-    UDPoverIP6 = 2,
-    TCPoverIP6 = 3,
-}
-
-impl Transport {
-    pub fn from(byte: u8) -> Result<Self, u8> {
-        match byte {
-            0 => Ok(Self::UDPoverIP4),
-            1 => Ok(Self::TCPoverIP4),
-            2 => Ok(Self::UDPoverIP6),
-            3 => Ok(Self::TCPoverIP6),
-            other => Err(other),
-        }
-    }
-    pub fn byte(&self) -> u8 {
-        match self {
-            Self::UDPoverIP4 => 0,
-            Self::TCPoverIP4 => 1,
-            Self::UDPoverIP6 => 2,
-            Self::TCPoverIP6 => 3,
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NetworkSettings {
-    pub pub_ip: IpAddr,
-    pub pub_port: u16,
-    pub nat_type: Nat,
-    pub port_allocation: (PortAllocationRule, i8),
-    pub transport: Transport,
-}
-
-impl NetworkSettings {
-    pub fn new_not_natted(pub_ip: IpAddr, pub_port: u16, transport: Transport) -> Self {
-        Self {
-            pub_ip,
-            pub_port,
-            nat_type: Nat::None,
-            port_allocation: (PortAllocationRule::FullCone, 0),
-            transport,
-        }
-    }
-    pub fn len(&self) -> usize {
-        if self.pub_ip.is_ipv4() {
-            9
-        } else {
-            21
-        }
-    }
-    pub fn update(&mut self, other: Self) {
-        self.pub_ip = other.pub_ip;
-        self.pub_port = other.pub_port;
-        self.nat_type = other.nat_type;
-        self.port_allocation = other.port_allocation;
-    }
-
-    pub fn set_port(&mut self, port: u16) {
-        self.pub_port = port;
-    }
-
-    pub fn get_predicted_addr(&self, mut iter: u8) -> (IpAddr, u16) {
-        let mut port = self.port_increment(self.pub_port);
-        while iter > 0 {
-            iter -= 1;
-            port = self.port_increment(port);
-        }
-        (self.pub_ip, port)
-    }
-
-    pub fn refresh_required(&self) -> bool {
-        self.port_allocation.0 != PortAllocationRule::FullCone
-    }
-    pub fn nat_at_most_address_sensitive(&self) -> bool {
-        self.nat_type == Nat::None
-            || self.nat_type == Nat::FullCone
-            || self.nat_type == Nat::AddressRestrictedCone
-    }
-    pub fn no_nat(&self) -> bool {
-        self.nat_type == Nat::None
-    }
-    pub fn nat_port_restricted(&self) -> bool {
-        self.nat_type == Nat::PortRestrictedCone
-    }
-    pub fn nat_symmetric(&self) -> bool {
-        self.nat_type == Nat::Symmetric
-    }
-    pub fn nat_symmetric_with_port_control(&self) -> bool {
-        self.nat_type == Nat::SymmetricWithPortControl
-    }
-    pub fn nat_unknown(&self) -> bool {
-        self.nat_type == Nat::Unknown
-    }
-    pub fn port_allocation_predictable(&self) -> bool {
-        self.port_allocation.0 == PortAllocationRule::FullCone
-            || self.port_allocation.0 == PortAllocationRule::AddressSensitive
-            || self.port_allocation.0 == PortAllocationRule::PortSensitive
-    }
-    pub fn port_sensitive_allocation(&self) -> bool {
-        self.port_allocation.0 == PortAllocationRule::PortSensitive
-    }
-    pub fn port_increment(&self, port: u16) -> u16 {
-        match self.port_allocation {
-            (PortAllocationRule::AddressSensitive | PortAllocationRule::PortSensitive, value) => {
-                if value > 0 {
-                    port + (value as u16)
-                } else {
-                    port - (value.unsigned_abs() as u16)
-                }
-            }
-            _ => port,
-        }
-    }
-}
-
-impl Default for NetworkSettings {
-    fn default() -> Self {
-        NetworkSettings {
-            pub_ip: IpAddr::from([0, 0, 0, 0]),
-            pub_port: 1026,
-            nat_type: Nat::Unknown,
-            port_allocation: (PortAllocationRule::Random, 0),
-            transport: Transport::UDPoverIP4,
-        }
-    }
-}
 struct ConnRequest {
     conn_id: u8,
     neighbor_id: GnomeId,
@@ -520,9 +236,8 @@ pub struct Gnome {
     timeout_duration: Duration,
     send_immediate: bool,
     is_busy: bool,
-    // ipv6_network_settings: NetworkSettings, //TODO: do we really need those here anymore?
-    // network_settings: NetworkSettings,      //TODO: do we really need those here anymore?
-    net_settings_send: Sender<NetworkSettings>,
+    // net_settings_send: Sender<NetworkSettings>,
+    net_settings_send: Sender<Vec<u8>>,
     pending_conn_requests: VecDeque<ConnRequest>,
     ongoing_requests: HashMap<u8, OngoingRequest>,
     neighbor_discovery: NeighborDiscovery,
@@ -546,8 +261,8 @@ impl Gnome {
         mgr_sender: Sender<GnomeToManager>,
         mgr_receiver: Receiver<ManagerToGnome>,
         // band_receiver: Receiver<u64>,
-        // network_settings: NetworkSettings,
-        net_settings_send: Sender<NetworkSettings>,
+        // net_settings_send: Sender<NetworkSettings>,
+        net_settings_send: Sender<Vec<u8>>,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
         sha_hash: fn(&[u8]) -> u64,
     ) -> Self {
@@ -621,7 +336,8 @@ impl Gnome {
         // band_receiver: Receiver<u64>,
         neighbors: Vec<Neighbor>,
         // network_settings: NetworkSettings,
-        net_settings_send: Sender<NetworkSettings>,
+        // net_settings_send: Sender<NetworkSettings>,
+        net_settings_send: Sender<Vec<u8>>,
         sign: fn(&str, SwarmTime, &mut Vec<u8>) -> Result<Vec<u8>, ()>,
         sha_hash: fn(&[u8]) -> u64,
     ) -> Self {
@@ -1248,7 +964,7 @@ impl Gnome {
     //
     // if there is only one neighbor we simply send back a failure message to originating
     // neighbor, since we do not have other neighbors to connect to.
-    fn add_ongoing_request(&mut self, origin: GnomeId, network_settings: Vec<NetworkSettings>) {
+    fn add_ongoing_request(&mut self, origin: GnomeId, network_settings: Vec<u8>) {
         let neighbor_count = self.fast_neighbors.len() + self.slow_neighbors.len();
         if neighbor_count < 2 {
             eprintln!("Not enough neighbors: {}", neighbor_count);
@@ -1397,7 +1113,8 @@ impl Gnome {
         id: u8,
         reply_gnome: GnomeId,
         origin: GnomeId,
-        network_settings: Vec<NetworkSettings>,
+        // network_settings: Vec<NetworkSettings>,
+        network_settings: Vec<u8>,
     ) -> Option<NeighborResponse> {
         for neighbor in &self.fast_neighbors {
             if neighbor.id == origin {
@@ -1429,9 +1146,9 @@ impl Gnome {
         });
         // We send None to notify networking we want it to send us
         // back refreshed NetworkSettings
-        for ns in network_settings {
-            let _ = self.net_settings_send.send(ns);
-        } // send inquiry to GMgr
+        // for ns in network_settings {
+        let _ = self.net_settings_send.send(network_settings);
+        // } // send inquiry to GMgr
         let _ = self.mgr_sender.send(GnomeToManager::ProvidePublicAddress(
             self.swarm.id,
             id,
@@ -1441,7 +1158,7 @@ impl Gnome {
     }
 
     // TODO: find where to apply this function
-    fn add_ongoing_reply(&mut self, id: u8, network_settings: Vec<NetworkSettings>) {
+    fn add_ongoing_reply(&mut self, id: u8, network_settings: Vec<u8>) {
         let opor = self.ongoing_requests.remove(&id);
         if opor.is_some() {
             let mut o_req = opor.unwrap();
@@ -3522,9 +3239,9 @@ impl Gnome {
                         }
                         NeighborResponse::ForwardConnectResponse(net_set) => {
                             eprintln!("ForwardConnResponse: {:?}", net_set);
-                            for ns in net_set {
-                                let _ = self.net_settings_send.send(ns);
-                            }
+                            // for ns in net_set {
+                            let _ = self.net_settings_send.send(net_set);
+                            // }
                         }
                         NeighborResponse::ForwardConnectFailed => {
                             // TODO build querying mechanism
@@ -3726,7 +3443,7 @@ impl Gnome {
     // do not include  not working protocol combinations.
     // NS should also indicate which protocol pair (e.g. IP4-UDP) they are for
     // Neighbor should respond back only with supported NetworkSettings
-    fn query_for_new_neighbors(&mut self, network_settings: Vec<NetworkSettings>) {
+    fn query_for_new_neighbors(&mut self, network_settings: Vec<u8>) {
         eprintln!("In query_for_new_neighbors");
         let request = NeighborRequest::ForwardConnectRequest(network_settings);
         let mut request_sent = false;
