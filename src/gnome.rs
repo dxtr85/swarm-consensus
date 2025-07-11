@@ -446,7 +446,7 @@ impl Gnome {
                         eprintln!("Request: {:?}", request);
                         let req_len = request.len();
                         if self.send_neighbor_request(neighbor_id, request) {
-                            eprintln!("Request sent");
+                            eprintln!("Request sent to {}", neighbor_id);
                             tokens_used += 43 + req_len;
                         } else {
                             eprintln!("Failed to send request");
@@ -967,7 +967,7 @@ impl Gnome {
     fn add_ongoing_request(&mut self, origin: GnomeId, network_settings: Vec<u8>) {
         let neighbor_count = self.fast_neighbors.len() + self.slow_neighbors.len();
         if neighbor_count < 2 {
-            eprintln!("Not enough neighbors: {}", neighbor_count);
+            eprintln!("FCF> Not enough neighbors: {}", neighbor_count);
             self.send_neighbor_response(origin, NeighborResponse::ForwardConnectFailed);
             // let mut response_sent = false;
             // for neighbor in &mut self.fast_neighbors {
@@ -1199,7 +1199,7 @@ impl Gnome {
                 }
             }
             if !neighbor_found {
-                eprintln!("Unable to find more neighbors for {}", id);
+                eprintln!("FCF> Unable to find more neighbors for {}", id);
                 let origin = v.origin;
                 self.send_neighbor_response(origin, NeighborResponse::ForwardConnectFailed);
                 // let mut response_sent = false;
@@ -1258,7 +1258,7 @@ impl Gnome {
         for (k, mut v) in to_process {
             if !v.response.is_empty() {
                 any_data_processed = true;
-                eprintln!("Sending response: {:?}", v.response);
+                eprintln!("FCP> Sending response: {:?}", v.response);
                 let response = NeighborResponse::ForwardConnectResponse(v.response);
                 //todo: fix tokens used
                 tokens_used += 43 + response.len();
@@ -1342,7 +1342,7 @@ impl Gnome {
                     // }
                     // if !neighbor_found {
                     } else {
-                        eprintln!("Unable to find more neighbors for {}", k);
+                        eprintln!("FCF> Unable to find more neighbors for {}", k);
                         let resp = NeighborResponse::ForwardConnectFailed;
                         tokens_used += 43 + resp.len();
                         self.send_neighbor_response(v.origin, resp);
@@ -1640,11 +1640,11 @@ impl Gnome {
                         }
                     }
                     NeighborRequest::ForwardConnectRequest(network_settings) => {
-                        // println!("ForwardConnReq");
+                        eprintln!("FCR< {}", neighbor.id);
                         pending_ongoing_requests.push((neighbor.id, network_settings));
                     }
                     NeighborRequest::ConnectRequest(id, gnome_id, network_settings) => {
-                        eprintln!("ConnReq");
+                        eprintln!("ConnReq {}", gnome_id);
                         if let Some(response) =
                             self.serve_connect_request(id, neighbor.id, gnome_id, network_settings)
                         {
@@ -2105,7 +2105,7 @@ impl Gnome {
                     && self.neighbor_discovery.tick_and_check()
                     && average_available >= assigned_bandwidth >> 1
                 {
-                    // self.query_for_new_neighbors();
+                    eprintln!("Gnome requesting PubIPs");
                     self.pending_conn_requests.push_front(ConnRequest {
                         conn_id: 0,
                         neighbor_id: self.id,
@@ -3238,12 +3238,13 @@ impl Gnome {
                             self.skip_neighbor(id);
                         }
                         NeighborResponse::ForwardConnectResponse(net_set) => {
-                            eprintln!("ForwardConnResponse: {:?}", net_set);
+                            eprintln!("FCP< ForwardConnResponse: {:?}", net_set);
                             // for ns in net_set {
                             let _ = self.net_settings_send.send(net_set);
                             // }
                         }
                         NeighborResponse::ForwardConnectFailed => {
+                            eprintln!("FCF<");
                             // TODO build querying mechanism
                             // TODO inform gnome's mechanism to ask another neighbor
                         }
@@ -3455,7 +3456,7 @@ impl Gnome {
             {
                 neighbor.request_data(request.clone());
                 request_sent = true;
-                eprintln!("FCR {:?} to {}", request, neighbor.id);
+                eprintln!("FCR> {:?} to {}", request, neighbor.id);
                 self.neighbor_discovery.queried_neighbors.push(neighbor.id);
                 break;
             }
@@ -3467,6 +3468,7 @@ impl Gnome {
                     .queried_neighbors
                     .contains(&neighbor.id)
                 {
+                    eprintln!("FCR> {:?} to {}", request, neighbor.id);
                     neighbor.request_data(request);
                     request_sent = true;
                     self.neighbor_discovery.queried_neighbors.push(neighbor.id);
