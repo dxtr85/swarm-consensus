@@ -134,6 +134,7 @@ pub enum Configuration {
     DeleteGroup,
     ModifyGroup,
     InsertPubkey(GnomeId, Vec<u8>),
+    ChangeDiameter(GnomeId, u8),
     UserDefined(u8, SyncData),
 }
 
@@ -150,6 +151,7 @@ impl Configuration {
             Self::DeleteGroup => 247,
             Self::ModifyGroup => 246,
             Self::InsertPubkey(_gid, ref _pub_key) => 245,
+            Self::ChangeDiameter(_gid, _nd) => 244,
             Self::UserDefined(other, ref _s_data) => other,
         }
     }
@@ -171,6 +173,7 @@ impl Configuration {
             Self::DeleteGroup => g_id,
             Self::ModifyGroup => g_id,
             Self::InsertPubkey(gid, ref _pub_key) => gid,
+            Self::ChangeDiameter(gid, _nd) => gid,
             Self::UserDefined(_other, ref _s_data) => g_id,
         }
     }
@@ -187,6 +190,7 @@ impl Configuration {
             Self::DeleteGroup => 1,
             Self::ModifyGroup => 1,
             Self::InsertPubkey(_gid, pub_key) => 9 + pub_key.len(),
+            Self::ChangeDiameter(_gid, _nd) => 9,
             Self::UserDefined(_other, ref s_data) => s_data.len() + 1,
         }
     }
@@ -226,6 +230,11 @@ impl Configuration {
                 let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
                 value.drain(0..9);
                 Self::InsertPubkey(GnomeId(gnome_id), value)
+            }
+            244 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                value.drain(0..9);
+                Self::ChangeDiameter(GnomeId(gnome_id), value[0])
             }
             other => Self::UserDefined(other, SyncData::new(value[1..].into()).unwrap()),
         }
@@ -304,6 +313,14 @@ impl Configuration {
                 for b in pub_key {
                     content_bytes.push(*b);
                 }
+            }
+            Self::ChangeDiameter(gid, nd) => {
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
+                }
+                content_bytes.push(nd);
             }
             Self::UserDefined(_other, ref sync_data) => {
                 content_bytes.append(&mut sync_data.clone().bytes())

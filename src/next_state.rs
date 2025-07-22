@@ -28,8 +28,14 @@ pub enum ChangeConfig {
         id: CastID,
         turn_ended: bool,
     },
+    SetDiameter {
+        originator: GnomeId,
+        new_value: SwarmTime,
+        turn_ended: bool,
+    },
     Custom {
         id: u8,
+        signed_by: GnomeId,
         s_data: SyncData,
         turn_ended: bool,
     },
@@ -46,6 +52,9 @@ impl ChangeConfig {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::InsertPubkey {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
+            Self::SetDiameter {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::Custom {
@@ -166,27 +175,59 @@ impl NextState {
             // } else if block_id_received == self.block_id
             if self.header.is_reconfigure() {
                 // TODO: make use of signature
-                if let Payload::Reconfigure(ref _signature, ref config) = self.payload {
+                if let Payload::Reconfigure(ref signature, ref config) = self.payload {
                     match config {
                         Configuration::StartBroadcast(origin, id) => {
-                            self.change_config = ChangeConfig::AddBroadcast {
-                                id: *id,
-                                origin: *origin,
-                                source: neighbor.id,
-                                filtered_neighbors: vec![],
-                                turn_ended: false,
-                            };
+                            if signature.gnome_id() == *origin {
+                                self.change_config = ChangeConfig::AddBroadcast {
+                                    id: *id,
+                                    origin: *origin,
+                                    source: neighbor.id,
+                                    filtered_neighbors: vec![],
+                                    turn_ended: false,
+                                };
+                            } else {
+                                eprintln!(
+                                    "StartBroadcast from {} but signed by {}",
+                                    origin,
+                                    signature.gnome_id()
+                                );
+                            }
                         }
                         Configuration::InsertPubkey(id, key) => {
+                            // if signature.gnome_id() == *id {
                             self.change_config = ChangeConfig::InsertPubkey {
                                 id: *id,
                                 key: key.clone(),
                                 turn_ended: false,
                             };
+                            // } else {
+                            //     eprintln!(
+                            //         "InsertPubkey from {} but signed by {}",
+                            //         id,
+                            //         signature.gnome_id()
+                            //     );
+                            // }
+                        }
+                        Configuration::ChangeDiameter(originator, diameter) => {
+                            if signature.gnome_id() == *originator {
+                                self.change_config = ChangeConfig::SetDiameter {
+                                    originator: *originator,
+                                    new_value: SwarmTime(*diameter as u32),
+                                    turn_ended: false,
+                                };
+                            } else {
+                                eprintln!(
+                                    "SetDiameter from {} but signed by {}",
+                                    originator,
+                                    signature.gnome_id()
+                                );
+                            }
                         }
                         Configuration::UserDefined(id, s_data) => {
                             self.change_config = ChangeConfig::Custom {
                                 id: *id,
+                                signed_by: signature.gnome_id(),
                                 s_data: s_data.clone(),
                                 turn_ended: false,
                             };
@@ -300,6 +341,13 @@ impl NextState {
                             filtered_neighbors: vec![],
                             turn_ended: false,
                         },
+                        Configuration::ChangeDiameter(g_id, new_diameter) => {
+                            ChangeConfig::SetDiameter {
+                                originator: g_id,
+                                new_value: SwarmTime(new_diameter as u32),
+                                turn_ended: false,
+                            }
+                        }
                         _ => {
                             // TODO: handle other configs
                             println!("Unhandled config in reset_for_next_turn");

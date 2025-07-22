@@ -187,7 +187,7 @@ impl Multicast {
         let mut tokens_used = 0;
         // let mut tokens_remaining = available_tokens;
         while let Ok(WrappedMessage::Cast(msg)) = self.source.1.try_recv() {
-            // println!("Received a casting msg: {:?}", msg);
+            eprintln!("Received a casting msg: {:?}", msg);
             let m_size = msg.len() as u64;
             for sender in self.subscribers.values() {
                 any_data_processed = true;
@@ -206,7 +206,7 @@ impl Multicast {
                     // not cost us bandwith, only some CPU cycles
                     // if !any_data_processed {
                     // }
-                    println!("User not interested in bcast.");
+                    eprintln!("User not interested in bcast.");
                     self.to_app = None;
                 } else {
                     any_data_processed = true;

@@ -1,4 +1,5 @@
 // use crate::capabilities::CapabiLeaf;
+use crate::DEFAULT_SWARM_DIAMETER;
 // use crate::gnome::NetworkSettings;
 use crate::gnome_to_manager::GnomeToManager;
 use crate::key_registry::KeyRegistry;
@@ -21,7 +22,7 @@ use crate::{CastID, WrappedMessage};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-use std::io::Read;
+// use std::io::Read;
 use std::ops::Add;
 use std::ops::Sub;
 use std::path::PathBuf;
@@ -112,7 +113,7 @@ pub struct Swarm {
     pub name: SwarmName,
     pub id: SwarmID,
     pub swarm_type: SwarmType,
-    // pub founder: GnomeId,
+    pub diameter: SwarmTime,
     pub sender: Sender<ToGnome>,
     active_unicasts: HashSet<CastID>,
     active_broadcasts: HashMap<CastID, Multicast>,
@@ -173,7 +174,7 @@ impl Swarm {
         // TODO: allow for swarm_diameter customization
         // Each swarm may have different diameter, accepted values 1-15,
         // where 1 means each Gnome has active communication channel to every other Gnome.
-        // swarm_diameter: SwarmTime,
+        // diameter: SwarmTime,
         id: SwarmID,
         gnome_id: GnomeId,
         pub_key_der: Vec<u8>,
@@ -192,6 +193,7 @@ impl Swarm {
         let (sender, request_receiver) = channel::<ToGnome>();
         let (response_sender, receiver) = channel::<GnomeToApp>();
         let mut policy_reg = HashMap::new();
+        let diameter = DEFAULT_SWARM_DIAMETER;
         policy_reg.insert(Policy::Default, Requirement::Has(Capabilities::Founder));
         let mut capability_reg = HashMap::new();
         if !name.founder.is_any() {
@@ -210,7 +212,7 @@ impl Swarm {
             name,
             id,
             swarm_type: SwarmType::Catalog,
-            // founder: GnomeId(0),
+            diameter,
             sender: sender.clone(),
             active_unicasts: HashSet::new(),
             active_broadcasts: HashMap::new(),

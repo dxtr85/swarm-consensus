@@ -35,9 +35,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt;
-use std::net::IpAddr;
-use std::net::Ipv4Addr;
-use std::net::Ipv6Addr;
+// use std::net::IpAddr;
+// use std::net::Ipv4Addr;
+// use std::net::Ipv6Addr;
 use std::ops::Deref;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
@@ -217,7 +217,7 @@ pub struct Gnome {
     swarm: Swarm,
     swarm_time: SwarmTime,
     round_start: SwarmTime,
-    swarm_diameter: SwarmTime,
+    // swarm_diameter: SwarmTime,
     receiver: Receiver<ToGnome>,
     // band_receiver: Receiver<u64>,
     sender: Sender<GnomeToApp>,
@@ -290,7 +290,7 @@ impl Gnome {
             swarm,
             swarm_time: SwarmTime(0),
             round_start: SwarmTime(0),
-            swarm_diameter: DEFAULT_SWARM_DIAMETER,
+            // swarm_diameter: DEFAULT_SWARM_DIAMETER,
             receiver,
             // band_receiver,
             sender,
@@ -651,6 +651,24 @@ impl Gnome {
                     self.send_internal
                         .send(InternalMsg::ResponseOut(gnome_id, response))
                         .unwrap();
+                }
+                ToGnome::ChangeDiameter(new_value) => {
+                    eprintln!("Received ChangeDiameter({})", new_value);
+
+                    if self.id == self.swarm.name.founder && new_value < 16 && new_value > 0 {
+                        self.proposals
+                            .push_front(Proposal::Config(Configuration::ChangeDiameter(
+                                self.id, new_value,
+                            )));
+                        new_user_proposal = true;
+                    } else {
+                        eprintln!("Can not submit ChangeDiameter proposal");
+                        eprintln!(
+                            "My: {} – {} Swarm Founder",
+                            self.id, self.swarm.name.founder
+                        );
+                    }
+                    // println!("vvv USER vvv REQ {}", data);
                 } // ToGnome::NetworkSettingsUpdate(notify_neighbor, ip_addr, port, nat, port_rule) => {
                   //     //TODO: move logic from here to GnomeManager
                   //     eprintln!("NSU: {}, {}, {:?}, {:?}", ip_addr, port, nat, port_rule);
@@ -834,7 +852,7 @@ impl Gnome {
                             s3,
                             shared_sender,
                             SwarmTime(0),
-                            self.swarm_diameter, //TODO
+                            self.swarm.diameter, //TODO
                             vec![],
                         );
                         // 43 bytes for IP/TCP|UDP + 11 bytes for gnome header
@@ -1503,7 +1521,7 @@ impl Gnome {
         } else {
             0
         };
-        tokens_used += 54 + 25 + (first_key_batch.len() * key_size);
+        tokens_used += 54 + 26 + (first_key_batch.len() * key_size);
 
         let sync_response = SwarmSyncResponse {
             chill_phase,
@@ -1511,7 +1529,7 @@ impl Gnome {
             swarm_time: self.swarm_time,
             round_start: self.round_start,
             swarm_type: self.swarm.swarm_type,
-            // app_root_hash: app_sync_hash,
+            swarm_diameter: self.swarm.diameter,
             key_reg_size: self.swarm.key_reg.byte(),
             capability_size: self.swarm.capability_reg.len() as u8,
             policy_size: self.swarm.policy_reg.len() as u8,
@@ -1523,7 +1541,7 @@ impl Gnome {
         let response = NeighborResponse::SwarmSync(sync_response);
         eprintln!("SNR2");
         neighbor.start_new_round(self.swarm_time);
-        neighbor.send_out_cast(CastMessage::new_response(response));
+        let _ = neighbor.send_out_cast(CastMessage::new_response(response));
         let mut i: u8 = 1;
         let total_batches = remaining_batches.len() as u8;
         while let Some(batch) = remaining_batches.pop() {
@@ -1757,7 +1775,7 @@ impl Gnome {
                             s3,
                             neighbor.get_shared_sender(),
                             SwarmTime(0),
-                            self.swarm_diameter, //TODO
+                            self.swarm.diameter, //TODO
                             neighbor.member_of_swarms.clone(),
                         );
                         new_neighbor.clone_to_swarm(swarm_name.clone(), s1, s2, r3);
@@ -2419,16 +2437,16 @@ impl Gnome {
                 "{} {} Sending SyncReq to {} ",
                 self.swarm.id, self.swarm.name, neighbor.id,
             );
-            neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
-                SwarmSyncRequestParams {
+            let _ = neighbor.send_out_cast(CastMessage::new_request(
+                NeighborRequest::SwarmSyncRequest(SwarmSyncRequestParams {
                     sync_key_reg: true,
                     sync_capability: true,
                     sync_policy: true,
                     sync_broadcast: true,
                     sync_multicast: true,
                     // app_root_hash,
-                },
-            )));
+                }),
+            ));
             if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(2)) {
                 eprintln!("Received SyncResponse: {:?}", sync_response_option);
                 // TODO: not sure if reversing next_state update with start_new_round
@@ -2445,16 +2463,16 @@ impl Gnome {
                 "SID-{} Slow {} Sending SwarmSyncRequest ",
                 self.swarm.id.0, neighbor.id,
             );
-            neighbor.send_out_cast(CastMessage::new_request(NeighborRequest::SwarmSyncRequest(
-                SwarmSyncRequestParams {
+            let _ = neighbor.send_out_cast(CastMessage::new_request(
+                NeighborRequest::SwarmSyncRequest(SwarmSyncRequestParams {
                     sync_key_reg: true,
                     sync_capability: true,
                     sync_policy: true,
                     sync_broadcast: true,
                     sync_multicast: true,
                     // app_root_hash,
-                },
-            )));
+                }),
+            ));
             if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
                 self.next_state.update(neighbor);
                 remote_id = neighbor.id;
@@ -2475,9 +2493,9 @@ impl Gnome {
         //       we need to initialize all necessary piping to be able to send through it
         if let Some(NeighborResponse::SwarmSync(mut swarm_sync_response)) = response_opt {
             eprintln!(
-                "App sync ST: {} Round: {} Key#: {}, chill: {}",
-                // swarm_sync_response.app_root_hash,
+                "App sync ST: {} Diameter: {} Round: {} Key#: {}, chill: {}",
                 swarm_sync_response.swarm_time,
+                swarm_sync_response.swarm_diameter,
                 swarm_sync_response.round_start,
                 swarm_sync_response.key_reg_pairs.len(),
                 swarm_sync_response.chill_phase
@@ -2493,6 +2511,7 @@ impl Gnome {
                 self.id == self.swarm.name.founder,
             ));
             self.swarm.swarm_type = swarm_sync_response.swarm_type;
+            self.swarm.diameter = swarm_sync_response.swarm_diameter;
             self.swarm.key_reg =
                 KeyRegistry::from(&mut vec![swarm_sync_response.key_reg_size, 0, 0]);
             self.swarm_time = swarm_sync_response.swarm_time;
@@ -2740,7 +2759,7 @@ impl Gnome {
         let (n_st, n_neigh, n_head, n_payload) = self.next_state.next_params();
         // println!("Next params: {} {} {} {}", n_st, n_neigh, n_head, n_payload);
         if let Some(sub) = n_st.0.checked_sub(self.swarm_time.0) {
-            if sub >= self.swarm_diameter.0 + self.swarm_diameter.0 {
+            if sub >= self.swarm.diameter.0 + self.swarm.diameter.0 {
                 eprintln!("Not updating neighborhood when catching up with swarm");
             } else {
                 self.neighborhood = n_neigh;
@@ -2775,6 +2794,7 @@ impl Gnome {
                     );
                     // println!("No need extending: {}", self.payload.has_signature());
                 } else if !proposal_can_extend {
+                    eprintln!("!proposal_can_extend ");
                     // 2. extend = true, can not be extended
                     // 2 requires us to send a special Reconfiguration message
                     //   that adds given pubkey to swarm's key_reg
@@ -2793,6 +2813,7 @@ impl Gnome {
                         self.pub_key_bytes.clone(),
                     );
                 } else {
+                    eprintln!("can extend");
                     // 3. extend = true, can be extended
                     (self.header, self.payload) = proposal.clone().to_header_payload(
                         &self.sign,
@@ -2841,11 +2862,23 @@ impl Gnome {
                         };
                     } else if let Payload::Reconfigure(
                         _sign,
+                        Configuration::ChangeDiameter(g_id, new_diameter),
+                    ) = &self.payload
+                    {
+                        // eprintln!("NSCK: SetDiameter({})", new_diameter);
+                        self.next_state.change_config = ChangeConfig::SetDiameter {
+                            originator: *g_id,
+                            new_value: SwarmTime(*new_diameter as u32),
+                            turn_ended: false,
+                        };
+                    } else if let Payload::Reconfigure(
+                        _sign,
                         Configuration::UserDefined(id, s_data),
                     ) = &self.payload
                     {
                         self.next_state.change_config = ChangeConfig::Custom {
                             id: *id,
+                            signed_by: self.id,
                             s_data: s_data.clone(),
                             turn_ended: false,
                         };
@@ -2858,9 +2891,9 @@ impl Gnome {
     }
 
     fn check_if_new_round(&mut self, available_tokens: u64) -> bool {
-        let all_gnomes_aware = self.neighborhood.0 as u32 >= self.swarm_diameter.0;
+        let all_gnomes_aware = self.neighborhood.0 as u32 >= self.swarm.diameter.0;
         let finish_round =
-            self.swarm_time - self.round_start >= self.swarm_diameter + self.swarm_diameter;
+            self.swarm_time - self.round_start >= self.swarm.diameter + self.swarm.diameter;
         if all_gnomes_aware || finish_round {
             // println!("New round");
             if !self.slow_neighbors.is_empty() {
@@ -2909,12 +2942,13 @@ impl Gnome {
                             if let Some((g_id, pub_key)) = signature.pubkey() {
                                 self.swarm.key_reg.insert(g_id, pub_key)
                             }
+                            eprintln!(" c-k2: {:?}", _conf);
                         }
                         let change_config = std::mem::replace(
                             &mut self.next_state.change_config,
                             ChangeConfig::None,
                         );
-                        // println!("Me: {}, c-k: {:?}", self.id, change_config);
+                        eprintln!("Me: {}, c-k: {:?}", self.id, change_config);
                         match change_config {
                             ChangeConfig::AddBroadcast {
                                 id,
@@ -2990,10 +3024,31 @@ impl Gnome {
                                 // This is done automatically
                                 // self.swarm.key_reg.insert(id, key);
                             }
-                            ChangeConfig::Custom { id, s_data, .. } => {
+                            ChangeConfig::SetDiameter {
+                                originator,
+                                new_value,
+                                ..
+                            } => {
+                                eprintln!("Received ChangeConfig::SetDiameter({})", new_value);
+                                // TODO: we need more sophisticated method
+                                // of verification
+                                if self.swarm.name.founder == originator {
+                                    self.swarm.diameter = new_value;
+                                } else {
+                                    eprintln!("But it was signed by {}", originator);
+                                }
+                            }
+                            ChangeConfig::Custom {
+                                id,
+                                signed_by,
+                                s_data,
+                                ..
+                            } => {
                                 // This is done automatically
                                 eprintln!("Custom Reconfig-{} to serve", id);
-                                let _res = self.sender.send(GnomeToApp::Reconfig(id, s_data));
+                                let _res = self
+                                    .sender
+                                    .send(GnomeToApp::Reconfig(id, signed_by, s_data));
                             }
                             ChangeConfig::None => {}
                         }

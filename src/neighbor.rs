@@ -99,7 +99,7 @@ pub struct SwarmSyncResponse {
     pub swarm_time: SwarmTime,
     pub round_start: SwarmTime,
     pub swarm_type: SwarmType,
-    // pub app_root_hash: u64,
+    pub swarm_diameter: SwarmTime,
     pub key_reg_size: u8,
     pub capability_size: u8,
     pub policy_size: u8,
@@ -111,10 +111,10 @@ pub struct SwarmSyncResponse {
 impl SwarmSyncResponse {
     pub fn len(&self) -> usize {
         if self.key_reg_pairs.is_empty() {
-            25
+            26
         } else {
             let e_len = self.key_reg_pairs[0].1.len() + 8;
-            25 + self.key_reg_pairs.len() * e_len
+            26 + self.key_reg_pairs.len() * e_len
         }
     }
 }
