@@ -6,4 +6,5 @@ pub enum InternalMsg {
     RequestOut(GnomeId, NeighborRequest),
     ResponseOut(GnomeId, NeighborResponse),
     FindNewCastSource(bool, CastID, GnomeId),
+    SendToCastSource(bool, CastID, CastData),
 }

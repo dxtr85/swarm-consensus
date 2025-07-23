@@ -128,6 +128,7 @@ pub enum NeighborRequest {
     SwarmSyncRequest(SwarmSyncRequestParams),
     SubscribeRequest(bool, CastID),
     UnsubscribeRequest(bool, CastID), // We send this when no longer interested in bcast
+    SendToCastSource(bool, CastID, CastData), // We send this to our subscribers to indicate they
     SourceDrained(bool, CastID),      // We send this to our subscribers to indicate they
     // have to find another source for given cast, give them some time to do so
     CreateNeighbor(GnomeId, SwarmName),
@@ -147,6 +148,7 @@ impl NeighborRequest {
             NeighborRequest::SourceDrained(_b, _c) => 3,
             NeighborRequest::CreateNeighbor(_g, sn) => 17 + sn.name.len(),
             NeighborRequest::SwarmJoinedInfo(sn) => 9 + sn.name.len(),
+            NeighborRequest::SendToCastSource(_is, _id, cd) => 2 + cd.len(),
             NeighborRequest::Custom(_b, cd) => 2 + cd.len(),
         }
     }

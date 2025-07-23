@@ -422,6 +422,25 @@ impl Gnome {
                         }
                     }
                 }
+                InternalMsg::SendToCastSource(is_broadcast, cast_id, c_data) => {
+                    if let Some(source_id) = self.swarm.get_source(&cast_id, is_broadcast) {
+                        if source_id == self.id {
+                            if is_broadcast {
+                                self.sender
+                                    .send(GnomeToApp::BCastUplinkData(cast_id, c_data));
+                            } else {
+                                //TODO: Multicast
+                                // self.sender.send(Gno)
+                            }
+                        } else {
+                            let request =
+                                NeighborRequest::SendToCastSource(is_broadcast, cast_id, c_data);
+                            self.send_neighbor_request(source_id, request);
+                        }
+                    } else {
+                        eprintln!("Gnome could not find source for: {:?}", cast_id);
+                    }
+                }
                 InternalMsg::FindNewCastSource(is_bcast, cast_id, old_source) => {
                     eprintln!("Looking for new casting source");
                     let alt_sources = self.swarm.get_alt_sources(is_bcast, &cast_id, old_source);
@@ -638,6 +657,12 @@ impl Gnome {
                     let _ = self
                         .send_internal
                         .send(InternalMsg::UnsubscribeCast(true, c_id));
+                }
+                ToGnome::SendToBCastSource(c_id, c_data) => {
+                    eprintln!("Received SendToBCastSource user request");
+                    let _ = self
+                        .send_internal
+                        .send(InternalMsg::SendToCastSource(true, c_id, c_data));
                 }
                 ToGnome::StartMulticast(_) => {
                     todo!()
@@ -1736,6 +1761,12 @@ impl Gnome {
                             cast_id,
                             neighbor.id,
                         ));
+                    }
+                    NeighborRequest::SendToCastSource(is_bcast, cast_id, c_data) => {
+                        //TODO
+                        let _ = self
+                            .send_internal
+                            .send(InternalMsg::SendToCastSource(is_bcast, cast_id, c_data));
                     }
                     //Gnome received a request from a neighbor
                     NeighborRequest::CreateNeighbor(gnome_id, swarm_name) => {

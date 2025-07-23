@@ -76,6 +76,7 @@ pub enum ToGnome {
     StartBroadcast,
     EndBroadcast(CastID),
     UnsubscribeBroadcast(CastID),
+    SendToBCastSource(CastID, CastData),
     SwarmNeighbors(SwarmName),
     ChangeDiameter(u8),
     Reconfigure(u8, SyncData),
@@ -99,6 +100,7 @@ pub enum GnomeToApp {
     NewNeighbor(SwarmName, Neighbor),
     ToGnome(NeighborResponse),
     BCastData(CastID, CastData),
+    BCastUplinkData(CastID, CastData),
     Custom(bool, u8, GnomeId, CastData),
     Reconfig(u8, GnomeId, SyncData),
 }
@@ -114,6 +116,9 @@ impl fmt::Debug for GnomeToApp {
             }
             GnomeToApp::BCastData(c_id, c_data) => {
                 write!(f, "BCastData {} (len: {})", c_id.0, c_data.len())
+            }
+            GnomeToApp::BCastUplinkData(c_id, c_data) => {
+                write!(f, "BCastUplinkData {} (len: {})", c_id.0, c_data.len())
             }
             GnomeToApp::DataInquiry(gnome_id, data_id) => {
                 write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)
