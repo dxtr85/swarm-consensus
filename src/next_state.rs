@@ -28,6 +28,17 @@ pub enum ChangeConfig {
         id: CastID,
         turn_ended: bool,
     },
+    AddMulticast {
+        id: CastID,
+        origin: GnomeId,
+        source: GnomeId,
+        filtered_neighbors: Vec<GnomeId>,
+        turn_ended: bool,
+    },
+    RemoveMulticast {
+        id: CastID,
+        turn_ended: bool,
+    },
     SetDiameter {
         originator: GnomeId,
         new_value: SwarmTime,
@@ -51,6 +62,12 @@ impl ChangeConfig {
             Self::RemoveBroadcast {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
+            Self::AddMulticast {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
+            Self::RemoveMulticast {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
             Self::InsertPubkey {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
@@ -65,6 +82,18 @@ impl ChangeConfig {
 
     pub fn add_filtered_neighbor(&mut self, gnome_id: GnomeId) {
         if let Self::AddBroadcast {
+            ref mut filtered_neighbors,
+            turn_ended,
+            ..
+        } = *self
+        {
+            if !turn_ended {
+                filtered_neighbors.push(gnome_id);
+            }
+        }
+    }
+    pub fn add_filtered_neighbor_multicast(&mut self, gnome_id: GnomeId) {
+        if let Self::AddMulticast {
             ref mut filtered_neighbors,
             turn_ended,
             ..
@@ -194,6 +223,51 @@ impl NextState {
                                 );
                             }
                         }
+                        Configuration::EndBroadcast(origin, id) => {
+                            if signature.gnome_id() == *origin {
+                                self.change_config = ChangeConfig::RemoveBroadcast {
+                                    id: *id,
+                                    turn_ended: false,
+                                };
+                            } else {
+                                eprintln!(
+                                    "EndBroadcast from {} but signed by {}",
+                                    origin,
+                                    signature.gnome_id()
+                                );
+                            }
+                        }
+                        Configuration::EndMulticast(origin, id) => {
+                            if signature.gnome_id() == *origin {
+                                self.change_config = ChangeConfig::RemoveMulticast {
+                                    id: *id,
+                                    turn_ended: false,
+                                };
+                            } else {
+                                eprintln!(
+                                    "EndMulticast from {} but signed by {}",
+                                    origin,
+                                    signature.gnome_id()
+                                );
+                            }
+                        }
+                        Configuration::StartMulticast(origin, id) => {
+                            if signature.gnome_id() == *origin {
+                                self.change_config = ChangeConfig::AddMulticast {
+                                    id: *id,
+                                    origin: *origin,
+                                    source: neighbor.id,
+                                    filtered_neighbors: vec![],
+                                    turn_ended: false,
+                                };
+                            } else {
+                                eprintln!(
+                                    "StartMulticast from {} but signed by {}",
+                                    origin,
+                                    signature.gnome_id()
+                                );
+                            }
+                        }
                         Configuration::InsertPubkey(id, key) => {
                             // if signature.gnome_id() == *id {
                             self.change_config = ChangeConfig::InsertPubkey {
@@ -232,8 +306,8 @@ impl NextState {
                                 turn_ended: false,
                             };
                         }
-                        _ => {
-                            println!("Unhandled config");
+                        other => {
+                            println!("Unhandled config: {:?}", other);
                         }
                     }
                 }
@@ -248,6 +322,12 @@ impl NextState {
                         Configuration::StartBroadcast(g_id, _c_id) => {
                             if neighbor.id.0 != g_id.0 {
                                 self.change_config.add_filtered_neighbor(neighbor.id);
+                            }
+                        }
+                        Configuration::StartMulticast(g_id, _c_id) => {
+                            if neighbor.id.0 != g_id.0 {
+                                self.change_config
+                                    .add_filtered_neighbor_multicast(neighbor.id);
                             }
                         }
                         _ => {
@@ -335,6 +415,13 @@ impl NextState {
                 if let Payload::Reconfigure(_signature, config) = payload {
                     match config {
                         Configuration::StartBroadcast(origin, id) => ChangeConfig::AddBroadcast {
+                            id,
+                            origin,
+                            source: origin,
+                            filtered_neighbors: vec![],
+                            turn_ended: false,
+                        },
+                        Configuration::StartMulticast(origin, id) => ChangeConfig::AddMulticast {
                             id,
                             origin,
                             source: origin,

@@ -311,6 +311,15 @@ impl Swarm {
         }
         None
     }
+    pub fn next_multicast_id(&self) -> Option<CastID> {
+        for id in 0..=255 {
+            let cid = CastID(id);
+            if self.is_multicast_id_available(cid) {
+                return Some(cid);
+            }
+        }
+        None
+    }
     pub fn insert_unicast(&mut self, cast_id: CastID) {
         self.active_unicasts.insert(cast_id);
     }
@@ -452,6 +461,9 @@ impl Swarm {
             return (any_data_processed, total_tokens_used);
         }
         let (was_busy, used_tokens) = self.serve_broadcasts(available_tokens);
+        total_tokens_used += used_tokens;
+        any_data_processed |= was_busy;
+        let (was_busy, used_tokens) = self.serve_multicasts(available_tokens);
         total_tokens_used += used_tokens;
         any_data_processed |= was_busy;
         // let (was_busy, tokens_used) = self.serve_unicasts(tokens_remaining);
@@ -694,6 +706,22 @@ impl Swarm {
         let mut tokens_remaining = available_tokens;
         for bcast in self.active_broadcasts.values_mut() {
             let (was_busy, used_tokens) = bcast.serve(tokens_remaining);
+            any_data_processed |= was_busy;
+            total_tokens_used += used_tokens;
+            // if tokens_remaining == 0 {
+            if total_tokens_used >= available_tokens {
+                break;
+            }
+            tokens_remaining -= used_tokens;
+        }
+        (any_data_processed, total_tokens_used)
+    }
+    fn serve_multicasts(&mut self, available_tokens: u64) -> (bool, u64) {
+        let mut any_data_processed = false;
+        let mut total_tokens_used = 0;
+        let mut tokens_remaining = available_tokens;
+        for mcast in self.active_multicasts.values_mut() {
+            let (was_busy, used_tokens) = mcast.serve(tokens_remaining);
             any_data_processed |= was_busy;
             total_tokens_used += used_tokens;
             // if tokens_remaining == 0 {

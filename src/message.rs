@@ -129,7 +129,7 @@ pub enum Configuration {
     EndBroadcast(GnomeId, CastID),
     StartMulticast(GnomeId, CastID),
     ChangeMulticastOrigin(GnomeId, CastID),
-    EndMulticast(CastID),
+    EndMulticast(GnomeId, CastID),
     CreateGroup,
     DeleteGroup,
     ModifyGroup,
@@ -146,7 +146,7 @@ impl Configuration {
             Self::EndBroadcast(_gid, _cid) => 252,
             Self::StartMulticast(_gid, _cid) => 251,
             Self::ChangeMulticastOrigin(_gid, _cid) => 250,
-            Self::EndMulticast(_cid) => 249,
+            Self::EndMulticast(_gid, _cid) => 249,
             Self::CreateGroup => 248,
             Self::DeleteGroup => 247,
             Self::ModifyGroup => 246,
@@ -168,7 +168,7 @@ impl Configuration {
             Self::EndBroadcast(gid, _cid) => gid,
             Self::StartMulticast(gid, _cid) => gid,
             Self::ChangeMulticastOrigin(gid, _cid) => gid,
-            Self::EndMulticast(_cid) => g_id,
+            Self::EndMulticast(g_id, _cid) => g_id,
             Self::CreateGroup => g_id,
             Self::DeleteGroup => g_id,
             Self::ModifyGroup => g_id,
@@ -185,7 +185,7 @@ impl Configuration {
             Self::EndBroadcast(_gid, _cid) => 2,
             Self::StartMulticast(_gid, _cid) => 10,
             Self::ChangeMulticastOrigin(_gid, _cid) => 10,
-            Self::EndMulticast(_cid) => 2,
+            Self::EndMulticast(_gid, _cid) => 2,
             Self::CreateGroup => 1,
             Self::DeleteGroup => 1,
             Self::ModifyGroup => 1,
@@ -222,7 +222,10 @@ impl Configuration {
                 let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
                 Self::ChangeMulticastOrigin(GnomeId(gnome_id), CastID(value[9]))
             }
-            249 => Self::EndMulticast(CastID(0)),
+            249 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                Self::EndMulticast(GnomeId(gnome_id), CastID(value[9]))
+            }
             248 => Self::CreateGroup,
             247 => Self::DeleteGroup,
             246 => Self::ModifyGroup,
@@ -292,7 +295,12 @@ impl Configuration {
                 }
                 content_bytes.push(cid.0);
             }
-            Self::EndMulticast(cid) => {
+            Self::EndMulticast(gid, cid) => {
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
+                }
                 content_bytes.push(cid.0);
             }
             Self::CreateGroup => {

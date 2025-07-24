@@ -72,11 +72,16 @@ pub enum ToGnome {
     Disconnect,
     Status,
     StartUnicast(GnomeId),
-    StartMulticast(Vec<GnomeId>),
+    StartMulticast,
     StartBroadcast,
     EndBroadcast(CastID),
+    EndMulticast(CastID),
+    SubscribeBroadcast(CastID),
+    SubscribeMulticast(CastID),
     UnsubscribeBroadcast(CastID),
+    UnsubscribeMulticast(CastID),
     SendToBCastSource(CastID, CastData),
+    SendToMCastSource(CastID, CastData),
     SwarmNeighbors(SwarmName),
     ChangeDiameter(u8),
     Reconfigure(u8, SyncData),
@@ -92,7 +97,7 @@ pub enum GnomeToApp {
     Listing(Vec<BlockID>),
     UnicastOrigin(SwarmID, CastID, Sender<CastData>),
     Unicast(SwarmID, CastID, Receiver<CastData>),
-    MulticastOrigin(SwarmID, CastID, Sender<SyncData>),
+    MulticastOrigin(SwarmID, CastID, Sender<CastData>, Receiver<CastData>),
     Multicast(SwarmID, CastID, Receiver<CastData>),
     BroadcastOrigin(SwarmID, CastID, Sender<CastData>, Receiver<CastData>),
     Broadcast(SwarmID, CastID, Receiver<CastData>),
@@ -101,6 +106,8 @@ pub enum GnomeToApp {
     ToGnome(NeighborResponse),
     BCastData(CastID, CastData),
     BCastUplinkData(CastID, CastData),
+    MCastData(CastID, CastData),
+    MCastUplinkData(CastID, CastData),
     Custom(bool, u8, GnomeId, CastData),
     Reconfig(u8, GnomeId, SyncData),
 }
@@ -120,6 +127,12 @@ impl fmt::Debug for GnomeToApp {
             GnomeToApp::BCastUplinkData(c_id, c_data) => {
                 write!(f, "BCastUplinkData {} (len: {})", c_id.0, c_data.len())
             }
+            GnomeToApp::MCastData(c_id, c_data) => {
+                write!(f, "MCastData {} (len: {})", c_id.0, c_data.len())
+            }
+            GnomeToApp::MCastUplinkData(c_id, c_data) => {
+                write!(f, "MCastUplinkData {} (len: {})", c_id.0, c_data.len())
+            }
             GnomeToApp::DataInquiry(gnome_id, data_id) => {
                 write!(f, "DataInquiry for {:?}: PropID-{:?}", gnome_id, data_id)
             }
@@ -135,7 +148,7 @@ impl fmt::Debug for GnomeToApp {
             GnomeToApp::Multicast(_sid, _cid, _rdata) => {
                 write!(f, "Multicast {:?}", _cid)
             }
-            GnomeToApp::MulticastOrigin(_sid, _cid, _sdata) => {
+            GnomeToApp::MulticastOrigin(_sid, _cid, _sdata, _rdata) => {
                 write!(f, "Multicast source {:?}", _cid)
             }
             GnomeToApp::Neighbors(_sid, _nid) => {

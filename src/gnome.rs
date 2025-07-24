@@ -370,17 +370,28 @@ impl Gnome {
             any_data_processed = true;
             match internal {
                 InternalMsg::SubscribeCast(is_bcast, id, origin) => {
-                    // TODO: we have to support also multicast
-                    if let Some(source) = self.neighbor_with_enough_bandwith(1) {
-                        eprintln!("Subscribing to BCast: {}", id.0);
-                        let (send_n, recv_n) = channel();
-                        let (send_d, recv_d) = channel();
-                        // TODO: bandwith threshold should not be a fixed value
-                        if self.send_neighbor_request(
-                            source,
-                            NeighborRequest::SubscribeRequest(is_bcast, id),
-                        ) {
-                            tokens_used += 48;
+                    if origin.is_any() {
+                        eprintln!("TODO: SubscribeCast origin is any");
+                    }
+                    let source = if let Some(source_id) = self.swarm.get_source(&id, is_bcast) {
+                        if self.has_neighbor(source_id) {
+                            source_id
+                        } else {
+                            self.neighbor_with_highest_bandwith()
+                        }
+                    } else {
+                        self.neighbor_with_highest_bandwith()
+                    };
+                    eprintln!("Subscribing to Cast: {}(is bcast: {})", id.0, is_bcast);
+                    let (send_n, recv_n) = channel();
+                    let (send_d, recv_d) = channel();
+                    // TODO: bandwith threshold should not be a fixed value
+                    if self.send_neighbor_request(
+                        source,
+                        NeighborRequest::SubscribeRequest(is_bcast, id),
+                    ) {
+                        tokens_used += 48;
+                        if is_bcast {
                             if self.activate_broadcast_at_neighbor(source, id, send_n) {
                                 let b_cast = Multicast::new(
                                     origin,
@@ -396,10 +407,35 @@ impl Gnome {
                                     recv_d,
                                 ));
                             }
+                        } else if self.activate_multicast_at_neighbor(source, id, send_n) {
+                            let m_cast = Multicast::new(
+                                origin,
+                                (source, recv_n),
+                                vec![],
+                                HashMap::new(),
+                                Some(send_d),
+                            );
+                            self.swarm.insert_multicast(id, m_cast);
+                            let _res =
+                                self.sender
+                                    .send(GnomeToApp::Multicast(self.swarm.id, id, recv_d));
                         }
-                    } else {
-                        eprintln!("Unable to subscribe a broadcast");
                     }
+                    // } else {
+                    //     eprintln!("Unable to subscribe a broadcast");
+                    // }
+                    // } else {
+                    //     let source =
+                    //         if let Some(source_id) = self.swarm.get_source(cast_id, is_bcast) {
+                    //             source_id
+                    //         } else {
+                    //             self.neighbor_with_highest_bandwith()
+                    //         };
+
+                    //     // TODO: support multicast subscription
+                    //     // Logic described in multicast.rs
+                    //     eprintln!("No logic implemented for MCast subsciption.");
+                    // }
                 }
                 InternalMsg::UnsubscribeCast(is_bcast, c_id) => {
                     if let Some((n_id, subs)) =
@@ -429,8 +465,8 @@ impl Gnome {
                                 self.sender
                                     .send(GnomeToApp::BCastUplinkData(cast_id, c_data));
                             } else {
-                                //TODO: Multicast
-                                // self.sender.send(Gno)
+                                self.sender
+                                    .send(GnomeToApp::MCastUplinkData(cast_id, c_data));
                             }
                         } else {
                             let request =
@@ -438,7 +474,10 @@ impl Gnome {
                             self.send_neighbor_request(source_id, request);
                         }
                     } else {
-                        eprintln!("Gnome could not find source for: {:?}", cast_id);
+                        eprintln!(
+                            "Gnome could not find source for: {:?}(BCast: {})",
+                            cast_id, is_broadcast
+                        );
                     }
                 }
                 InternalMsg::FindNewCastSource(is_bcast, cast_id, old_source) => {
@@ -452,6 +491,7 @@ impl Gnome {
                                 .send(InternalMsg::SubscribeCast(is_bcast, cast_id, new_source));
                         }
                     } else {
+                        // TODO: we need to build extended logic here
                         eprintln!("Unable to find alternative source.")
                     }
                 }
@@ -652,6 +692,14 @@ impl Gnome {
                         .push_front(Proposal::Config(Configuration::EndBroadcast(self.id, c_id)));
                     new_user_proposal = true;
                 }
+                ToGnome::SubscribeBroadcast(c_id) => {
+                    eprintln!("Received SubscribeBroadcast user request");
+                    let _ = self.send_internal.send(InternalMsg::SubscribeCast(
+                        true,
+                        c_id,
+                        GnomeId::any(),
+                    ));
+                }
                 ToGnome::UnsubscribeBroadcast(c_id) => {
                     eprintln!("Received UnsubscribeBroadcast user request");
                     let _ = self
@@ -664,8 +712,44 @@ impl Gnome {
                         .send_internal
                         .send(InternalMsg::SendToCastSource(true, c_id, c_data));
                 }
-                ToGnome::StartMulticast(_) => {
-                    todo!()
+                // ToGnome::StartMulticast(ids) => {
+                ToGnome::StartMulticast => {
+                    eprintln!("Received StartMulticast() user request",);
+                    let cast_id_opt = self.swarm.next_multicast_id();
+                    if let Some(cast_id) = cast_id_opt {
+                        self.proposals
+                            .push_front(Proposal::Config(Configuration::StartMulticast(
+                                self.id, cast_id,
+                            )));
+                        new_user_proposal = true;
+                    }
+                    // println!("vvv USER vvv REQ {}", data);
+                }
+                ToGnome::EndMulticast(c_id) => {
+                    eprintln!("Received EndMulticast user request");
+                    self.proposals
+                        .push_front(Proposal::Config(Configuration::EndMulticast(self.id, c_id)));
+                    new_user_proposal = true;
+                }
+                ToGnome::SubscribeMulticast(c_id) => {
+                    eprintln!("Received SubscribeMulticast user request");
+                    let _ = self.send_internal.send(InternalMsg::SubscribeCast(
+                        false,
+                        c_id,
+                        GnomeId::any(),
+                    ));
+                }
+                ToGnome::UnsubscribeMulticast(c_id) => {
+                    eprintln!("Received UnsubscribeMulticast user request");
+                    let _ = self
+                        .send_internal
+                        .send(InternalMsg::UnsubscribeCast(false, c_id));
+                }
+                ToGnome::SendToMCastSource(c_id, c_data) => {
+                    eprintln!("Received SendToMCastSource user request");
+                    let _ = self
+                        .send_internal
+                        .send(InternalMsg::SendToCastSource(false, c_id, c_data));
                 }
                 ToGnome::AskData(gnome_id, request) => {
                     self.send_internal
@@ -1727,7 +1811,7 @@ impl Gnome {
                             .send(GnomeToManager::NeighboringSwarms(self.swarm.id, swarms_set));
                     }
                     NeighborRequest::SubscribeRequest(is_bcast, cast_id) => {
-                        eprintln!("SubscribeRequest {}", cast_id.0);
+                        eprintln!("SubscribeRequest {}(is_bcast: {})", cast_id.0, is_bcast);
                         if let Some(origin) = self.swarm.add_subscriber(
                             is_bcast,
                             &cast_id,
@@ -2871,6 +2955,18 @@ impl Gnome {
                             filtered_neighbors: vec![],
                             turn_ended: false,
                         };
+                    } else if let Payload::Reconfigure(
+                        _signature,
+                        Configuration::StartMulticast(g_id, c_id),
+                    ) = &self.payload
+                    {
+                        self.next_state.change_config = ChangeConfig::AddMulticast {
+                            id: *c_id,
+                            origin: *g_id,
+                            source: *g_id,
+                            filtered_neighbors: vec![],
+                            turn_ended: false,
+                        };
                         // }
                     } else if let Payload::Reconfigure(
                         _signature,
@@ -2888,6 +2984,15 @@ impl Gnome {
                     ) = &self.payload
                     {
                         self.next_state.change_config = ChangeConfig::RemoveBroadcast {
+                            id: *c_id,
+                            turn_ended: false,
+                        };
+                    } else if let Payload::Reconfigure(
+                        _sign,
+                        Configuration::EndMulticast(_g_id, c_id),
+                    ) = &self.payload
+                    {
+                        self.next_state.change_config = ChangeConfig::RemoveMulticast {
                             id: *c_id,
                             turn_ended: false,
                         };
@@ -3050,6 +3155,76 @@ impl Gnome {
                             ChangeConfig::RemoveBroadcast { id, .. } => {
                                 let _ = self.swarm.remove_cast(true, &id);
                                 self.remove_originating_broadcast(id);
+                            }
+                            ChangeConfig::AddMulticast {
+                                id,
+                                origin,
+                                source,
+                                filtered_neighbors,
+                                ..
+                            } => {
+                                let mut subscribers: HashMap<GnomeId, Sender<WrappedMessage>> =
+                                    self.get_neighbor_ids_and_senders();
+                                // println!("origin: {}", origin);
+                                // println!("subs before filter: {:?}", subscribers);
+                                subscribers.retain(|&gid, _s| {
+                                    !filtered_neighbors.contains(&gid)
+                                        &&gid != origin //This is covered
+                                        &&gid != source
+                                });
+                                // println!("subs after filter: {:?}", subscribers);
+                                // println!("filtered neighbors: {:?}", filtered_neighbors);
+                                let (wrapped_message_sender, wrapped_message_receiver) = channel();
+                                let (cast_data_sender, cast_data_receiver) = channel();
+                                if self.id == origin {
+                                    eprintln!("I am multi origin!");
+                                    let (internal_cast_data_sender, internal_cast_data_receiver) =
+                                        channel();
+                                    let m_cast = Multicast::new(
+                                        origin,
+                                        (source, wrapped_message_receiver),
+                                        filtered_neighbors,
+                                        subscribers,
+                                        Some(internal_cast_data_sender),
+                                    );
+
+                                    self.insert_originating_multicast(
+                                        id,
+                                        cast_data_receiver,
+                                        wrapped_message_sender,
+                                    );
+                                    self.swarm.insert_multicast(id, m_cast);
+                                    let _res = self.sender.send(GnomeToApp::MulticastOrigin(
+                                        self.swarm.id,
+                                        id,
+                                        cast_data_sender,
+                                        internal_cast_data_receiver,
+                                    ));
+                                } else if self.activate_multicast_at_neighbor(
+                                    source,
+                                    id,
+                                    wrapped_message_sender,
+                                ) {
+                                    let m_cast = Multicast::new(
+                                        origin,
+                                        (source, wrapped_message_receiver),
+                                        filtered_neighbors,
+                                        subscribers,
+                                        Some(cast_data_sender),
+                                    );
+                                    self.swarm.insert_multicast(id, m_cast);
+                                    let _res = self.sender.send(GnomeToApp::Multicast(
+                                        self.swarm.id,
+                                        id,
+                                        cast_data_receiver,
+                                    ));
+                                } else {
+                                    eprintln!("Unable to activate multicast");
+                                }
+                            }
+                            ChangeConfig::RemoveMulticast { id, .. } => {
+                                let _ = self.swarm.remove_cast(false, &id);
+                                self.remove_originating_multicast(id);
                             }
                             ChangeConfig::InsertPubkey { id, key, .. } => {
                                 // This is done automatically
@@ -3602,9 +3777,21 @@ impl Gnome {
         self.data_converters
             .insert((CastType::Broadcast, id), (recv_d, send_n));
     }
+    fn insert_originating_multicast(
+        &mut self,
+        id: CastID,
+        recv_d: Receiver<CastData>,
+        send_n: Sender<WrappedMessage>,
+    ) {
+        self.data_converters
+            .insert((CastType::Multicast, id), (recv_d, send_n));
+    }
 
     fn remove_originating_broadcast(&mut self, id: CastID) {
         let _ = self.data_converters.remove(&(CastType::Broadcast, id));
+    }
+    fn remove_originating_multicast(&mut self, id: CastID) {
+        let _ = self.data_converters.remove(&(CastType::Multicast, id));
     }
 
     fn activate_broadcast_at_neighbor(
@@ -3634,6 +3821,38 @@ impl Gnome {
         for neighbor in &mut self.new_neighbors {
             if neighbor.id == id {
                 neighbor.activate_broadcast(cast_id, sender);
+                return true;
+            }
+        }
+        false
+    }
+    fn activate_multicast_at_neighbor(
+        &mut self,
+        id: GnomeId,
+        cast_id: CastID,
+        sender: Sender<WrappedMessage>,
+    ) -> bool {
+        for neighbor in &mut self.fast_neighbors {
+            if neighbor.id == id {
+                neighbor.activate_multicast(cast_id, sender);
+                return true;
+            }
+        }
+        for neighbor in &mut self.refreshed_neighbors {
+            if neighbor.id == id {
+                neighbor.activate_multicast(cast_id, sender);
+                return true;
+            }
+        }
+        for neighbor in &mut self.slow_neighbors {
+            if neighbor.id == id {
+                neighbor.activate_multicast(cast_id, sender);
+                return true;
+            }
+        }
+        for neighbor in &mut self.new_neighbors {
+            if neighbor.id == id {
+                neighbor.activate_multicast(cast_id, sender);
                 return true;
             }
         }

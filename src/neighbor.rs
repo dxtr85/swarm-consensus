@@ -71,6 +71,7 @@ pub struct Neighbor {
     gnome_neighborhood: Neighborhood,
     active_unicasts: HashMap<CastID, Sender<CastData>>,
     active_broadcasts: HashMap<CastID, Sender<WrappedMessage>>,
+    active_multicasts: HashMap<CastID, Sender<WrappedMessage>>,
     pub available_bandwith: u64,
     pub member_of_swarms: Vec<SwarmName>,
     timeouts: [u8; 8],
@@ -255,6 +256,7 @@ impl Neighbor {
             gnome_neighborhood: Neighborhood(0),
             active_unicasts: HashMap::new(),
             active_broadcasts: HashMap::new(),
+            active_multicasts: HashMap::new(),
             available_bandwith: 1024,
             member_of_swarms,
             timeouts: [0; 8],
@@ -386,7 +388,9 @@ impl Neighbor {
                     }
                 }
                 CastType::Multicast => {
-                    // TODO
+                    if let Some(sender) = self.active_multicasts.get(&id) {
+                        let _ = sender.send(WrappedMessage::Cast(c_msg));
+                    }
                 }
                 CastType::Unicast => {
                     match id {
@@ -727,6 +731,10 @@ impl Neighbor {
 
     pub fn activate_broadcast(&mut self, cast_id: CastID, sender: Sender<WrappedMessage>) {
         self.active_broadcasts.insert(cast_id, sender);
+    }
+
+    pub fn activate_multicast(&mut self, cast_id: CastID, sender: Sender<WrappedMessage>) {
+        self.active_multicasts.insert(cast_id, sender);
     }
 
     pub fn add_timeout(&mut self) {

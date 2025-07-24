@@ -187,14 +187,19 @@ impl Multicast {
         let mut tokens_used = 0;
         // let mut tokens_remaining = available_tokens;
         while let Ok(WrappedMessage::Cast(msg)) = self.source.1.try_recv() {
-            eprintln!("Received a casting msg: {:?}", msg);
+            eprintln!(
+                "Received a casting msg: {:?}(sub len: {})",
+                msg,
+                self.subscribers.len()
+            );
             let m_size = msg.len() as u64;
             for sender in self.subscribers.values() {
                 any_data_processed = true;
                 tokens_used += m_size;
                 // tokens_remaining = tokens_remaining.saturating_sub(m_size);
                 // println!("Wrapped send: {:?}", msg);
-                let _ = sender.send(WrappedMessage::Cast(msg.clone()));
+                let res = sender.send(WrappedMessage::Cast(msg.clone()));
+                eprintln!("WMSR: {:?}", res);
             }
             // TODO: we can Unsubscribe from a cast when to_app is None
             //       and subscribers.len()>0 when we want to save bandwith
