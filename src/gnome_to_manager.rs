@@ -1,5 +1,6 @@
+use crate::Policy;
+use crate::Requirement;
 use std::collections::HashSet;
-// use std::net::IpAddr;
 
 use crate::GnomeId;
 // use crate::Nat;
@@ -15,7 +16,7 @@ pub enum GnomeToManager {
     AddNeighborToSwarm(SwarmID, SwarmName, Neighbor),
     ActiveNeighbors(SwarmID, SwarmName, HashSet<GnomeId>),
     GnomeLeft(SwarmID, SwarmName, GnomeId),
-    // PublicAddress(IpAddr, u16, Nat, (PortAllocationRule, i8)),
+    RunningPolicies(Vec<(Policy, Requirement)>),
     ProvidePublicAddress(SwarmID, u8, GnomeId),
     SwarmBusy(SwarmID, bool),
     Disconnected(SwarmID, SwarmName),

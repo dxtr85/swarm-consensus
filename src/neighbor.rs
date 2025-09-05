@@ -83,6 +83,7 @@ pub struct SwarmSyncRequestParams {
     pub sync_key_reg: bool,
     pub sync_capability: bool,
     pub sync_policy: bool,
+    // pub sync_bytesets: bool, // TODO: implement ByteSets syncing
     pub sync_broadcast: bool,
     pub sync_multicast: bool,
     // pub app_root_hash: u64,

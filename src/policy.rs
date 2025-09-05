@@ -61,4 +61,23 @@ impl Policy {
             Policy::UserDefined(other) => bytes.push(*other),
         }
     }
+
+    pub fn text(&self) -> String {
+        match self {
+            Policy::Default => "Default".to_string(),
+            Policy::Data => "Data".to_string(),
+            Policy::StartBroadcast => "StartBroadcast".to_string(),
+            Policy::ChangeBroadcastOrigin => "ChangeBroadcastOrigin".to_string(),
+            Policy::EndBroadcast => "EndBroadcast".to_string(),
+            Policy::StartMulticast => "StartMulticast".to_string(),
+            Policy::ChangeMulticastOrigin => "ChangeMulticastOrigin".to_string(),
+            Policy::EndMulticast => "EndMulticast".to_string(),
+            Policy::CreateGroup => "CreateGroup".to_string(),
+            Policy::DeleteGroup => "DeleteGroup".to_string(),
+            Policy::ModifyGroup => "ModifyGroup".to_string(),
+            Policy::InsertPubkey => "InsertPubkey".to_string(),
+            Policy::DataWithFirstByte(b) => format!("DataWithFirstByte({})", b),
+            Policy::UserDefined(o) => format!("UserDefined({})", o),
+        }
+    }
 }

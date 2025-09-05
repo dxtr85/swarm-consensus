@@ -109,6 +109,122 @@ impl fmt::Display for SwarmName {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum ByteSet {
+    None,
+    Bytes(HashSet<u8>),
+    Pairs(HashSet<u16>),
+}
+impl ByteSet {
+    pub fn empty() -> Self {
+        ByteSet::None
+    }
+    pub fn new(set: HashSet<u8>) -> Self {
+        ByteSet::Bytes(set)
+    }
+    pub fn new_pairs(set: HashSet<u16>) -> Self {
+        ByteSet::Pairs(set)
+    }
+    pub fn contains(&self, b: &u8) -> bool {
+        match self {
+            ByteSet::Bytes(b_set) => b_set.contains(b),
+            ByteSet::Pairs(_s) => {
+                eprintln!("ByteSet byte check against pairs");
+                false
+            }
+            ByteSet::None => {
+                eprintln!("ByteSet byte check against empty");
+                false
+            }
+        }
+    }
+    pub fn contains_pair(&self, b: &u16) -> bool {
+        match self {
+            ByteSet::Pairs(p_set) => p_set.contains(b),
+            ByteSet::Bytes(_s) => {
+                eprintln!("ByteSet pair check against bytes");
+                false
+            }
+            ByteSet::None => {
+                eprintln!("ByteSet pair check against empty");
+                false
+            }
+        }
+    }
+    pub fn add(&mut self, b: u8) {
+        let mut new_set = None;
+        match self {
+            ByteSet::None => {
+                let mut a_set = HashSet::new();
+                a_set.insert(b);
+                new_set = Some(a_set);
+            }
+            ByteSet::Bytes(e_set) => {
+                e_set.insert(b);
+            }
+            ByteSet::Pairs(_p) => {
+                eprintln!("ByteSet add a byte to pair-set");
+            }
+        }
+        if let Some(set) = new_set.take() {
+            *self = ByteSet::Bytes(set);
+        }
+    }
+    pub fn add_pair(&mut self, b: u16) {
+        let mut new_set = None;
+        match self {
+            ByteSet::None => {
+                let mut a_set = HashSet::new();
+                a_set.insert(b);
+                new_set = Some(a_set);
+            }
+            ByteSet::Bytes(_set) => {
+                eprintln!("ByteSet add a pair to byte-set");
+            }
+            ByteSet::Pairs(e_set) => {
+                e_set.insert(b);
+            }
+        }
+        if let Some(set) = new_set.take() {
+            *self = ByteSet::Pairs(set);
+        }
+    }
+    pub fn is_none(&self) -> bool {
+        matches!(self, ByteSet::None)
+    }
+    pub fn is_pair(&self) -> bool {
+        matches!(self, ByteSet::Pairs(_p))
+    }
+    pub fn bytes(&self) -> Vec<u8> {
+        match self {
+            ByteSet::None => {
+                vec![]
+            }
+            ByteSet::Bytes(_set) => {
+                // let ordered = Vec::from(_set.clone()).sort();
+                let mut ordered: Vec<u8> = _set.clone().into_iter().collect();
+                ordered.sort();
+                ordered
+            }
+            ByteSet::Pairs(e_set) => {
+                let mut ordered: Vec<u16> = e_set.clone().into_iter().collect();
+                ordered.sort();
+                let mut bytes = Vec::with_capacity(2 * ordered.len());
+                for val in ordered {
+                    let vs = val.to_be_bytes();
+                    bytes.push(vs[0]);
+                    bytes.push(vs[1]);
+                }
+                bytes
+            }
+        }
+    }
+}
+impl Default for ByteSet {
+    fn default() -> Self {
+        ByteSet::None
+    }
+}
 pub struct Swarm {
     pub name: SwarmName,
     pub id: SwarmID,
@@ -121,6 +237,7 @@ pub struct Swarm {
     pub key_reg: KeyRegistry,
     pub capability_reg: HashMap<Capabilities, CapabiliTree>,
     pub policy_reg: HashMap<Policy, Requirement>,
+    pub byteset_reg: HashMap<u8, ByteSet>,
     pub verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
     last_accepted_pubkey_chunk: (u8, u8),
     // TODO: This struct (or SwarmManifesto and/or attrs) should be provided by the user,
@@ -221,6 +338,7 @@ impl Swarm {
             key_reg: KeyRegistry::new8(),
             capability_reg,
             policy_reg,
+            byteset_reg: HashMap::new(),
             last_accepted_pubkey_chunk: (0, 0),
         };
         let gnome = if let Some(neighbors) = neighbors {
@@ -276,12 +394,18 @@ impl Swarm {
                 if let Payload::Block(_bid, ref _sign, ref data) = message.payload {
                     eprintln!("Verify Data policy...{}", _bid);
                     match _sign {
-                        Signature::Regular(gnome_id, _s) => {
-                            self.check_data_policy(gnome_id, data.first_byte())
-                        }
-                        Signature::Extended(gnome_id, _p, _s) => {
-                            self.check_data_policy(gnome_id, data.first_byte())
-                        }
+                        Signature::Regular(gnome_id, _s) => self.check_data_policy(
+                            gnome_id,
+                            data.first_byte(),
+                            data.second_byte(),
+                            data.third_byte(),
+                        ),
+                        Signature::Extended(gnome_id, _p, _s) => self.check_data_policy(
+                            gnome_id,
+                            data.first_byte(),
+                            data.second_byte(),
+                            data.third_byte(),
+                        ),
                     }
                 } else {
                     false
@@ -549,12 +673,24 @@ impl Swarm {
     pub fn check_config_policy(&self, gnome_id: &GnomeId, c_id: u8) -> bool {
         let policy = self.config_to_policy(c_id);
         if let Some(req) = self.policy_reg.get(&policy) {
-            req.is_fullfilled(gnome_id, &self.capability_reg)
+            req.is_fullfilled(
+                gnome_id,
+                &self.capability_reg,
+                &self.byteset_reg,
+                None,
+                None,
+            )
         } else {
             self.policy_reg
                 .get(&Policy::Default)
                 .unwrap()
-                .is_fullfilled(gnome_id, &self.capability_reg)
+                .is_fullfilled(
+                    gnome_id,
+                    &self.capability_reg,
+                    &self.byteset_reg,
+                    None,
+                    None,
+                )
         }
     }
     pub fn set_founder(&mut self, gnome_id: GnomeId) {
@@ -567,15 +703,33 @@ impl Swarm {
         tree.insert(gnome_id);
         self.capability_reg.insert(Capabilities::Founder, tree);
     }
-    pub fn check_data_policy(&self, gnome_id: &GnomeId, first_byte: u8) -> bool {
+    pub fn check_data_policy(
+        &self,
+        gnome_id: &GnomeId,
+        first_byte: u8,
+        second_byte: u8,
+        third_byte: u8,
+    ) -> bool {
         eprintln!("founder: {}", self.name.founder);
         eprintln!("g_id: {}", gnome_id);
         if let Some(req) = self.policy_reg.get(&Policy::DataWithFirstByte(first_byte)) {
             eprintln!("poli 1, {:?}", req);
-            req.is_fullfilled(gnome_id, &self.capability_reg)
+            req.is_fullfilled(
+                gnome_id,
+                &self.capability_reg,
+                &self.byteset_reg,
+                Some(second_byte),
+                Some(third_byte),
+            )
         } else if let Some(req) = self.policy_reg.get(&Policy::Data) {
             eprintln!("poli 2, {:?}", req);
-            req.is_fullfilled(gnome_id, &self.capability_reg)
+            req.is_fullfilled(
+                gnome_id,
+                &self.capability_reg,
+                &self.byteset_reg,
+                Some(second_byte),
+                Some(third_byte),
+            )
         } else {
             // eprintln!(
             //     "default: {:?}\ncapa: {:?}",
@@ -588,7 +742,13 @@ impl Swarm {
             self.policy_reg
                 .get(&Policy::Default)
                 .unwrap()
-                .is_fullfilled(gnome_id, &self.capability_reg)
+                .is_fullfilled(
+                    gnome_id,
+                    &self.capability_reg,
+                    &self.byteset_reg,
+                    Some(second_byte),
+                    Some(third_byte),
+                )
         }
     }
 

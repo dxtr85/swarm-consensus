@@ -10,11 +10,13 @@ pub enum Capabilities {
     Capability(u8),
 }
 
+#[derive(Debug, Clone)]
 pub enum CapabiliTree {
     Empty(u8, u64),
     Filled(Box<CapabiLeaf>),
 }
 
+#[derive(Debug, Clone)]
 pub struct CapabiLeaf {
     level: u8,
     midpoint: u64,
@@ -78,6 +80,11 @@ impl CapabiliTree {
             Self::Empty(_l, _m) => vec![],
             Self::Filled(node) => node.id_vec(),
         }
+    }
+
+    pub fn get_all_members(&self) -> Vec<GnomeId> {
+        // TODO
+        vec![]
     }
 
     fn gnome_id(&self) -> Option<GnomeId> {

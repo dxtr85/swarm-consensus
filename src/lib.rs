@@ -23,6 +23,7 @@ pub use crate::neighbor::SwarmSyncRequestParams;
 pub use crate::neighbor::SwarmSyncResponse;
 pub use crate::policy::Policy;
 pub use crate::requirement::Requirement;
+pub use crate::swarm::ByteSet;
 pub use crate::swarm::Swarm;
 pub use crate::swarm::SwarmID;
 pub use crate::swarm::SwarmName;
@@ -85,6 +86,7 @@ pub enum ToGnome {
     SwarmNeighbors(SwarmName),
     ChangeDiameter(u8),
     Reconfigure(u8, SyncData),
+    RunningPolicies,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -108,6 +110,7 @@ pub enum GnomeToApp {
     BCastUplinkData(CastID, CastData),
     MCastData(CastID, CastData),
     MCastUplinkData(CastID, CastData),
+    // RunningPolicies(Vec<(Policy, Requirement)>),
     Custom(bool, u8, GnomeId, CastData),
     Reconfig(u8, GnomeId, SyncData),
 }

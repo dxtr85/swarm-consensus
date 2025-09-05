@@ -778,6 +778,16 @@ impl Gnome {
                         );
                     }
                     // println!("vvv USER vvv REQ {}", data);
+                }
+                ToGnome::RunningPolicies => {
+                    let mut p_chunks = self.swarm.policy_chunks();
+                    let mut policies = p_chunks.remove(0);
+                    while !p_chunks.is_empty() {
+                        policies.append(&mut p_chunks.remove(0));
+                    }
+                    let _ = self
+                        .mgr_sender
+                        .send(GnomeToManager::RunningPolicies(policies));
                 } // ToGnome::NetworkSettingsUpdate(notify_neighbor, ip_addr, port, nat, port_rule) => {
                   //     //TODO: move logic from here to GnomeManager
                   //     eprintln!("NSU: {}, {}, {:?}, {:?}", ip_addr, port, nat, port_rule);
