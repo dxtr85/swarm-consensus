@@ -72,6 +72,41 @@ impl Requirement {
             }
         }
     }
+    pub fn text(&self) -> String {
+        match self {
+            Self::And(_l, _r) => {
+                format!("And(_, _)")
+            }
+            Self::Or(_l, _r) => {
+                format!("Or(_, _)")
+            }
+            Self::Has(_c) => {
+                format!("Has({:?})", _c)
+            }
+            Self::DataByte2InSet(s_id) => {
+                format!("DataByte2InSet({s_id})")
+            }
+            Self::DataByte2Is(val) => {
+                format!("DataByte2Is({val})")
+            }
+            Self::DataByte2IsNot(s_id) => {
+                format!("DataByte2IsNot({s_id})")
+            }
+            Self::DataByte3InSet(s_id) => {
+                format!("DataByte3InSet({s_id})")
+            }
+            Self::DataByte3Is(val) => {
+                format!("DataByte3Is({val})")
+            }
+            Self::DataByte3IsNot(s_id) => {
+                format!("DataByte3IsNot({s_id})")
+            }
+            Self::DataBytes2And3InSet(s_id) => {
+                format!("DataBytes2And3InSet({s_id})")
+            }
+            Self::None => format!("None"),
+        }
+    }
 
     pub fn append_bytes_to(&self, bytes: &mut Vec<u8>) {
         match self {
@@ -227,6 +262,97 @@ impl Requirement {
             Self::Has(_c) => 2,
             Self::None => 1,
             _other => 2,
+        }
+    }
+    pub fn mapping(
+        inct_logic: bool,
+        user_caps: Vec<u8>,
+        byte_sets: Vec<u8>,
+        two_byte_sets: Vec<u8>,
+    ) -> (Vec<Requirement>, Vec<String>) {
+        let mut reqs = Vec::with_capacity(512);
+        let mut strs = Vec::with_capacity(512);
+        // let p = Requirement::;
+        let mut r_iter = Requirement::iter(inct_logic, user_caps, byte_sets, two_byte_sets);
+        while let Some(r) = r_iter.next() {
+            strs.push(r.text());
+            reqs.push(r);
+        }
+        (reqs, strs)
+    }
+    fn iter(
+        inct_logic: bool,
+        user_caps: Vec<u8>,
+        byte_sets: Vec<u8>,
+        two_byte_sets: Vec<u8>,
+    ) -> ReqIter {
+        ReqIter::new(inct_logic, user_caps, byte_sets, two_byte_sets)
+    }
+}
+struct ReqIter {
+    items: Vec<Requirement>,
+}
+impl ReqIter {
+    pub fn new(
+        inct_logic: bool,
+        user_caps: Vec<u8>,
+        byte_sets: Vec<u8>,
+        two_byte_sets: Vec<u8>,
+    ) -> Self {
+        let mut items = Vec::with_capacity(512);
+        if inct_logic {
+            let empty = Box::new(Requirement::None);
+            let r = Requirement::And(empty.clone(), empty.clone());
+            items.push(r);
+            let r = Requirement::Or(empty.clone(), empty);
+            items.push(r);
+        }
+        items.push(Requirement::Has(Capabilities::Founder));
+        items.push(Requirement::Has(Capabilities::Owner));
+        items.push(Requirement::Has(Capabilities::Admin));
+        items.push(Requirement::Has(Capabilities::Moderator));
+        items.push(Requirement::Has(Capabilities::Superuser));
+        for i in user_caps {
+            items.push(Requirement::Has(Capabilities::Capability(i)));
+        }
+
+        for i in &byte_sets {
+            items.push(Requirement::DataByte2InSet(*i));
+        }
+
+        for i in 0..=255 {
+            items.push(Requirement::DataByte2Is(i));
+        }
+
+        for i in 0..=255 {
+            items.push(Requirement::DataByte2IsNot(i));
+        }
+
+        for i in byte_sets {
+            items.push(Requirement::DataByte3InSet(i));
+        }
+
+        for i in 0..=255 {
+            items.push(Requirement::DataByte3Is(i));
+        }
+
+        for i in 0..=255 {
+            items.push(Requirement::DataByte3IsNot(i));
+        }
+
+        for i in two_byte_sets {
+            items.push(Requirement::DataBytes2And3InSet(i));
+        }
+        // Do not add None
+        // None,
+
+        ReqIter { items }
+    }
+    pub fn next(&mut self) -> Option<Requirement> {
+        if self.items.is_empty() {
+            None
+        } else {
+            Some(self.items.remove(0))
         }
     }
 }

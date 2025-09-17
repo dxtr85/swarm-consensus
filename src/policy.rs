@@ -80,4 +80,52 @@ impl Policy {
             Policy::UserDefined(o) => format!("UserDefined({})", o),
         }
     }
+    pub fn mapping() -> (Vec<Policy>, Vec<String>) {
+        let mut pols = Vec::with_capacity(512);
+        let mut strs = Vec::with_capacity(512);
+        let p = Policy::Default;
+        let mut p_iter = Policy::iter();
+        while let Some(p) = p_iter.next() {
+            strs.push(p.text());
+            pols.push(p);
+        }
+        (pols, strs)
+    }
+    fn iter() -> PolIter {
+        PolIter::new()
+    }
+}
+struct PolIter {
+    items: Vec<Policy>,
+}
+impl PolIter {
+    pub fn new() -> Self {
+        let mut items = Vec::with_capacity(512);
+        items.push(Policy::Default);
+        items.push(Policy::Data);
+        items.push(Policy::StartBroadcast);
+        items.push(Policy::ChangeBroadcastOrigin);
+        items.push(Policy::EndBroadcast);
+        items.push(Policy::StartMulticast);
+        items.push(Policy::ChangeMulticastOrigin);
+        items.push(Policy::EndMulticast);
+        items.push(Policy::CreateGroup);
+        items.push(Policy::DeleteGroup);
+        items.push(Policy::ModifyGroup);
+        items.push(Policy::InsertPubkey);
+        for i in 0..=255 {
+            items.push(Policy::DataWithFirstByte(i));
+        }
+        for i in 0..=242 {
+            items.push(Policy::UserDefined(i));
+        }
+        PolIter { items }
+    }
+    pub fn next(&mut self) -> Option<Policy> {
+        if self.items.is_empty() {
+            None
+        } else {
+            Some(self.items.remove(0))
+        }
+    }
 }
