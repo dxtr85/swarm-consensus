@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{swarm::ByteSet, CapabiliTree, Capabilities, GnomeId};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Requirement {
     And(Box<Requirement>, Box<Requirement>),
     Or(Box<Requirement>, Box<Requirement>),

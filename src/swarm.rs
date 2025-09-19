@@ -751,6 +751,10 @@ impl Swarm {
                 )
         }
     }
+    pub fn set_policy(&mut self, pol: Policy, req: Requirement) {
+        eprintln!("Swarm is setting new policy: {:?}", pol);
+        self.policy_reg.insert(pol, req);
+    }
 
     pub fn capabilities_chunks(&self) -> Vec<Vec<(Capabilities, Vec<GnomeId>)>> {
         let mut total = vec![];

@@ -6,6 +6,8 @@ use crate::Configuration;
 use crate::GnomeId;
 use crate::Message;
 use crate::Neighbor;
+use crate::Policy;
+use crate::Requirement;
 use crate::SwarmTime;
 use crate::SyncData;
 
@@ -44,6 +46,12 @@ pub enum ChangeConfig {
         new_value: SwarmTime,
         turn_ended: bool,
     },
+    SetPolicy {
+        originator: GnomeId,
+        policy: Policy,
+        req: Requirement,
+        turn_ended: bool,
+    },
     Custom {
         id: u8,
         signed_by: GnomeId,
@@ -72,6 +80,9 @@ impl ChangeConfig {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::SetDiameter {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
+            Self::SetPolicy {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::Custom {
@@ -298,6 +309,22 @@ impl NextState {
                                 );
                             }
                         }
+                        Configuration::SetRunningPolicy(originator, pol, req) => {
+                            if signature.gnome_id() == *originator {
+                                self.change_config = ChangeConfig::SetPolicy {
+                                    originator: *originator,
+                                    policy: *pol,
+                                    req: req.clone(),
+                                    turn_ended: false,
+                                };
+                            } else {
+                                eprintln!(
+                                    "SetPolicy from {} but signed by {}",
+                                    originator,
+                                    signature.gnome_id()
+                                );
+                            }
+                        }
                         Configuration::UserDefined(id, s_data) => {
                             self.change_config = ChangeConfig::Custom {
                                 id: *id,
@@ -432,6 +459,14 @@ impl NextState {
                             ChangeConfig::SetDiameter {
                                 originator: g_id,
                                 new_value: SwarmTime(new_diameter as u32),
+                                turn_ended: false,
+                            }
+                        }
+                        Configuration::SetRunningPolicy(g_id, pol, req) => {
+                            ChangeConfig::SetPolicy {
+                                originator: g_id,
+                                policy: pol,
+                                req: req,
                                 turn_ended: false,
                             }
                         }

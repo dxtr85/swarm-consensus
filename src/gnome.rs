@@ -1058,6 +1058,14 @@ impl Gnome {
                 ManagerToGnome::Status => {
                     //TODO
                 }
+                ManagerToGnome::SetRunningPolicy(pol, req) => {
+                    eprintln!("Gnome got SetActivePolicy req");
+                    self.proposals
+                        .push_front(Proposal::Config(Configuration::SetRunningPolicy(
+                            self.id, pol, req,
+                        )));
+                    any_data_processed = true;
+                }
                 ManagerToGnome::Disconnect => {
                     // Gnome should send Disconnected automatically
                     // once he realizes he has no neighbors around
@@ -3019,6 +3027,17 @@ impl Gnome {
                         };
                     } else if let Payload::Reconfigure(
                         _sign,
+                        Configuration::SetRunningPolicy(g_id, policy, req),
+                    ) = &self.payload
+                    {
+                        self.next_state.change_config = ChangeConfig::SetPolicy {
+                            originator: *g_id,
+                            policy: *policy,
+                            req: req.clone(),
+                            turn_ended: false,
+                        };
+                    } else if let Payload::Reconfigure(
+                        _sign,
                         Configuration::UserDefined(id, s_data),
                     ) = &self.payload
                     {
@@ -3028,6 +3047,8 @@ impl Gnome {
                             s_data: s_data.clone(),
                             turn_ended: false,
                         };
+                    } else {
+                        eprintln!("Not IMPLEMENTED for: {:?}", self.payload);
                     }
                 }
                 self.my_proposal = Some(proposal);
@@ -3253,6 +3274,15 @@ impl Gnome {
                                 } else {
                                     eprintln!("But it was signed by {}", originator);
                                 }
+                            }
+                            ChangeConfig::SetPolicy {
+                                // originator,
+                                policy,
+                                req,
+                                ..
+                            } => {
+                                eprintln!("Received ChangeConfig::SetPolicy({:?})", policy);
+                                self.swarm.set_policy(policy, req);
                             }
                             ChangeConfig::Custom {
                                 id,

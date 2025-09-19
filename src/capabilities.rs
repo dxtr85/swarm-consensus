@@ -1,6 +1,6 @@
 use crate::GnomeId;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord)]
 pub enum Capabilities {
     Founder,
     Owner,

@@ -4,6 +4,8 @@ use crate::neighbor::Neighborhood;
 use crate::CastID;
 use crate::CastMessage;
 use crate::GnomeId;
+use crate::Policy;
+use crate::Requirement;
 use crate::SwarmTime;
 use std::fmt::Display;
 
@@ -135,6 +137,7 @@ pub enum Configuration {
     ModifyGroup,
     InsertPubkey(GnomeId, Vec<u8>),
     ChangeDiameter(GnomeId, u8),
+    SetRunningPolicy(GnomeId, Policy, Requirement),
     UserDefined(u8, SyncData),
 }
 
@@ -152,6 +155,7 @@ impl Configuration {
             Self::ModifyGroup => 246,
             Self::InsertPubkey(_gid, ref _pub_key) => 245,
             Self::ChangeDiameter(_gid, _nd) => 244,
+            Self::SetRunningPolicy(_gid, _p, ref _r) => 243,
             Self::UserDefined(other, ref _s_data) => other,
         }
     }
@@ -174,6 +178,7 @@ impl Configuration {
             Self::ModifyGroup => g_id,
             Self::InsertPubkey(gid, ref _pub_key) => gid,
             Self::ChangeDiameter(gid, _nd) => gid,
+            Self::SetRunningPolicy(gid, _p, ref _r) => gid,
             Self::UserDefined(_other, ref _s_data) => g_id,
         }
     }
@@ -191,6 +196,7 @@ impl Configuration {
             Self::ModifyGroup => 1,
             Self::InsertPubkey(_gid, pub_key) => 9 + pub_key.len(),
             Self::ChangeDiameter(_gid, _nd) => 9,
+            Self::SetRunningPolicy(_gid, _pol, req) => 11 + req.len() as usize,
             Self::UserDefined(_other, ref s_data) => s_data.len() + 1,
         }
     }
@@ -238,6 +244,13 @@ impl Configuration {
                 let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
                 value.drain(0..9);
                 Self::ChangeDiameter(GnomeId(gnome_id), value[0])
+            }
+            243 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                value.drain(0..9);
+                let pol = Policy::from(&mut value);
+                let req = Requirement::from(&mut value);
+                Self::SetRunningPolicy(GnomeId(gnome_id), pol, req)
             }
             other => Self::UserDefined(other, SyncData::new(value[1..].into()).unwrap()),
         }
@@ -329,6 +342,15 @@ impl Configuration {
                     }
                 }
                 content_bytes.push(nd);
+            }
+            Self::SetRunningPolicy(gid, pol, ref req) => {
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
+                }
+                pol.append_bytes_to(&mut content_bytes);
+                req.append_bytes_to(&mut content_bytes);
             }
             Self::UserDefined(_other, ref sync_data) => {
                 content_bytes.append(&mut sync_data.clone().bytes())
