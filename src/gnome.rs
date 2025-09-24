@@ -14,6 +14,7 @@ use crate::neighbor::Neighborhood;
 use crate::neighbor::SwarmSyncRequestParams;
 use crate::next_state::ChangeConfig;
 use crate::swarm::Swarm;
+use crate::ByteSet;
 use crate::CastData;
 use crate::CastID;
 use crate::GnomeToApp;
@@ -56,6 +57,20 @@ impl GnomeId {
     pub fn from(bytes: [u8; 8]) -> Self {
         GnomeId(u64::from_be_bytes(bytes))
     }
+    pub fn from_string(text: String) -> Option<Self> {
+        eprintln!("{text} len: {}", text.len());
+        if text.len() != 20 {
+            return None;
+        }
+        if !text.starts_with("GID-") {
+            return None;
+        }
+        if let Ok(gid) = u64::from_str_radix(&text[4..], 16) {
+            Some(GnomeId(gid))
+        } else {
+            None
+        }
+    }
     pub fn is_any(&self) -> bool {
         self.0 == 0
     }
@@ -76,7 +91,7 @@ impl GnomeId {
 // }
 impl fmt::Display for GnomeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "GID-{:x}", self.0)
+        write!(f, "GID-{:0>16x}", self.0)
     }
 }
 
@@ -788,6 +803,26 @@ impl Gnome {
                     let _ = self
                         .mgr_sender
                         .send(GnomeToManager::RunningPolicies(policies));
+                }
+                ToGnome::RunningCapabilities => {
+                    let mut p_chunks = self.swarm.capabilities_chunks();
+                    let mut policies = p_chunks.remove(0);
+                    while !p_chunks.is_empty() {
+                        policies.append(&mut p_chunks.remove(0));
+                    }
+                    let _ = self
+                        .mgr_sender
+                        .send(GnomeToManager::RunningCapabilities(policies));
+                }
+                ToGnome::RunningByteSets => {
+                    let mut b_sets: Vec<(u8, ByteSet)> =
+                        Vec::with_capacity(self.swarm.byteset_reg.len());
+                    for (bs_id, bs) in &self.swarm.byteset_reg {
+                        b_sets.push((*bs_id, bs.clone()));
+                    }
+                    let _ = self
+                        .mgr_sender
+                        .send(GnomeToManager::RunningByteSets(b_sets));
                 } // ToGnome::NetworkSettingsUpdate(notify_neighbor, ip_addr, port, nat, port_rule) => {
                   //     //TODO: move logic from here to GnomeManager
                   //     eprintln!("NSU: {}, {}, {:?}, {:?}", ip_addr, port, nat, port_rule);
@@ -1064,6 +1099,13 @@ impl Gnome {
                         .push_front(Proposal::Config(Configuration::SetRunningPolicy(
                             self.id, pol, req,
                         )));
+                    any_data_processed = true;
+                }
+                ManagerToGnome::SetRunningCapability(cap, v_gids) => {
+                    eprintln!("Gnome got SetActiveCapability req");
+                    self.proposals.push_front(Proposal::Config(
+                        Configuration::SetRunningCapability(self.id, cap, v_gids),
+                    ));
                     any_data_processed = true;
                 }
                 ManagerToGnome::Disconnect => {
@@ -3038,6 +3080,17 @@ impl Gnome {
                         };
                     } else if let Payload::Reconfigure(
                         _sign,
+                        Configuration::SetRunningCapability(g_id, cap, v_gids),
+                    ) = &self.payload
+                    {
+                        self.next_state.change_config = ChangeConfig::SetCapability {
+                            originator: *g_id,
+                            cap: *cap,
+                            members: v_gids.clone(),
+                            turn_ended: false,
+                        };
+                    } else if let Payload::Reconfigure(
+                        _sign,
                         Configuration::UserDefined(id, s_data),
                     ) = &self.payload
                     {
@@ -3283,6 +3336,15 @@ impl Gnome {
                             } => {
                                 eprintln!("Received ChangeConfig::SetPolicy({:?})", policy);
                                 self.swarm.set_policy(policy, req);
+                            }
+                            ChangeConfig::SetCapability {
+                                // originator,
+                                cap,
+                                members,
+                                ..
+                            } => {
+                                eprintln!("Received ChangeConfig::SetCapability({:?})", cap);
+                                self.swarm.set_capability(cap, members);
                             }
                             ChangeConfig::Custom {
                                 id,

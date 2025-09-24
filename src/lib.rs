@@ -87,6 +87,8 @@ pub enum ToGnome {
     ChangeDiameter(u8),
     Reconfigure(u8, SyncData),
     RunningPolicies,
+    RunningCapabilities,
+    RunningByteSets,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]

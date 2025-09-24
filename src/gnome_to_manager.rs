@@ -1,3 +1,6 @@
+use crate::ByteSet;
+use crate::CapabiliTree;
+use crate::Capabilities;
 use crate::Policy;
 use crate::Requirement;
 use std::collections::HashSet;
@@ -17,6 +20,8 @@ pub enum GnomeToManager {
     ActiveNeighbors(SwarmID, SwarmName, HashSet<GnomeId>),
     GnomeLeft(SwarmID, SwarmName, GnomeId),
     RunningPolicies(Vec<(Policy, Requirement)>),
+    RunningCapabilities(Vec<(Capabilities, Vec<GnomeId>)>),
+    RunningByteSets(Vec<(u8, ByteSet)>),
     ProvidePublicAddress(SwarmID, u8, GnomeId),
     SwarmBusy(SwarmID, bool),
     Disconnected(SwarmID, SwarmName),

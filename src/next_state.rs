@@ -1,6 +1,7 @@
 use crate::message::Header;
 use crate::message::Payload;
 use crate::neighbor::Neighborhood;
+use crate::Capabilities;
 use crate::CastID;
 use crate::Configuration;
 use crate::GnomeId;
@@ -52,6 +53,12 @@ pub enum ChangeConfig {
         req: Requirement,
         turn_ended: bool,
     },
+    SetCapability {
+        originator: GnomeId,
+        cap: Capabilities,
+        members: Vec<GnomeId>,
+        turn_ended: bool,
+    },
     Custom {
         id: u8,
         signed_by: GnomeId,
@@ -83,6 +90,9 @@ impl ChangeConfig {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::SetPolicy {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
+            Self::SetCapability {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::Custom {
@@ -325,6 +335,22 @@ impl NextState {
                                 );
                             }
                         }
+                        Configuration::SetRunningCapability(originator, cap, v_gids) => {
+                            if signature.gnome_id() == *originator {
+                                self.change_config = ChangeConfig::SetCapability {
+                                    originator: *originator,
+                                    cap: *cap,
+                                    members: v_gids.clone(),
+                                    turn_ended: false,
+                                };
+                            } else {
+                                eprintln!(
+                                    "SetPolicy from {} but signed by {}",
+                                    originator,
+                                    signature.gnome_id()
+                                );
+                            }
+                        }
                         Configuration::UserDefined(id, s_data) => {
                             self.change_config = ChangeConfig::Custom {
                                 id: *id,
@@ -467,6 +493,14 @@ impl NextState {
                                 originator: g_id,
                                 policy: pol,
                                 req: req,
+                                turn_ended: false,
+                            }
+                        }
+                        Configuration::SetRunningCapability(g_id, cap, members) => {
+                            ChangeConfig::SetCapability {
+                                originator: g_id,
+                                cap,
+                                members,
                                 turn_ended: false,
                             }
                         }

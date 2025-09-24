@@ -1,5 +1,6 @@
 use crate::data::SyncData;
 use crate::neighbor::Neighborhood;
+use crate::Capabilities;
 // use crate::swarm::PubKey;
 use crate::CastID;
 use crate::CastMessage;
@@ -138,6 +139,7 @@ pub enum Configuration {
     InsertPubkey(GnomeId, Vec<u8>),
     ChangeDiameter(GnomeId, u8),
     SetRunningPolicy(GnomeId, Policy, Requirement),
+    SetRunningCapability(GnomeId, Capabilities, Vec<GnomeId>),
     UserDefined(u8, SyncData),
 }
 
@@ -156,6 +158,7 @@ impl Configuration {
             Self::InsertPubkey(_gid, ref _pub_key) => 245,
             Self::ChangeDiameter(_gid, _nd) => 244,
             Self::SetRunningPolicy(_gid, _p, ref _r) => 243,
+            Self::SetRunningCapability(_gid, _p, ref _r) => 242,
             Self::UserDefined(other, ref _s_data) => other,
         }
     }
@@ -179,6 +182,7 @@ impl Configuration {
             Self::InsertPubkey(gid, ref _pub_key) => gid,
             Self::ChangeDiameter(gid, _nd) => gid,
             Self::SetRunningPolicy(gid, _p, ref _r) => gid,
+            Self::SetRunningCapability(gid, _p, ref _r) => gid,
             Self::UserDefined(_other, ref _s_data) => g_id,
         }
     }
@@ -197,6 +201,7 @@ impl Configuration {
             Self::InsertPubkey(_gid, pub_key) => 9 + pub_key.len(),
             Self::ChangeDiameter(_gid, _nd) => 9,
             Self::SetRunningPolicy(_gid, _pol, req) => 11 + req.len() as usize,
+            Self::SetRunningCapability(_gid, _cap, v_gids) => 11 + (8 * v_gids.len()) as usize,
             Self::UserDefined(_other, ref s_data) => s_data.len() + 1,
         }
     }
@@ -251,6 +256,28 @@ impl Configuration {
                 let pol = Policy::from(&mut value);
                 let req = Requirement::from(&mut value);
                 Self::SetRunningPolicy(GnomeId(gnome_id), pol, req)
+            }
+            242 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                value.drain(0..9);
+                let cap = Capabilities::from(value[0]);
+                let how_many = u16::from_be_bytes([value[1], value[2]]);
+                value.drain(0..3);
+                let mut v_gids = Vec::with_capacity(how_many as usize);
+                for _i in 0..how_many {
+                    let b1 = value.remove(0);
+                    let b2 = value.remove(0);
+                    let b3 = value.remove(0);
+                    let b4 = value.remove(0);
+                    let b5 = value.remove(0);
+                    let b6 = value.remove(0);
+                    let b7 = value.remove(0);
+                    let b8 = value.remove(0);
+                    v_gids.push(GnomeId(u64::from_be_bytes([
+                        b1, b2, b3, b4, b5, b6, b7, b8,
+                    ])));
+                }
+                Self::SetRunningCapability(GnomeId(gnome_id), cap, v_gids)
             }
             other => Self::UserDefined(other, SyncData::new(value[1..].into()).unwrap()),
         }
@@ -351,6 +378,23 @@ impl Configuration {
                 }
                 pol.append_bytes_to(&mut content_bytes);
                 req.append_bytes_to(&mut content_bytes);
+            }
+            Self::SetRunningCapability(gid, cap, ref v_gids) => {
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
+                }
+                content_bytes.push(cap.byte());
+                let len = v_gids.len() as u16;
+                for bte in len.to_be_bytes() {
+                    content_bytes.push(bte);
+                }
+                for g_id in v_gids {
+                    for bte in g_id.bytes() {
+                        content_bytes.push(bte);
+                    }
+                }
             }
             Self::UserDefined(_other, ref sync_data) => {
                 content_bytes.append(&mut sync_data.clone().bytes())

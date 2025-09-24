@@ -506,7 +506,8 @@ impl Swarm {
 
     pub fn insert_capability(&mut self, cap: Capabilities, mut id_list: Vec<GnomeId>) {
         eprintln!("Insert capability {:?}: {:?}", cap, id_list);
-        if matches!(Capabilities::Founder, cap) {
+        if cap == Capabilities::Founder {
+            eprintln!("Looks like this Cap {:?}is a Founder one…", cap);
             if let Some(gnome_id) = id_list.pop() {
                 let mut tree = CapabiliTree::create();
                 eprintln!("overwrite Founder");
@@ -756,6 +757,15 @@ impl Swarm {
         self.policy_reg.insert(pol, req);
     }
 
+    pub fn set_capability(&mut self, cap: Capabilities, g_ids: Vec<GnomeId>) {
+        eprintln!("Swarm is setting capability: {:?}", cap);
+        let mut c_tree = CapabiliTree::create();
+        for g_id in g_ids {
+            c_tree.insert(g_id);
+        }
+        self.capability_reg.insert(cap, c_tree);
+    }
+
     pub fn capabilities_chunks(&self) -> Vec<Vec<(Capabilities, Vec<GnomeId>)>> {
         let mut total = vec![];
         let mut pairs = Vec::with_capacity(100);
@@ -764,6 +774,7 @@ impl Swarm {
         for c_id in self.capability_reg.keys() {
             let mut gnome_ids = self.capability_reg.get(c_id).unwrap().id_vec();
             gnome_ids.reverse();
+            eprintln!("Cap has {} members", gnome_ids.len());
             let mut gnomes_to_add = vec![];
             while let Some(g_id) = gnome_ids.pop() {
                 if avail_bytes >= 9 {

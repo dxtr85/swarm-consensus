@@ -190,4 +190,34 @@ impl Capabilities {
             Capabilities::Capability(other) => *other,
         }
     }
+    pub fn text(&self) -> String {
+        match self {
+            Capabilities::Founder => format!("Founder"),
+            Capabilities::Owner => format!("Owner"),
+            Capabilities::Admin => format!("Admin"),
+            Capabilities::Moderator => format!("Moderator"),
+            Capabilities::Superuser => format!("Superuser"),
+            Capabilities::Capability(other) => format!("Capability{other}"),
+        }
+    }
+
+    pub fn mapping() -> (Vec<Capabilities>, Vec<String>) {
+        let mut caps = Vec::with_capacity(256);
+        let mut strs = Vec::with_capacity(256);
+        caps.push(Capabilities::Founder);
+        strs.push(format!("Founder"));
+        caps.push(Capabilities::Owner);
+        strs.push(format!("Owner"));
+        caps.push(Capabilities::Admin);
+        strs.push(format!("Admin"));
+        caps.push(Capabilities::Moderator);
+        strs.push(format!("Moderator"));
+        caps.push(Capabilities::Superuser);
+        strs.push(format!("Superuser"));
+        for i in 0..=250 {
+            caps.push(Capabilities::Capability(i));
+            strs.push(format!("Capability{i}"));
+        }
+        (caps, strs)
+    }
 }
