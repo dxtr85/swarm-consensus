@@ -1108,6 +1108,14 @@ impl Gnome {
                     ));
                     any_data_processed = true;
                 }
+                ManagerToGnome::SetRunningByteSet(b_id, bset) => {
+                    eprintln!("Gnome got SetRunningByteSet req");
+                    self.proposals
+                        .push_front(Proposal::Config(Configuration::SetRunningByteSet(
+                            self.id, b_id, bset,
+                        )));
+                    any_data_processed = true;
+                }
                 ManagerToGnome::Disconnect => {
                     // Gnome should send Disconnected automatically
                     // once he realizes he has no neighbors around
@@ -3091,6 +3099,17 @@ impl Gnome {
                         };
                     } else if let Payload::Reconfigure(
                         _sign,
+                        Configuration::SetRunningByteSet(g_id, b_id, bset),
+                    ) = &self.payload
+                    {
+                        self.next_state.change_config = ChangeConfig::SetByteSet {
+                            originator: *g_id,
+                            b_id: *b_id,
+                            bset: bset.clone(),
+                            turn_ended: false,
+                        };
+                    } else if let Payload::Reconfigure(
+                        _sign,
                         Configuration::UserDefined(id, s_data),
                     ) = &self.payload
                     {
@@ -3345,6 +3364,15 @@ impl Gnome {
                             } => {
                                 eprintln!("Received ChangeConfig::SetCapability({:?})", cap);
                                 self.swarm.set_capability(cap, members);
+                            }
+                            ChangeConfig::SetByteSet {
+                                // originator,
+                                b_id,
+                                bset,
+                                ..
+                            } => {
+                                eprintln!("Received ChangeConfig::SetBYteSet({:?})", b_id);
+                                self.swarm.set_byteset(b_id, bset);
                             }
                             ChangeConfig::Custom {
                                 id,

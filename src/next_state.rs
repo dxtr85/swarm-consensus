@@ -1,6 +1,7 @@
 use crate::message::Header;
 use crate::message::Payload;
 use crate::neighbor::Neighborhood;
+use crate::ByteSet;
 use crate::Capabilities;
 use crate::CastID;
 use crate::Configuration;
@@ -59,6 +60,12 @@ pub enum ChangeConfig {
         members: Vec<GnomeId>,
         turn_ended: bool,
     },
+    SetByteSet {
+        originator: GnomeId,
+        b_id: u8,
+        bset: ByteSet,
+        turn_ended: bool,
+    },
     Custom {
         id: u8,
         signed_by: GnomeId,
@@ -93,6 +100,9 @@ impl ChangeConfig {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::SetCapability {
+                ref mut turn_ended, ..
+            } => *turn_ended = true,
+            Self::SetByteSet {
                 ref mut turn_ended, ..
             } => *turn_ended = true,
             Self::Custom {
@@ -351,6 +361,22 @@ impl NextState {
                                 );
                             }
                         }
+                        Configuration::SetRunningByteSet(originator, b_id, bset) => {
+                            if signature.gnome_id() == *originator {
+                                self.change_config = ChangeConfig::SetByteSet {
+                                    originator: *originator,
+                                    b_id: *b_id,
+                                    bset: bset.clone(),
+                                    turn_ended: false,
+                                };
+                            } else {
+                                eprintln!(
+                                    "SetPolicy from {} but signed by {}",
+                                    originator,
+                                    signature.gnome_id()
+                                );
+                            }
+                        }
                         Configuration::UserDefined(id, s_data) => {
                             self.change_config = ChangeConfig::Custom {
                                 id: *id,
@@ -501,6 +527,14 @@ impl NextState {
                                 originator: g_id,
                                 cap,
                                 members,
+                                turn_ended: false,
+                            }
+                        }
+                        Configuration::SetRunningByteSet(g_id, b_id, bset) => {
+                            ChangeConfig::SetByteSet {
+                                originator: g_id,
+                                b_id,
+                                bset,
                                 turn_ended: false,
                             }
                         }

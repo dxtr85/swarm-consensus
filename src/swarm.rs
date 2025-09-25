@@ -109,7 +109,7 @@ impl fmt::Display for SwarmName {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ByteSet {
     None,
     Bytes(HashSet<u8>),
@@ -217,6 +217,14 @@ impl ByteSet {
                 }
                 bytes
             }
+        }
+    }
+
+    pub fn len_in_bytes(&self) -> usize {
+        match self {
+            Self::Bytes(hs) => hs.len(),
+            Self::Pairs(hs) => 2 * hs.len(),
+            _o => 0,
         }
     }
 }
@@ -764,6 +772,12 @@ impl Swarm {
             c_tree.insert(g_id);
         }
         self.capability_reg.insert(cap, c_tree);
+    }
+
+    pub fn set_byteset(&mut self, b_id: u8, bset: ByteSet) {
+        eprintln!("Swarm is setting capability: {:?}", b_id);
+
+        self.byteset_reg.insert(b_id, bset);
     }
 
     pub fn capabilities_chunks(&self) -> Vec<Vec<(Capabilities, Vec<GnomeId>)>> {

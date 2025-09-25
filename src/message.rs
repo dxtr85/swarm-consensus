@@ -1,5 +1,6 @@
 use crate::data::SyncData;
 use crate::neighbor::Neighborhood;
+use crate::ByteSet;
 use crate::Capabilities;
 // use crate::swarm::PubKey;
 use crate::CastID;
@@ -8,6 +9,7 @@ use crate::GnomeId;
 use crate::Policy;
 use crate::Requirement;
 use crate::SwarmTime;
+use std::collections::HashSet;
 use std::fmt::Display;
 
 #[derive(Clone, Debug)]
@@ -125,7 +127,8 @@ impl Payload {
 }
 
 // #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+// #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Configuration {
     StartBroadcast(GnomeId, CastID),
     ChangeBroadcastOrigin(GnomeId, CastID),
@@ -140,6 +143,7 @@ pub enum Configuration {
     ChangeDiameter(GnomeId, u8),
     SetRunningPolicy(GnomeId, Policy, Requirement),
     SetRunningCapability(GnomeId, Capabilities, Vec<GnomeId>),
+    SetRunningByteSet(GnomeId, u8, ByteSet),
     UserDefined(u8, SyncData),
 }
 
@@ -159,6 +163,7 @@ impl Configuration {
             Self::ChangeDiameter(_gid, _nd) => 244,
             Self::SetRunningPolicy(_gid, _p, ref _r) => 243,
             Self::SetRunningCapability(_gid, _p, ref _r) => 242,
+            Self::SetRunningByteSet(_gid, _bid, ref _bs) => 241,
             Self::UserDefined(other, ref _s_data) => other,
         }
     }
@@ -183,6 +188,7 @@ impl Configuration {
             Self::ChangeDiameter(gid, _nd) => gid,
             Self::SetRunningPolicy(gid, _p, ref _r) => gid,
             Self::SetRunningCapability(gid, _p, ref _r) => gid,
+            Self::SetRunningByteSet(gid, _id, ref _bs) => gid,
             Self::UserDefined(_other, ref _s_data) => g_id,
         }
     }
@@ -202,6 +208,7 @@ impl Configuration {
             Self::ChangeDiameter(_gid, _nd) => 9,
             Self::SetRunningPolicy(_gid, _pol, req) => 11 + req.len() as usize,
             Self::SetRunningCapability(_gid, _cap, v_gids) => 11 + (8 * v_gids.len()) as usize,
+            Self::SetRunningByteSet(_gid, _id, bset) => 11 + bset.len_in_bytes(),
             Self::UserDefined(_other, ref s_data) => s_data.len() + 1,
         }
     }
@@ -278,6 +285,34 @@ impl Configuration {
                     ])));
                 }
                 Self::SetRunningCapability(GnomeId(gnome_id), cap, v_gids)
+            }
+            241 => {
+                let gnome_id = u64::from_be_bytes(value[1..9].try_into().unwrap());
+                value.drain(0..9);
+                let b_id = value[0];
+                let tpe = value[1];
+                let how_many = u16::from_be_bytes([value[2], value[3]]);
+                value.drain(0..4);
+                let bset = if tpe == 1 {
+                    let mut hs = HashSet::with_capacity(how_many as usize);
+                    for _i in 0..how_many {
+                        let b = value.remove(0);
+                        hs.insert(b);
+                    }
+                    ByteSet::Bytes(hs)
+                } else if tpe == 2 {
+                    let mut hs = HashSet::with_capacity(how_many as usize);
+                    for _i in 0..how_many {
+                        let b1 = value.remove(0);
+                        let b2 = value.remove(0);
+
+                        hs.insert(u16::from_be_bytes([b1, b2]));
+                    }
+                    ByteSet::Pairs(hs)
+                } else {
+                    panic!("Unexpected tpe: {}", tpe);
+                };
+                Self::SetRunningByteSet(GnomeId(gnome_id), b_id, bset)
             }
             other => Self::UserDefined(other, SyncData::new(value[1..].into()).unwrap()),
         }
@@ -395,6 +430,29 @@ impl Configuration {
                         content_bytes.push(bte);
                     }
                 }
+            }
+            Self::SetRunningByteSet(gid, b_id, ref bset) => {
+                if with_gnome_id {
+                    for b in gid.0.to_be_bytes() {
+                        content_bytes.push(b);
+                    }
+                }
+                content_bytes.push(b_id);
+                let len_bts = bset.len_in_bytes() as u16;
+                if bset.is_pair() {
+                    content_bytes.push(2);
+                    let l = len_bts >> 1;
+                    let [b1, b2] = l.to_be_bytes();
+                    content_bytes.push(b1);
+                    content_bytes.push(b2);
+                } else {
+                    content_bytes.push(1);
+                    let [b1, b2] = len_bts.to_be_bytes();
+                    content_bytes.push(b1);
+                    content_bytes.push(b2);
+                }
+
+                content_bytes.append(&mut bset.bytes());
             }
             Self::UserDefined(_other, ref sync_data) => {
                 content_bytes.append(&mut sync_data.clone().bytes())
