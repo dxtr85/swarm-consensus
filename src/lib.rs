@@ -96,7 +96,7 @@ pub struct CastID(pub u8);
 
 pub enum GnomeToApp {
     SwarmReady(SwarmName, bool), // bool indicates if I am founder
-    Block(BlockID, SyncData),
+    Block(BlockID, SyncData, GnomeId),
     DataInquiry(GnomeId, NeighborRequest),
     Listing(Vec<BlockID>),
     UnicastOrigin(SwarmID, CastID, Sender<CastData>),
@@ -123,8 +123,8 @@ impl fmt::Debug for GnomeToApp {
             GnomeToApp::SwarmReady(s_name, am_i_founder) => {
                 write!(f, "{} Ready(founder: {})", s_name, am_i_founder)
             }
-            GnomeToApp::Block(prop_id, data) => {
-                write!(f, "{:?} {}", prop_id, data)
+            GnomeToApp::Block(prop_id, data, signed_by) => {
+                write!(f, "{:?} {} (by: {})", prop_id, data, signed_by)
             }
             GnomeToApp::BCastData(c_id, c_data) => {
                 write!(f, "BCastData {} (len: {})", c_id.0, c_data.len())

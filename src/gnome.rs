@@ -3176,7 +3176,11 @@ impl Gnome {
                             if let Some((g_id, pub_key)) = signature.pubkey() {
                                 self.swarm.key_reg.insert(g_id, pub_key)
                             }
-                            let _res = self.sender.send(GnomeToApp::Block(block_id, data));
+                            let _res = self.sender.send(GnomeToApp::Block(
+                                block_id,
+                                data,
+                                signature.gnome_id(),
+                            ));
                             // println!("^^^ USER ^^^ NEW {} {:075}", block_id, data.0);
                         } else {
                             eprintln!("Can not send to user, payload not matching\n {:?}", payload);

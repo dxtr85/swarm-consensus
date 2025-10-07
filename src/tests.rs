@@ -143,7 +143,7 @@ fn gnome_message_exchange() {
     let unwrapped = rcvd.unwrap();
     assert_eq!(
         unwrapped,
-        GnomeToApp::Block(BlockID(1), SyncData(1)),
+        GnomeToApp::Block(BlockID(1), SyncData(1), GnomeId(1)),
         "User received unexpected response!"
     );
 

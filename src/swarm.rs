@@ -719,8 +719,9 @@ impl Swarm {
         second_byte: u8,
         third_byte: u8,
     ) -> bool {
-        eprintln!("founder: {}", self.name.founder);
-        eprintln!("g_id: {}", gnome_id);
+        // eprintln!("founder: {}", self.name.founder);
+        // eprintln!("g_id: {}", gnome_id);
+        eprintln!("123: {},{},{}", first_byte, second_byte, third_byte);
         if let Some(req) = self.policy_reg.get(&Policy::DataWithFirstByte(first_byte)) {
             eprintln!("poli 1, {:?}", req);
             req.is_fullfilled(
