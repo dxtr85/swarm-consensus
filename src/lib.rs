@@ -68,7 +68,7 @@ pub enum ToGnome {
     AddNeighbor(Neighbor),
     DropNeighbor(GnomeId),
     ListNeighbors,
-    AskData(GnomeId, NeighborRequest),
+    AskData(GnomeId, Option<GnomeId>, NeighborRequest),
     SendData(GnomeId, NeighborResponse),
     Disconnect,
     Status,

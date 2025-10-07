@@ -392,10 +392,10 @@ impl Gnome {
                         if self.has_neighbor(source_id) {
                             source_id
                         } else {
-                            self.neighbor_with_highest_bandwith()
+                            self.neighbor_with_highest_bandwith(None)
                         }
                     } else {
-                        self.neighbor_with_highest_bandwith()
+                        self.neighbor_with_highest_bandwith(None)
                     };
                     eprintln!("Subscribing to Cast: {}(is bcast: {})", id.0, is_bcast);
                     let (send_n, recv_n) = channel();
@@ -510,9 +510,9 @@ impl Gnome {
                         eprintln!("Unable to find alternative source.")
                     }
                 }
-                InternalMsg::RequestOut(gnome_id, request) => {
+                InternalMsg::RequestOut(gnome_id, excl_opt, request) => {
                     let neighbor_id = if gnome_id.is_any() {
-                        self.neighbor_with_highest_bandwith()
+                        self.neighbor_with_highest_bandwith(excl_opt)
                     } else {
                         gnome_id
                     };
@@ -531,7 +531,7 @@ impl Gnome {
                 }
                 InternalMsg::ResponseOut(gnome_id, response) => {
                     let neighbor_id = if gnome_id.is_any() {
-                        self.neighbor_with_highest_bandwith()
+                        self.neighbor_with_highest_bandwith(None)
                     } else {
                         gnome_id
                     };
@@ -665,7 +665,7 @@ impl Gnome {
                     let request =
                         NeighborRequest::UnicastRequest(self.swarm.id, Box::new(avail_ids));
                     self.send_internal
-                        .send(InternalMsg::RequestOut(gnome_id, request))
+                        .send(InternalMsg::RequestOut(gnome_id, None, request))
                         .unwrap();
                     // for neighbor in &mut self.fast_neighbors {
                     //     if neighbor.id == gnome_id {
@@ -766,9 +766,9 @@ impl Gnome {
                         .send_internal
                         .send(InternalMsg::SendToCastSource(false, c_id, c_data));
                 }
-                ToGnome::AskData(gnome_id, request) => {
+                ToGnome::AskData(gnome_id, excl_opt, request) => {
                     self.send_internal
-                        .send(InternalMsg::RequestOut(gnome_id, request))
+                        .send(InternalMsg::RequestOut(gnome_id, excl_opt, request))
                         .unwrap();
                 }
                 ToGnome::SendData(gnome_id, response) => {
@@ -1246,7 +1246,7 @@ impl Gnome {
         let req = NeighborRequest::SwarmJoinedInfo(swarm_name);
         for n_id in n_ids {
             self.send_internal
-                .send(InternalMsg::RequestOut(n_id, req.clone()))
+                .send(InternalMsg::RequestOut(n_id, None, req.clone()))
                 .unwrap();
         }
         // for neighbor in &mut self.fast_neighbors {
@@ -2882,7 +2882,7 @@ impl Gnome {
         Some(curr_pick)
     }
 
-    fn neighbor_with_highest_bandwith(&self) -> GnomeId {
+    fn neighbor_with_highest_bandwith(&self, exclude: Option<GnomeId>) -> GnomeId {
         // eprintln!("Searching among {} neighbors", self.fast_neighbors.len());
         let mut gnome_id = GnomeId::any();
         let mut curr_max_band = 0;
@@ -2890,6 +2890,9 @@ impl Gnome {
         for neighbor in &self.fast_neighbors {
             // eprintln!("N band: {}", neighbor.available_bandwith);
             if neighbor.available_bandwith >= curr_max_band {
+                if exclude.is_some_and(|e| e == neighbor.id) {
+                    continue;
+                }
                 gnome_id = neighbor.id;
                 curr_max_band = neighbor.available_bandwith;
                 found = true;
@@ -2899,6 +2902,9 @@ impl Gnome {
             for neighbor in &self.refreshed_neighbors {
                 // eprintln!("N band: {}", neighbor.available_bandwith);
                 if neighbor.available_bandwith >= curr_max_band {
+                    if exclude.is_some_and(|e| e == neighbor.id) {
+                        continue;
+                    }
                     gnome_id = neighbor.id;
                     curr_max_band = neighbor.available_bandwith;
                 }
