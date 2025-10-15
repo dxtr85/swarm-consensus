@@ -312,6 +312,7 @@ impl ReqIter {
         items.push(Requirement::Has(Capabilities::Admin));
         items.push(Requirement::Has(Capabilities::Moderator));
         items.push(Requirement::Has(Capabilities::Superuser));
+        items.push(Requirement::None);
         for i in user_caps {
             items.push(Requirement::Has(Capabilities::Capability(i)));
         }
