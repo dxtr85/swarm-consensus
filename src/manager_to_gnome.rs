@@ -1,4 +1,4 @@
-use crate::{ByteSet, Capabilities, GnomeId, Neighbor, Policy, Requirement, SwarmName};
+use crate::{ByteSet, Capabilities, CastData, GnomeId, Neighbor, Policy, Requirement, SwarmName};
 
 pub enum ManagerToGnome {
     // ReplyNetworkSettings(Vec<NetworkSettings>, u8, GnomeId),
@@ -10,5 +10,6 @@ pub enum ManagerToGnome {
     SetRunningPolicy(Policy, Requirement),
     SetRunningCapability(Capabilities, Vec<GnomeId>),
     SetRunningByteSet(u8, ByteSet),
+    SendCustom(bool, GnomeId, u8, CastData), // bool = is_neighbor_request
     Disconnect,
 }

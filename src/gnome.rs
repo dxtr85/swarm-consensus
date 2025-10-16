@@ -1116,6 +1116,17 @@ impl Gnome {
                         )));
                     any_data_processed = true;
                 }
+                ManagerToGnome::SendCustom(is_request, g_id, m_type, c_data) => {
+                    if is_request {
+                        let res = self
+                            .send_neighbor_request(g_id, NeighborRequest::Custom(m_type, c_data));
+                        eprintln!("Gnome sent Custom Neighbor request to {g_id}: {res}");
+                    } else {
+                        let res = self
+                            .send_neighbor_response(g_id, NeighborResponse::Custom(m_type, c_data));
+                        eprintln!("Gnome sent Custom Neighbor response to {g_id}: {res}");
+                    }
+                }
                 ManagerToGnome::Disconnect => {
                     // Gnome should send Disconnected automatically
                     // once he realizes he has no neighbors around
