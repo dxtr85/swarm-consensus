@@ -1,5 +1,4 @@
 use crate::ByteSet;
-use crate::CapabiliTree;
 use crate::Capabilities;
 use crate::Policy;
 use crate::Requirement;

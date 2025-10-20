@@ -37,7 +37,6 @@ pub use message::BlockID;
 pub use message::Configuration;
 pub use message::{Header, Message, Payload, Signature, WrappedMessage};
 pub use neighbor::NeighborRequest;
-use std::net::IpAddr;
 mod neighbor;
 pub use crate::neighbor::Neighbor;
 pub use crate::neighbor::NeighborResponse;

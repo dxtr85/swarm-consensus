@@ -83,7 +83,7 @@ impl Policy {
     pub fn mapping() -> (Vec<Policy>, Vec<String>) {
         let mut pols = Vec::with_capacity(512);
         let mut strs = Vec::with_capacity(512);
-        let p = Policy::Default;
+        // let p = Policy::Default;
         let mut p_iter = Policy::iter();
         while let Some(p) = p_iter.next() {
             strs.push(p.text());

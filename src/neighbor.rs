@@ -1,4 +1,3 @@
-use crate::message::BlockID;
 use crate::message::Header;
 use crate::message::Payload;
 use crate::message::WrappedMessage;
@@ -176,7 +175,7 @@ impl NeighborResponse {
             }
             NeighborResponse::CapabilitySync(_b, _t, cvec) => {
                 let mut total_len = 3 + 2 * cvec.len();
-                for (c, gids) in cvec {
+                for (_c, gids) in cvec {
                     total_len += 8 * gids.len();
                 }
                 total_len
@@ -755,13 +754,13 @@ impl Neighbor {
         self.timeouts.iter().sum()
     }
 
-    fn send_casting(&self, message: CastMessage) {
-        if message.is_broadcast() {
-            if let Some(sender) = self.active_broadcasts.get(&message.id()) {
-                let _ = sender.send(WrappedMessage::Cast(message));
-            }
-        }
-    }
+    // fn send_casting(&self, message: CastMessage) {
+    //     if message.is_broadcast() {
+    //         if let Some(sender) = self.active_broadcasts.get(&message.id()) {
+    //             let _ = sender.send(WrappedMessage::Cast(message));
+    //         }
+    //     }
+    // }
 
     fn sanity_check(
         &self,
@@ -903,13 +902,13 @@ impl Neighbor {
         self.active_unicasts.insert(cast_id, sender);
         self.user_responses
             .push_front(GnomeToApp::Unicast(swarm_id, cast_id, receiver));
-        self.send_out_cast(CastMessage::new_response(NeighborResponse::Unicast(
+        let _ = self.send_out_cast(CastMessage::new_response(NeighborResponse::Unicast(
             swarm_id, cast_id,
         )));
     }
 
     pub fn request_data(&mut self, request: NeighborRequest) {
-        self.send_out_cast(CastMessage::new_request(request));
+        let _ = self.send_out_cast(CastMessage::new_request(request));
     }
     pub fn can_be_dropped(&self) -> bool {
         self.active_unicasts.is_empty()

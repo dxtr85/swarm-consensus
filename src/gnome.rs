@@ -30,7 +30,6 @@ use crate::SyncData;
 use crate::ToGnome;
 use crate::WrappedMessage;
 use crate::DEFAULT_NEIGHBORS_PER_GNOME;
-use crate::DEFAULT_SWARM_DIAMETER;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -477,10 +476,12 @@ impl Gnome {
                     if let Some(source_id) = self.swarm.get_source(&cast_id, is_broadcast) {
                         if source_id == self.id {
                             if is_broadcast {
-                                self.sender
+                                let _ = self
+                                    .sender
                                     .send(GnomeToApp::BCastUplinkData(cast_id, c_data));
                             } else {
-                                self.sender
+                                let _ = self
+                                    .sender
                                     .send(GnomeToApp::MCastUplinkData(cast_id, c_data));
                             }
                         } else {
@@ -1735,7 +1736,7 @@ impl Gnome {
         while let Some(batch) = remaining_batches.pop() {
             tokens_used += 45 + (batch.len() * key_size);
             let response = NeighborResponse::KeyRegistrySync(i, total_batches, batch);
-            neighbor.send_out_cast(CastMessage::new_response(response));
+            let _ = neighbor.send_out_cast(CastMessage::new_response(response));
             i += 1;
         }
         if sync_capability {
@@ -1756,7 +1757,7 @@ impl Gnome {
                         total_chunks as u8,
                         chunk,
                     );
-                    neighbor.send_out_cast(CastMessage::new_response(response));
+                    let _ = neighbor.send_out_cast(CastMessage::new_response(response));
                 }
             }
         }
@@ -1774,7 +1775,7 @@ impl Gnome {
                     }
                     tokens_used += 44 + bytes_size;
                     let response = NeighborResponse::PolicySync(i as u8, total_chunks as u8, chunk);
-                    neighbor.send_out_cast(CastMessage::new_response(response));
+                    let _ = neighbor.send_out_cast(CastMessage::new_response(response));
                 }
             }
         }
@@ -1786,7 +1787,7 @@ impl Gnome {
             };
             tokens_used += 46 + b_casts.len();
             let response = NeighborResponse::BroadcastSync(1, 1, b_casts);
-            neighbor.send_out_cast(CastMessage::new_response(response));
+            let _ = neighbor.send_out_cast(CastMessage::new_response(response));
         }
         if sync_multicast {
             let m_casts = if m_count == 0 {
@@ -2625,7 +2626,7 @@ impl Gnome {
     //       If we receive any other message we set ChillOut to false and continue.
     fn presync_with_swarm(&mut self, available_bandwith: u64) {
         eprintln!("{} In presync", self.swarm.id);
-        let mut remote_id = GnomeId(0);
+        // let mut remote_id = GnomeId(0);
         let response_opt = if let Some(neighbor) = self.fast_neighbors.iter_mut().next() {
             eprintln!(
                 "{} {} Sending SyncReq to {} ",
@@ -2646,7 +2647,7 @@ impl Gnome {
                 // TODO: not sure if reversing next_state update with start_new_round
                 // inside neighbor.recv_sync is fine
                 self.next_state.update(neighbor);
-                remote_id = neighbor.id;
+                // remote_id = neighbor.id;
                 sync_response_option
             } else {
                 eprintln!("No response received");
@@ -2669,7 +2670,7 @@ impl Gnome {
             ));
             if let Ok(sync_response_option) = neighbor.recv_sync(Duration::from_secs(20)) {
                 self.next_state.update(neighbor);
-                remote_id = neighbor.id;
+                // remote_id = neighbor.id;
                 sync_response_option
             } else {
                 None
@@ -3350,7 +3351,7 @@ impl Gnome {
                                 let _ = self.swarm.remove_cast(false, &id);
                                 self.remove_originating_multicast(id);
                             }
-                            ChangeConfig::InsertPubkey { id, key, .. } => {
+                            ChangeConfig::InsertPubkey { .. } => {
                                 // This is done automatically
                                 // self.swarm.key_reg.insert(id, key);
                             }
@@ -3764,7 +3765,7 @@ impl Gnome {
                             }
                         }
                         NeighborResponse::MulticastSync(chunk_no, total_chunks, mut pairs) => {
-                            while let Some((c_id, origin)) = pairs.pop() {
+                            while let Some((_c_id, _origin)) = pairs.pop() {
                                 // TODO: do we really want to subscribe to all multicasts?
                                 // self.send_internal
                                 //     .send(InternalMsg::SubscribeCast(false, c_id, origin))
