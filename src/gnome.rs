@@ -593,6 +593,24 @@ impl Gnome {
                     );
                 }
                 ToGnome::AddData(data) => {
+                    // check policy here and push only if valid
+                    // in other case send back to GMgr
+                    let msg = Message {
+                        swarm_time: SwarmTime(0),
+                        neighborhood: Neighborhood(0),
+                        header: Header::Block(BlockID(0)),
+                        payload: Payload::Block(
+                            BlockID(0),
+                            Signature::Regular(self.id, vec![]),
+                            data.clone(),
+                        ),
+                    };
+                    if !self.swarm.verify_policy(&msg) {
+                        eprintln!("Policy not met, sending back");
+                        self.sender.send(GnomeToApp::PolicyNotMet(data));
+                        return (false, false);
+                    }
+
                     let b_id = (self.sha_hash)(data.ref_bytes());
                     self.proposals
                         .push_front(Proposal::Block(BlockID(b_id), data));
@@ -600,6 +618,23 @@ impl Gnome {
                     // println!("vvv USER vvv REQ {}", data);
                 }
                 ToGnome::Reconfigure(value, s_data) => {
+                    let msg = Message {
+                        swarm_time: SwarmTime(0),
+                        neighborhood: Neighborhood(0),
+                        header: Header::Reconfigure(value, self.id),
+                        payload: Payload::Reconfigure(
+                            Signature::Regular(self.id, vec![]),
+                            Configuration::from_bytes(s_data.clone().bytes()),
+                        ),
+                    };
+                    if !self.swarm.verify_policy(&msg) {
+                        eprintln!("Policy not met, sending back");
+                        let _ = self
+                            .sender
+                            .send(GnomeToApp::PolicyNotMetRcfg(value, s_data));
+                        return (false, false);
+                    }
+
                     eprintln!("Gnome received reconfigure request");
                     self.proposals
                         .push_front(Proposal::Config(Configuration::UserDefined(value, s_data)));
@@ -2567,13 +2602,14 @@ impl Gnome {
         let mut tokens_used = 0;
         let message = self.prepare_message(available_tokens);
         let message_len = 43 + message.len();
-        // TODO: we need to send something in case policy is not fullfilled
+        // DONE: verify_policy is a gatekeeper on message entry into Gnome's logic
+        //  we need to send something in case policy is not fullfilled
         // now we send an invalid message over the network
         // for all of our peers to drop us. We are also wasting bandwith.
         // eprintln!("verify_policy from send_all");
-        if !message.header.is_sync() && !self.swarm.verify_policy(&message) {
-            eprintln!("Should not send, policy not fulfilled!");
-        }
+        // if !message.header.is_sync() && !self.swarm.verify_policy(&message) {
+        //     eprintln!("Should not send, policy not fulfilled!");
+        // }
         let keep_alive = message.set_payload(Payload::KeepAlive(available_tokens));
         let keep_alive_len = 43 + keep_alive.len();
         for neighbor in &mut self.fast_neighbors {

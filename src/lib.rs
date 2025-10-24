@@ -111,9 +111,10 @@ pub enum GnomeToApp {
     BCastUplinkData(CastID, CastData),
     MCastData(CastID, CastData),
     MCastUplinkData(CastID, CastData),
-    // RunningPolicies(Vec<(Policy, Requirement)>),
     Custom(bool, u8, GnomeId, CastData),
     Reconfig(u8, GnomeId, SyncData),
+    PolicyNotMet(SyncData),
+    PolicyNotMetRcfg(u8, SyncData),
 }
 
 impl fmt::Debug for GnomeToApp {
@@ -179,6 +180,12 @@ impl fmt::Debug for GnomeToApp {
             }
             GnomeToApp::Reconfig(id, g_id, _s_data) => {
                 write!(f, "Reconfig: {}({})", id, g_id)
+            }
+            GnomeToApp::PolicyNotMet(s_data) => {
+                write!(f, "PolicyNotMet({})", s_data.len())
+            }
+            GnomeToApp::PolicyNotMetRcfg(cfg_id, _s_data) => {
+                write!(f, "PolicyNotMetRcfg({})", cfg_id)
             }
         }
     }
