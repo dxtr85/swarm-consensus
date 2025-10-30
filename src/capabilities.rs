@@ -83,8 +83,15 @@ impl CapabiliTree {
     }
 
     pub fn get_all_members(&self) -> Vec<GnomeId> {
-        // TODO
-        vec![]
+        match self {
+            Self::Empty(_a, _b) => vec![],
+            Self::Filled(cbl) => {
+                let mut left = cbl.left.get_all_members();
+                left.push(cbl.gnome_id);
+                left.append(&mut cbl.right.get_all_members());
+                left
+            }
+        }
     }
 
     fn gnome_id(&self) -> Option<GnomeId> {
