@@ -1,6 +1,7 @@
 # An implementation of Swarm Consensus
 # Links
 You can read more about Swarm Consensus in [this document](https://drive.google.com/file/d/1Wc8lbKfHnpwTncVnavTYbvsK2wNGpetg/view?usp=sharing) ( [also on Dropbox](https://www.dropbox.com/scl/fi/1pq3vcjjvf8yfblo9yt7f/schmebulock.pdf?rlkey=r79bfau1mzgt4ozi99irvtgig&st=d7fv8e4s&dl=0) ).
+There is a new repo at [SourceForge](https://sourceforge.net/projects/swarm-consensus) 
 
 # TODOs
 We need to support broadcasting scenarios above the basic one, which is
