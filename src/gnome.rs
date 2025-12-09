@@ -81,6 +81,9 @@ impl GnomeId {
             modulo * 64
         }
     }
+    pub fn to_string(&self) -> String {
+        format!("GID-{:016x}", self.0)
+    }
 }
 
 // impl PartialEq for GnomeId {
@@ -527,7 +530,11 @@ impl Gnome {
                             eprintln!("Failed to send request");
                         }
                     } else {
-                        eprintln!("Unable to find a Neighbor to send out CustomRequest");
+                        eprintln!("Unable to find a Neighbor to send out CustomRequest(F:{}, R:{}, S:{}, N:{})",
+                            self.fast_neighbors.len(),
+                            self.refreshed_neighbors.len(),
+                            self.slow_neighbors.len(),
+                            self.new_neighbors.len());
                     }
                 }
                 InternalMsg::ResponseOut(gnome_id, response) => {
