@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{swarm::ByteSet, CapabiliTree, Capabilities, GnomeId};
+use crate::{swarm::ByteSet, CapabiLeaf, Capabilities, GnomeId};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Requirement {
@@ -159,7 +159,7 @@ impl Requirement {
     pub fn is_fullfilled(
         &self,
         gnome_id: &GnomeId,
-        caps: &HashMap<Capabilities, CapabiliTree>,
+        caps: &HashMap<Capabilities, CapabiLeaf>,
         b_sets: &HashMap<u8, ByteSet>,
         byte_2: Option<u8>,
         byte_3: Option<u8>,

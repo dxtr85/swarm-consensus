@@ -9,7 +9,7 @@ use crate::message::Payload;
 use crate::multicast::Multicast;
 use crate::policy::Policy;
 use crate::requirement::Requirement;
-use crate::CapabiliTree;
+use crate::CapabiLeaf;
 use crate::Capabilities;
 use crate::Gnome;
 use crate::GnomeId;
@@ -243,7 +243,7 @@ pub struct Swarm {
     active_broadcasts: HashMap<CastID, Multicast>,
     active_multicasts: HashMap<CastID, Multicast>,
     pub key_reg: KeyRegistry,
-    pub capability_reg: HashMap<Capabilities, CapabiliTree>,
+    pub capability_reg: HashMap<Capabilities, CapabiLeaf>,
     pub policy_reg: HashMap<Policy, Requirement>,
     pub byteset_reg: HashMap<u8, ByteSet>,
     pub verify: fn(GnomeId, &Vec<u8>, SwarmTime, &mut Vec<u8>, &[u8]) -> bool,
@@ -322,7 +322,7 @@ impl Swarm {
         policy_reg.insert(Policy::Default, Requirement::Has(Capabilities::Founder));
         let mut capability_reg = HashMap::new();
         if !name.founder.is_any() {
-            let mut ct = CapabiliTree::create();
+            let mut ct = CapabiLeaf::create();
             ct.insert(name.founder);
             capability_reg.insert(Capabilities::Founder, ct);
         }
@@ -517,7 +517,7 @@ impl Swarm {
         if cap == Capabilities::Founder {
             eprintln!("Looks like this Cap {:?}is a Founder one…", cap);
             if let Some(gnome_id) = id_list.pop() {
-                let mut tree = CapabiliTree::create();
+                let mut tree = CapabiLeaf::create();
                 eprintln!("overwrite Founder");
                 tree.insert(gnome_id);
                 self.capability_reg.insert(cap, tree);
@@ -532,7 +532,7 @@ impl Swarm {
             }
         } else {
             eprintln!("cnew");
-            let mut tree = CapabiliTree::create();
+            let mut tree = CapabiLeaf::create();
             while let Some(gnome_id) = id_list.pop() {
                 tree.insert(gnome_id);
             }
@@ -708,7 +708,7 @@ impl Swarm {
             self.name.name, self.name.founder, gnome_id
         );
         self.name.founder = gnome_id;
-        let mut tree = CapabiliTree::create();
+        let mut tree = CapabiLeaf::create();
         tree.insert(gnome_id);
         self.capability_reg.insert(Capabilities::Founder, tree);
     }
@@ -768,7 +768,7 @@ impl Swarm {
 
     pub fn set_capability(&mut self, cap: Capabilities, g_ids: Vec<GnomeId>) {
         eprintln!("Swarm is setting capability: {:?}", cap);
-        let mut c_tree = CapabiliTree::create();
+        let mut c_tree = CapabiLeaf::create();
         for g_id in g_ids {
             c_tree.insert(g_id);
         }

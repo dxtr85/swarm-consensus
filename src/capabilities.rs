@@ -11,23 +11,23 @@ pub enum Capabilities {
 }
 
 #[derive(Debug, Clone)]
-pub enum CapabiliTree {
+pub enum CapabiLeaf {
     Empty(u8, u64),
-    Filled(Box<CapabiLeaf>),
+    Filled(Box<CapabiliTree>),
 }
 
 #[derive(Debug, Clone)]
-pub struct CapabiLeaf {
+pub struct CapabiliTree {
     level: u8,
     midpoint: u64,
     pub gnome_id: GnomeId,
-    left: CapabiliTree,
-    right: CapabiliTree,
+    left: CapabiLeaf,
+    right: CapabiLeaf,
 }
 
-impl CapabiliTree {
+impl CapabiLeaf {
     pub fn create() -> Self {
-        CapabiliTree::Empty(0, u64::MAX >> 1)
+        CapabiLeaf::Empty(0, u64::MAX >> 1)
     }
     pub fn contains(&self, gnome_id: &GnomeId) -> bool {
         match self {
@@ -42,12 +42,12 @@ impl CapabiliTree {
                 let shift = u64::MAX >> (new_level + 1);
                 let midpoint_left = *midpoint - shift;
                 let midpoint_right = *midpoint + shift;
-                *self = CapabiliTree::Filled(Box::new(CapabiLeaf {
+                *self = CapabiLeaf::Filled(Box::new(CapabiliTree {
                     level: *level,
                     midpoint: *midpoint,
                     gnome_id,
-                    left: CapabiliTree::Empty(new_level, midpoint_left),
-                    right: CapabiliTree::Empty(new_level, midpoint_right),
+                    left: CapabiLeaf::Empty(new_level, midpoint_left),
+                    right: CapabiLeaf::Empty(new_level, midpoint_right),
                 }));
             }
             Self::Filled(ref mut node) => {
@@ -102,7 +102,7 @@ impl CapabiliTree {
     }
 }
 
-impl CapabiLeaf {
+impl CapabiliTree {
     pub fn insert(&mut self, gnome_id: GnomeId) {
         let old_diff = self.gnome_id.0.abs_diff(self.midpoint);
         let new_diff = gnome_id.0.abs_diff(self.midpoint);
